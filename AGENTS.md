@@ -34,6 +34,9 @@ Current repository structure:
 - Do not add new dependencies unless the task explicitly requires them.
 - Do not create commits unless explicitly requested.
 - Prefer simple and explicit code over clever abstractions.
+- When writing or changing code, add complete tests for the affected behavior.
+- Tests should cover successful paths, validation and error paths, and important edge cases.
+- Update existing tests when behavior changes; if tests cannot be added or run, explain the reason clearly.
 - When writing program code, add helpful output or logging at appropriate points to make debugging easier.
 - Prefer the existing logging mechanism for the stack, such as `tracing` in the backend.
 - Keep debug output focused on key inputs, decisions, and failures; do not log passwords, tokens, secrets, or unnecessary noisy details.
