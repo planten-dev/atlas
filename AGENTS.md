@@ -49,6 +49,12 @@ Current repository structure:
   - `dto/` for request/response types
   - `middleware/` for auth, audit, tracing, etc.
 
+## API Design
+
+- Use clear, meaningful API paths that describe the resource or action they represent.
+- Avoid ambiguous, overly generic, or unclear path names.
+- Prefer consistent resource naming and path structure across related endpoints.
+
 ## API Documentation
 
 - When adding, removing, or changing backend HTTP APIs, update `docs/openapi.json`.
