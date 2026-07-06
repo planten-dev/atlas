@@ -1,14 +1,18 @@
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
+    response::NoContent,
     routing::{get, post},
 };
 use uuid::Uuid;
 
 use crate::{
     app_state::AppState,
-    dto::users::{CreateUserRequest, LoginUserRequest, UserResponse},
+    dto::users::{
+        ChangeUserPasswordRequest, CreateUserRequest, ListUsersQuery, ListUsersResponse,
+        LoginUserRequest, UpdateUserRequest, UpdateUserStatusRequest, UserResponse,
+    },
     errors::AppResult,
     services::users::UserService,
 };
@@ -16,8 +20,12 @@ use crate::{
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/users/create", post(create_user))
+        .route("/users/list", get(list_users))
         .route("/users/login", post(login_user))
         .route("/users/{id}", get(get_user))
+        .route("/users/{id}/update", post(update_user))
+        .route("/users/{id}/status/update", post(update_user_status))
+        .route("/users/{id}/password/change", post(change_user_password))
 }
 
 #[tracing::instrument(
@@ -48,6 +56,75 @@ async fn get_user(
     tracing::debug!(user_id = %user.id, "get user request completed");
 
     Ok(Json(user))
+}
+
+#[tracing::instrument(name = "users.handler.list_users", skip(state, query))]
+async fn list_users(
+    State(state): State<AppState>,
+    Query(query): Query<ListUsersQuery>,
+) -> AppResult<Json<ListUsersResponse>> {
+    tracing::debug!("received list users request");
+    let users = UserService::list_users(state.db.as_ref(), query).await?;
+    tracing::debug!(
+        total = users.total,
+        returned = users.items.len(),
+        "list users request completed"
+    );
+
+    Ok(Json(users))
+}
+
+#[tracing::instrument(
+    name = "users.handler.update_user",
+    skip(state, payload),
+    fields(user_id = %id, has_username = payload.username.is_some(), has_phone = payload.phone.is_some())
+)]
+async fn update_user(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<UpdateUserRequest>,
+) -> AppResult<Json<UserResponse>> {
+    tracing::debug!("received update user request");
+    let user = UserService::update_user(state.db.as_ref(), id, payload).await?;
+    tracing::info!(user_id = %user.id, "update user request completed");
+
+    Ok(Json(user))
+}
+
+#[tracing::instrument(
+    name = "users.handler.update_user_status",
+    skip(state, payload),
+    fields(user_id = %id, status = ?payload.status)
+)]
+async fn update_user_status(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<UpdateUserStatusRequest>,
+) -> AppResult<Json<UserResponse>> {
+    tracing::debug!("received update user status request");
+    let user = UserService::update_user_status(state.db.as_ref(), id, payload).await?;
+    tracing::info!(user_id = %user.id, status = ?user.status, "update user status request completed");
+
+    Ok(Json(user))
+}
+
+#[tracing::instrument(name = "users.handler.change_user_password", skip(state, payload), fields(user_id = %id))]
+async fn change_user_password(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<ChangeUserPasswordRequest>,
+) -> AppResult<NoContent> {
+    tracing::debug!("received change user password request");
+    match UserService::change_user_password(state.db.as_ref(), id, payload).await {
+        Ok(()) => {
+            tracing::info!(user_id = %id, "change user password request succeeded");
+            Ok(NoContent)
+        }
+        Err(err) => {
+            tracing::warn!(user_id = %id, error = %err, "change user password request failed");
+            Err(err)
+        }
+    }
 }
 
 #[tracing::instrument(
@@ -88,6 +165,10 @@ mod tests {
     use crate::{
         app_state::AppState,
         entities::users::{Model as UserModel, UserStatus},
+    };
+    use argon2::{
+        Argon2, PasswordHasher,
+        password_hash::{SaltString, rand_core::OsRng},
     };
     use axum::{
         body::{Body, to_bytes},
@@ -130,6 +211,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_user_endpoint_rejects_id_in_body() {
+        let db = MockDatabase::new(DbBackend::Postgres).into_connection();
+        let app = routes().with_state(AppState::new(db));
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/users/create",
+                json!({
+                    "id": Uuid::from_u128(1),
+                    "username": "alice",
+                    "phone": "13800138000",
+                    "password": "secret-password"
+                }),
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
     async fn get_user_endpoint_returns_user_without_password_hash() {
         let user = user_model("alice", "13800138000", "stored-hash", UserStatus::Active);
         let id = user.id;
@@ -155,6 +258,123 @@ mod tests {
         assert_eq!(body["id"], id.to_string());
         assert_eq!(body["username"], "alice");
         assert!(body.get("password_hash").is_none());
+    }
+
+    #[tokio::test]
+    async fn update_user_endpoint_rejects_id_in_body() {
+        let db = MockDatabase::new(DbBackend::Postgres).into_connection();
+        let app = routes().with_state(AppState::new(db));
+        let id = Uuid::from_u128(1);
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                &format!("/users/{id}/update"),
+                json!({
+                    "id": Uuid::from_u128(2),
+                    "username": "alice2"
+                }),
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn update_status_endpoint_rejects_id_in_body() {
+        let db = MockDatabase::new(DbBackend::Postgres).into_connection();
+        let app = routes().with_state(AppState::new(db));
+        let id = Uuid::from_u128(1);
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                &format!("/users/{id}/status/update"),
+                json!({
+                    "id": Uuid::from_u128(2),
+                    "status": "disabled"
+                }),
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn update_status_endpoint_rejects_invalid_status() {
+        let db = MockDatabase::new(DbBackend::Postgres).into_connection();
+        let app = routes().with_state(AppState::new(db));
+        let id = Uuid::from_u128(1);
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                &format!("/users/{id}/status/update"),
+                json!({
+                    "status": "locked"
+                }),
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn change_password_endpoint_rejects_id_in_body() {
+        let db = MockDatabase::new(DbBackend::Postgres).into_connection();
+        let app = routes().with_state(AppState::new(db));
+        let id = Uuid::from_u128(1);
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                &format!("/users/{id}/password/change"),
+                json!({
+                    "id": Uuid::from_u128(2),
+                    "current_password": "secret-password",
+                    "new_password": "new-secret-password"
+                }),
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn change_password_endpoint_rejects_wrong_current_password() {
+        let id = Uuid::from_u128(1);
+        let user = user_model(
+            "alice",
+            "13800138000",
+            &test_password_hash("secret-password"),
+            UserStatus::Active,
+        );
+        let db = MockDatabase::new(DbBackend::Postgres)
+            .append_query_results([vec![user]])
+            .into_connection();
+        let app = routes().with_state(AppState::new(db));
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                &format!("/users/{id}/password/change"),
+                json!({
+                    "current_password": "wrong-password",
+                    "new_password": "new-secret-password"
+                }),
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let body = response_body(response).await;
+        assert_eq!(body["code"], "unauthorized");
+        assert_eq!(body["error"], "invalid current password");
     }
 
     #[tokio::test]
@@ -198,6 +418,14 @@ mod tests {
             .expect("body should be readable");
 
         serde_json::from_slice(&bytes).expect("body should be json")
+    }
+
+    fn test_password_hash(password: &str) -> String {
+        let salt = SaltString::generate(&mut OsRng);
+        Argon2::default()
+            .hash_password(password.as_bytes(), &salt)
+            .expect("password hash should be created")
+            .to_string()
     }
 
     fn user_model(
