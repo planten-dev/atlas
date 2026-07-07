@@ -51,6 +51,7 @@ pub struct DingTalkConfig {
     pub user_info_url: String,
     pub scope: String,
     pub corp_id: String,
+    pub external_id_fields: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -171,6 +172,7 @@ token_url = "https://api.dingtalk.com/v1.0/oauth2/userAccessToken"
 user_info_url = "https://api.dingtalk.com/v1.0/contact/users/me"
 scope = "openid corpid"
 corp_id = ""
+external_id_fields = ["userId", "userid", "user_id", "unionId", "unionid", "union_id", "openId", "openid", "open_id", "uuid"]
 
 [auth]
 frontend_callback_url = ""
