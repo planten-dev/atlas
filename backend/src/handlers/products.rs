@@ -1,0 +1,691 @@
+use axum::{
+    Json,
+    extract::{
+        Path, Query, State,
+        rejection::{JsonRejection, PathRejection, QueryRejection},
+    },
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
+use tracing::{error, warn};
+use uuid::Uuid;
+
+use crate::{
+    dto::{
+        auth::ErrorResponse,
+        products::{CreateProductRequest, ListProductsQuery, UpdateProductRequest},
+    },
+    repositories::RepositoryError,
+    services::products::ProductError,
+    state::AppState,
+};
+
+pub async fn list_products(
+    State(state): State<AppState>,
+    query: Result<Query<ListProductsQuery>, QueryRejection>,
+) -> Response {
+    let query = match query {
+        Ok(Query(query)) => query,
+        Err(error) => return validation_error_response("invalid query parameters", error),
+    };
+
+    match state.products.list_products(query).await {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => product_error_response(error),
+    }
+}
+
+pub async fn product_detail(
+    State(state): State<AppState>,
+    path: Result<Path<Uuid>, PathRejection>,
+) -> Response {
+    let product_id = match path {
+        Ok(Path(product_id)) => product_id,
+        Err(error) => return validation_error_response("invalid product_id path parameter", error),
+    };
+
+    match state.products.product_detail(product_id).await {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => product_error_response(error),
+    }
+}
+
+pub async fn create_product(
+    State(state): State<AppState>,
+    request: Result<Json<CreateProductRequest>, JsonRejection>,
+) -> Response {
+    let request = match request {
+        Ok(Json(request)) => request,
+        Err(error) => return validation_error_response("invalid request body", error),
+    };
+
+    match state.products.create_product(request).await {
+        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+        Err(error) => product_error_response(error),
+    }
+}
+
+pub async fn update_product(
+    State(state): State<AppState>,
+    path: Result<Path<Uuid>, PathRejection>,
+    request: Result<Json<UpdateProductRequest>, JsonRejection>,
+) -> Response {
+    let product_id = match path {
+        Ok(Path(product_id)) => product_id,
+        Err(error) => return validation_error_response("invalid product_id path parameter", error),
+    };
+    let request = match request {
+        Ok(Json(request)) => request,
+        Err(error) => return validation_error_response("invalid request body", error),
+    };
+
+    match state.products.update_product(product_id, request).await {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => product_error_response(error),
+    }
+}
+
+pub async fn disable_product(
+    State(state): State<AppState>,
+    path: Result<Path<Uuid>, PathRejection>,
+) -> Response {
+    let product_id = match path {
+        Ok(Path(product_id)) => product_id,
+        Err(error) => return validation_error_response("invalid product_id path parameter", error),
+    };
+
+    match state.products.disable_product(product_id).await {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => product_error_response(error),
+    }
+}
+
+pub async fn delete_product(
+    State(state): State<AppState>,
+    path: Result<Path<Uuid>, PathRejection>,
+) -> Response {
+    let product_id = match path {
+        Ok(Path(product_id)) => product_id,
+        Err(error) => return validation_error_response("invalid product_id path parameter", error),
+    };
+
+    match state.products.delete_product(product_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => product_error_response(error),
+    }
+}
+
+fn product_error_response(error: ProductError) -> Response {
+    let status = status_code(&error);
+    let code = error.code();
+
+    if status.is_server_error() {
+        error!(
+            status = status.as_u16(),
+            code,
+            message = %error,
+            "product request failed"
+        );
+    } else {
+        warn!(
+            status = status.as_u16(),
+            code,
+            message = %error,
+            "product request rejected"
+        );
+    }
+
+    (
+        status,
+        Json(ErrorResponse {
+            error: code.to_string(),
+            message: error.to_string(),
+        }),
+    )
+        .into_response()
+}
+
+fn validation_error_response(error: &'static str, detail: impl std::fmt::Display) -> Response {
+    warn!(error, detail = %detail, "product request validation failed");
+    (
+        StatusCode::BAD_REQUEST,
+        Json(ErrorResponse {
+            error: "validation_error".to_string(),
+            message: error.to_string(),
+        }),
+    )
+        .into_response()
+}
+
+fn status_code(error: &ProductError) -> StatusCode {
+    match error {
+        ProductError::Repository(error) => match error {
+            RepositoryError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            RepositoryError::MissingRequiredField { .. } => StatusCode::BAD_REQUEST,
+            RepositoryError::DisabledUser => StatusCode::FORBIDDEN,
+        },
+        ProductError::ProductNotFound => StatusCode::NOT_FOUND,
+        ProductError::MissingRequiredField { .. }
+        | ProductError::FieldTooLong { .. }
+        | ProductError::InvalidStatus { .. }
+        | ProductError::InvalidUnitPrice { .. }
+        | ProductError::NegativeUnitPrice { .. }
+        | ProductError::UnitPriceTooLarge { .. }
+        | ProductError::InvalidPaginationMinimum { .. }
+        | ProductError::InvalidPaginationMaximum { .. } => StatusCode::BAD_REQUEST,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        app,
+        config::{AuthConfig, DatabaseConfig, DatabaseKind, DingTalkConfig, SessionConfig},
+        db,
+        repositories::{
+            authz::AuthzRepository, products::ProductRepository, sessions::SessionRepository,
+            users::UserRepository,
+        },
+        services::{
+            auth::AuthService, authz::AuthzService, products::ProductService, users::UserService,
+        },
+    };
+    use axum::{
+        Router,
+        body::{Body, to_bytes},
+        http::{Method, Request, header},
+        routing::{get, post},
+    };
+    use serde_json::{Value, json};
+    use std::path::PathBuf;
+    use tokio::net::TcpListener;
+    use tower::ServiceExt;
+
+    struct TestContext {
+        app: Router,
+        users: UserRepository,
+        authz: AuthzService,
+    }
+
+    #[tokio::test]
+    async fn products_api_requires_session() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+
+        let response = context
+            .app
+            .clone()
+            .oneshot(request(Method::GET, "/api/v1/products/list", None, None))
+            .await
+            .expect("products list request should be handled");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = context
+            .app
+            .oneshot(request(
+                Method::POST,
+                &format!("/api/v1/products/delete/{}", Uuid::new_v4()),
+                None,
+                None,
+            ))
+            .await
+            .expect("product delete request should be handled");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn session_without_product_permission_is_forbidden() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+
+        let response = context
+            .app
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/products/list",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("products list request should be handled");
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = response_json(response).await;
+        assert_eq!(
+            body.pointer("/error").and_then(Value::as_str),
+            Some("permission_denied")
+        );
+    }
+
+    #[tokio::test]
+    async fn read_permission_allows_read_but_not_write() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let user_id = logged_in_user_id(&context).await;
+        grant(&context, user_id, "products", "read").await;
+
+        let read_response = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/products/list",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("products list request should be handled");
+        assert_eq!(read_response.status(), StatusCode::OK);
+
+        let write_response = context
+            .app
+            .oneshot(request(
+                Method::POST,
+                "/api/v1/products/create",
+                Some(&cookie),
+                Some(json!({"name": "product-a", "unit_price": "12.30"})),
+            ))
+            .await
+            .expect("product create request should be handled");
+        assert_eq!(write_response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn product_crud_via_http() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let user_id = logged_in_user_id(&context).await;
+        grant(&context, user_id, "products", "read").await;
+        grant(&context, user_id, "products", "write").await;
+
+        let create_response = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/api/v1/products/create",
+                Some(&cookie),
+                Some(json!({
+                    "name": "product-a",
+                    "category": "cat-a",
+                    "series": "series-a",
+                    "brand_name": "brand-a",
+                    "specification": "spec-a",
+                    "unit": null,
+                    "unit_price": "12.3"
+                })),
+            ))
+            .await
+            .expect("product create request should be handled");
+        assert_eq!(create_response.status(), StatusCode::CREATED);
+        let created = response_json(create_response).await;
+        assert_eq!(
+            created.pointer("/name").and_then(Value::as_str),
+            Some("product-a")
+        );
+        assert_eq!(
+            created.pointer("/unit_price").and_then(Value::as_str),
+            Some("12.30")
+        );
+        assert_eq!(created.pointer("/unit"), Some(&Value::Null));
+        let product_id = created
+            .pointer("/id")
+            .and_then(Value::as_str)
+            .expect("product id should be present")
+            .to_string();
+
+        let list_response = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/products/list?status_filter=active&page_number=1&page_size=20",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("products list request should be handled");
+        assert_eq!(list_response.status(), StatusCode::OK);
+        let list = response_json(list_response).await;
+        assert_eq!(
+            list.pointer("/total_count").and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            list.pointer("/products/0/id").and_then(Value::as_str),
+            Some(product_id.as_str())
+        );
+
+        let update_response = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                &format!("/api/v1/products/update/{product_id}"),
+                Some(&cookie),
+                Some(json!({
+                    "name": "product-b",
+                    "brand_name": null,
+                    "unit": "piece",
+                    "unit_price": "25"
+                })),
+            ))
+            .await
+            .expect("product update request should be handled");
+        assert_eq!(update_response.status(), StatusCode::OK);
+        let updated = response_json(update_response).await;
+        assert_eq!(
+            updated.pointer("/name").and_then(Value::as_str),
+            Some("product-b")
+        );
+        assert_eq!(updated.pointer("/brand_name"), Some(&Value::Null));
+        assert_eq!(
+            updated.pointer("/unit").and_then(Value::as_str),
+            Some("piece")
+        );
+        assert_eq!(
+            updated.pointer("/unit_price").and_then(Value::as_str),
+            Some("25.00")
+        );
+
+        let disable_response = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                &format!("/api/v1/products/disable/{product_id}"),
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("product disable request should be handled");
+        assert_eq!(disable_response.status(), StatusCode::OK);
+        let disabled = response_json(disable_response).await;
+        assert_eq!(
+            disabled.pointer("/status").and_then(Value::as_str),
+            Some("disabled")
+        );
+
+        let delete_response = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                &format!("/api/v1/products/delete/{product_id}"),
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("product delete request should be handled");
+        assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+
+        let missing_detail = context
+            .app
+            .oneshot(request(
+                Method::GET,
+                &format!("/api/v1/products/detail/{product_id}"),
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("product detail request should be handled");
+        assert_eq!(missing_detail.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn product_api_validates_inputs_and_missing_products() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let user_id = logged_in_user_id(&context).await;
+        grant(&context, user_id, "products", "read").await;
+        grant(&context, user_id, "products", "write").await;
+
+        for body in [
+            json!({"name": "", "unit_price": "12.30"}),
+            json!({"name": "product-a", "unit_price": "12.345"}),
+            json!({"name": "product-a", "unit_price": "-0.01"}),
+            json!({"name": "product-a", "unit_price": "12.30", "status": "deleted"}),
+        ] {
+            let response = context
+                .app
+                .clone()
+                .oneshot(request(
+                    Method::POST,
+                    "/api/v1/products/create",
+                    Some(&cookie),
+                    Some(body),
+                ))
+                .await
+                .expect("product create request should be handled");
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+
+        let invalid_query = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/products/list?status_filter=deleted",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("products list request should be handled");
+        assert_eq!(invalid_query.status(), StatusCode::BAD_REQUEST);
+
+        let invalid_id = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/api/v1/products/update/not-a-uuid",
+                Some(&cookie),
+                Some(json!({"name": "product-a"})),
+            ))
+            .await
+            .expect("product update request should be handled");
+        assert_eq!(invalid_id.status(), StatusCode::BAD_REQUEST);
+
+        let missing_delete = context
+            .app
+            .oneshot(request(
+                Method::POST,
+                &format!("/api/v1/products/delete/{}", Uuid::new_v4()),
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("product delete request should be handled");
+        assert_eq!(missing_delete.status(), StatusCode::NOT_FOUND);
+    }
+
+    async fn test_context(mock_base_url: &str) -> TestContext {
+        let database = DatabaseConfig {
+            kind: DatabaseKind::SqliteMemory,
+            url: "postgres://unused".to_string(),
+            sqlite_file: PathBuf::from("unused.sqlite"),
+        };
+        let db = db::connect_and_migrate(&database)
+            .await
+            .expect("test database should initialize");
+        let users = UserRepository::new(db.clone());
+        let sessions = SessionRepository::new(db.clone());
+        let products = ProductRepository::new(db.clone());
+        let auth = AuthService::new(
+            DingTalkConfig {
+                client_id: "test-client-id".to_string(),
+                client_secret: "test-client-secret".to_string(),
+                redirect_uri: "http://127.0.0.1:3000/api/v1/auth/callback/dingtalk".to_string(),
+                auth_url: "https://login.dingtalk.com/oauth2/auth".to_string(),
+                token_url: format!("{mock_base_url}/token"),
+                user_info_url: format!("{mock_base_url}/me"),
+                scope: "openid".to_string(),
+                corp_id: "".to_string(),
+                external_id_fields: vec!["userId".to_string()],
+            },
+            users.clone(),
+            sessions.clone(),
+            86_400,
+        );
+        let authz = AuthzService::new(AuthzRepository::new(db))
+            .await
+            .expect("test authz service should initialize");
+        let users_service = UserService::new(users.clone(), sessions);
+        let products_service = ProductService::new(products);
+        let state = AppState::new(
+            auth,
+            authz.clone(),
+            users_service,
+            products_service,
+            AuthConfig {
+                frontend_callback_url: "".to_string(),
+            },
+            SessionConfig {
+                ttl_seconds: 86_400,
+                cookie_secure: false,
+            },
+        );
+        TestContext {
+            app: app::router(state),
+            users,
+            authz,
+        }
+    }
+
+    async fn start_mock_dingtalk() -> String {
+        async fn token() -> Json<Value> {
+            Json(json!({
+                "accessToken": "provider-token",
+                "userId": "ding-user-1"
+            }))
+        }
+
+        async fn me() -> Json<Value> {
+            Json(json!({
+                "result": {
+                    "userId": "ding-user-1"
+                }
+            }))
+        }
+
+        let app = Router::new()
+            .route("/token", post(token))
+            .route("/me", get(me));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("mock DingTalk listener should bind");
+        let addr = listener.local_addr().expect("mock address should be known");
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("mock DingTalk server should run");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn login_and_cookie(app: Router) -> String {
+        let login_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/auth/login/dingtalk")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("login should be handled");
+        let location = login_response
+            .headers()
+            .get(header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .expect("login should include location");
+        let state = query_param(location, "state").expect("state should be present");
+
+        let callback_response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/auth/callback/dingtalk?code=test-code&state={state}"
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("callback should be handled");
+
+        callback_response
+            .headers()
+            .get(header::SET_COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|cookie| cookie.split(';').next())
+            .expect("callback should include cookie")
+            .to_string()
+    }
+
+    async fn logged_in_user_id(context: &TestContext) -> Uuid {
+        context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should work")
+            .expect("logged in user should exist")
+            .id
+    }
+
+    async fn grant(context: &TestContext, user_id: Uuid, object: &str, action: &str) {
+        context
+            .authz
+            .create_policy(
+                "user".to_string(),
+                user_id,
+                object.to_string(),
+                action.to_string(),
+                "allow".to_string(),
+            )
+            .await
+            .expect("seed policy should be created");
+    }
+
+    fn request(
+        method: Method,
+        uri: &str,
+        cookie: Option<&str>,
+        body: Option<Value>,
+    ) -> Request<Body> {
+        let mut builder = Request::builder().method(method).uri(uri);
+        if let Some(cookie) = cookie {
+            builder = builder.header(header::COOKIE, cookie);
+        }
+        match body {
+            Some(body) => builder
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+            None => builder.body(Body::empty()).unwrap(),
+        }
+    }
+
+    async fn response_json(response: Response) -> Value {
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body should be readable");
+        serde_json::from_slice(&body).expect("response body should be json")
+    }
+
+    fn query_param(url: &str, name: &str) -> Option<String> {
+        let query = url.split_once('?')?.1;
+        query.split('&').find_map(|part| {
+            let (key, value) = part.split_once('=')?;
+            if key == name {
+                Some(value.to_string())
+            } else {
+                None
+            }
+        })
+    }
+}

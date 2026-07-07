@@ -29,6 +29,44 @@ pub fn router(state: AppState) -> Router {
             post(handlers::users::delete_user),
         )
         .route(
+            "/api/v1/products/list",
+            get(handlers::products::list_products
+                .layer(require_permission(&state, "products:read"))),
+        )
+        .route(
+            "/api/v1/products/detail/{product_id}",
+            get(handlers::products::product_detail
+                .layer(require_permission(&state, "products:read"))),
+        )
+        .route(
+            "/api/v1/products/create",
+            post(
+                handlers::products::create_product
+                    .layer(require_permission(&state, "products:write")),
+            ),
+        )
+        .route(
+            "/api/v1/products/update/{product_id}",
+            post(
+                handlers::products::update_product
+                    .layer(require_permission(&state, "products:write")),
+            ),
+        )
+        .route(
+            "/api/v1/products/disable/{product_id}",
+            post(
+                handlers::products::disable_product
+                    .layer(require_permission(&state, "products:write")),
+            ),
+        )
+        .route(
+            "/api/v1/products/delete/{product_id}",
+            post(
+                handlers::products::delete_product
+                    .layer(require_permission(&state, "products:write")),
+            ),
+        )
+        .route(
             "/api/v1/permissions/roles",
             get(handlers::permissions::list_roles
                 .layer(require_permission(&state, "system:permissions:read")))
