@@ -217,6 +217,325 @@
           }
         }
       }
+    },
+    "/api/v1/permissions/roles": {
+      "get": {
+        "tags": ["Permissions"],
+        "summary": "List roles",
+        "operationId": "listRoles",
+        "description": "Requires permission system:permissions:read.",
+        "security": [{ "AtlasSessionCookie": [] }],
+        "responses": {
+          "200": {
+            "description": "All roles ordered by priority, then code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/RoleResponse" }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/PermissionDenied" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      },
+      "post": {
+        "tags": ["Permissions"],
+        "summary": "Create role",
+        "operationId": "createRole",
+        "description": "Requires permission system:permissions:write. The role kind is immutable after creation. When priority is omitted, kind defaults apply: position=20, department=30, custom=40 (smaller wins; 0 is reserved for user-level policies).",
+        "security": [{ "AtlasSessionCookie": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateRoleRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Role created.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RoleResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/PermissionDenied" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/permissions/roles/{roleId}": {
+      "parameters": [
+        {
+          "name": "roleId",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string", "format": "uuid" }
+        }
+      ],
+      "get": {
+        "tags": ["Permissions"],
+        "summary": "Get role with parents",
+        "operationId": "getRole",
+        "description": "Requires permission system:permissions:read.",
+        "security": [{ "AtlasSessionCookie": [] }],
+        "responses": {
+          "200": {
+            "description": "Role detail including direct parent role ids.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RoleDetailResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/PermissionDenied" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      },
+      "patch": {
+        "tags": ["Permissions"],
+        "summary": "Update role name or priority",
+        "operationId": "updateRole",
+        "description": "Requires permission system:permissions:write. kind cannot be changed.",
+        "security": [{ "AtlasSessionCookie": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateRoleRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Role updated.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RoleResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/PermissionDenied" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      },
+      "delete": {
+        "tags": ["Permissions"],
+        "summary": "Delete role",
+        "operationId": "deleteRole",
+        "description": "Requires permission system:permissions:write. Also removes the role's policies, inheritance links, and user assignments.",
+        "security": [{ "AtlasSessionCookie": [] }],
+        "responses": {
+          "204": { "description": "Role deleted." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/PermissionDenied" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/permissions/roles/{roleId}/parents": {
+      "parameters": [
+        {
+          "name": "roleId",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string", "format": "uuid" }
+        }
+      ],
+      "put": {
+        "tags": ["Permissions"],
+        "summary": "Replace parent roles",
+        "operationId": "setRoleParents",
+        "description": "Requires permission system:permissions:write. Replaces the full parent set. The child role inherits every policy of its parents (e.g. sub-department inherits parent department). Cycles and inheritance chains deeper than 8 links are rejected.",
+        "security": [{ "AtlasSessionCookie": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SetRoleParentsRequest" }
+            }
+          }
+        },
+        "responses": {
+          "204": { "description": "Parent roles replaced." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/PermissionDenied" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/permissions/users/{userId}/roles": {
+      "parameters": [
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string", "format": "uuid" }
+        }
+      ],
+      "get": {
+        "tags": ["Permissions"],
+        "summary": "List a user's roles",
+        "operationId": "listUserRoles",
+        "description": "Requires permission system:permissions:read.",
+        "security": [{ "AtlasSessionCookie": [] }],
+        "responses": {
+          "200": {
+            "description": "Roles directly assigned to the user.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/UserRolesResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/PermissionDenied" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      },
+      "put": {
+        "tags": ["Permissions"],
+        "summary": "Replace a user's roles",
+        "operationId": "setUserRoles",
+        "description": "Requires permission system:permissions:write. Replaces the full role set of the user.",
+        "security": [{ "AtlasSessionCookie": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SetUserRolesRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated role assignments.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/UserRolesResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/PermissionDenied" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/permissions/policies": {
+      "get": {
+        "tags": ["Permissions"],
+        "summary": "List permission policies",
+        "operationId": "listPolicies",
+        "description": "Requires permission system:permissions:read.",
+        "security": [{ "AtlasSessionCookie": [] }],
+        "parameters": [
+          {
+            "name": "subject_kind",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "enum": ["user", "role"] }
+          },
+          {
+            "name": "subject_id",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Policies matching the optional subject filter.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/PolicyResponse" }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/PermissionDenied" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      },
+      "post": {
+        "tags": ["Permissions"],
+        "summary": "Create permission policy",
+        "operationId": "createPolicy",
+        "description": "Requires permission system:permissions:write. Objects are colon-separated scopes (e.g. finance:invoices). In policy objects, a trailing * matches all remaining segments and * matches one segment. Effect resolution: user policies override role policies; roles with smaller priority override larger; within the same priority, deny overrides allow.",
+        "security": [{ "AtlasSessionCookie": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreatePolicyRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Policy created and enforced on subsequent requests.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PolicyResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/PermissionDenied" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/permissions/policies/{policyId}": {
+      "parameters": [
+        {
+          "name": "policyId",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string", "format": "uuid" }
+        }
+      ],
+      "delete": {
+        "tags": ["Permissions"],
+        "summary": "Delete permission policy",
+        "operationId": "deletePolicy",
+        "description": "Requires permission system:permissions:write.",
+        "security": [{ "AtlasSessionCookie": [] }],
+        "responses": {
+          "204": { "description": "Policy deleted and no longer enforced." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/PermissionDenied" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
     }
   },
   "components": {
@@ -297,6 +616,148 @@
             "type": "string"
           }
         }
+      },
+      "CreateRoleRequest": {
+        "type": "object",
+        "required": ["code", "name", "kind"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Unique, stable role identifier."
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["position", "department", "custom"],
+            "description": "Immutable after creation. Determines the default priority layer."
+          },
+          "priority": {
+            "type": ["integer", "null"],
+            "minimum": 1,
+            "description": "Smaller values take precedence. Defaults by kind: position=20, department=30, custom=40."
+          }
+        }
+      },
+      "UpdateRoleRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": ["string", "null"],
+            "maxLength": 128
+          },
+          "priority": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          }
+        }
+      },
+      "RoleResponse": {
+        "type": "object",
+        "required": ["id", "code", "name", "kind", "priority", "created_at", "updated_at"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "code": { "type": "string" },
+          "name": { "type": "string" },
+          "kind": {
+            "type": "string",
+            "enum": ["position", "department", "custom"]
+          },
+          "priority": { "type": "integer" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "RoleDetailResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/RoleResponse" },
+          {
+            "type": "object",
+            "required": ["parent_role_ids"],
+            "properties": {
+              "parent_role_ids": {
+                "type": "array",
+                "items": { "type": "string", "format": "uuid" },
+                "description": "Direct parent roles whose policies this role inherits."
+              }
+            }
+          }
+        ]
+      },
+      "SetRoleParentsRequest": {
+        "type": "object",
+        "required": ["parent_role_ids"],
+        "properties": {
+          "parent_role_ids": {
+            "type": "array",
+            "items": { "type": "string", "format": "uuid" }
+          }
+        }
+      },
+      "SetUserRolesRequest": {
+        "type": "object",
+        "required": ["role_ids"],
+        "properties": {
+          "role_ids": {
+            "type": "array",
+            "items": { "type": "string", "format": "uuid" }
+          }
+        }
+      },
+      "UserRolesResponse": {
+        "type": "object",
+        "required": ["user_id", "roles"],
+        "properties": {
+          "user_id": { "type": "string", "format": "uuid" },
+          "roles": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/RoleResponse" }
+          }
+        }
+      },
+      "CreatePolicyRequest": {
+        "type": "object",
+        "required": ["subject_kind", "subject_id", "object", "action", "effect"],
+        "properties": {
+          "subject_kind": {
+            "type": "string",
+            "enum": ["user", "role"]
+          },
+          "subject_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "users.id when subject_kind=user, roles.id when subject_kind=role."
+          },
+          "object": {
+            "type": "string",
+            "maxLength": 255,
+            "description": "Colon-separated scope path, e.g. finance:invoices. May contain * segments; a trailing * matches all remaining segments."
+          },
+          "action": {
+            "type": "string",
+            "enum": ["read", "write", "approve", "*"]
+          },
+          "effect": {
+            "type": "string",
+            "enum": ["allow", "deny"]
+          }
+        }
+      },
+      "PolicyResponse": {
+        "type": "object",
+        "required": ["id", "subject_kind", "subject_id", "object", "action", "effect", "created_at"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "subject_kind": { "type": "string", "enum": ["user", "role"] },
+          "subject_id": { "type": "string", "format": "uuid" },
+          "object": { "type": "string" },
+          "action": { "type": "string" },
+          "effect": { "type": "string", "enum": ["allow", "deny"] },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
       }
     },
     "responses": {
@@ -322,6 +783,46 @@
       },
       "Forbidden": {
         "description": "The mapped user exists but is disabled.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "PermissionDenied": {
+        "description": "The authenticated user lacks the required permission (error code permission_denied), or the user is disabled.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "The referenced role, user, or policy does not exist.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "A role with the same code or an identical policy already exists.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "UnprocessableEntity": {
+        "description": "Validation failed: invalid kind/effect/action, empty segments, inheritance cycle, or chain too deep.",
         "content": {
           "application/json": {
             "schema": {

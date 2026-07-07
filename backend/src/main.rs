@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use backend::{
     app, config, db,
-    repositories::{sessions::SessionRepository, users::UserRepository},
-    services::auth::AuthService,
+    repositories::{authz::AuthzRepository, sessions::SessionRepository, users::UserRepository},
+    services::{auth::AuthService, authz::AuthzService},
     state::AppState,
 };
 use std::net::SocketAddr;
@@ -19,19 +19,23 @@ async fn main() -> Result<()> {
         "loaded application config"
     );
 
-    let _db = db::connect_and_migrate(&config.database)
+    let db = db::connect_and_migrate(&config.database)
         .await
         .context("failed to initialize database")?;
-    let users = UserRepository::new(_db.clone());
-    let sessions = SessionRepository::new(_db);
+    let users = UserRepository::new(db.clone());
+    let sessions = SessionRepository::new(db.clone());
     let auth = AuthService::new(
         config.dingtalk.clone(),
         users,
         sessions,
         config.session.ttl_seconds,
     );
+    let authz = AuthzService::new(AuthzRepository::new(db))
+        .await
+        .context("failed to initialize authorization service")?;
     let app = app::router(AppState::new(
         auth,
+        authz,
         config.auth.clone(),
         config.session.clone(),
     ));

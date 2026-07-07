@@ -173,8 +173,10 @@ mod tests {
         config::{AuthConfig, DatabaseConfig, DatabaseKind, DingTalkConfig, SessionConfig},
         db,
         entities::users as users_entity,
-        repositories::{sessions::SessionRepository, users::UserRepository},
-        services::auth::AuthService,
+        repositories::{
+            authz::AuthzRepository, sessions::SessionRepository, users::UserRepository,
+        },
+        services::{auth::AuthService, authz::AuthzService},
     };
     use axum::{
         Router,
@@ -466,7 +468,7 @@ mod tests {
             .await
             .expect("test database should initialize");
         let users = UserRepository::new(db.clone());
-        let sessions = SessionRepository::new(db);
+        let sessions = SessionRepository::new(db.clone());
         let auth = AuthService::new(
             DingTalkConfig {
                 client_id: "test-client-id".to_string(),
@@ -483,8 +485,12 @@ mod tests {
             sessions,
             86_400,
         );
+        let authz = AuthzService::new(AuthzRepository::new(db))
+            .await
+            .expect("test authz service should initialize");
         let state = AppState::new(
             auth,
+            authz,
             AuthConfig {
                 frontend_callback_url: "".to_string(),
             },

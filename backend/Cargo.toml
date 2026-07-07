@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 axum = "0.8"
 anyhow = "1"
+casbin = "2"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 config = "0.15"

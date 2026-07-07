@@ -1,3 +1,4 @@
+pub mod authz;
 pub mod sessions;
 pub mod users;
 
