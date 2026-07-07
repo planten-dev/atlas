@@ -29,6 +29,44 @@ pub fn router(state: AppState) -> Router {
             post(handlers::users::delete_user),
         )
         .route(
+            "/api/v1/product-categories/list",
+            get(handlers::product_categories::list_categories
+                .layer(require_permission(&state, "products:categories:read"))),
+        )
+        .route(
+            "/api/v1/product-categories/detail/{category_id}",
+            get(handlers::product_categories::category_detail
+                .layer(require_permission(&state, "products:categories:read"))),
+        )
+        .route(
+            "/api/v1/product-categories/create",
+            post(
+                handlers::product_categories::create_category
+                    .layer(require_permission(&state, "products:categories:write")),
+            ),
+        )
+        .route(
+            "/api/v1/product-categories/update/{category_id}",
+            post(
+                handlers::product_categories::update_category
+                    .layer(require_permission(&state, "products:categories:write")),
+            ),
+        )
+        .route(
+            "/api/v1/product-categories/disable/{category_id}",
+            post(
+                handlers::product_categories::disable_category
+                    .layer(require_permission(&state, "products:categories:write")),
+            ),
+        )
+        .route(
+            "/api/v1/product-categories/delete/{category_id}",
+            post(
+                handlers::product_categories::delete_category
+                    .layer(require_permission(&state, "products:categories:write")),
+            ),
+        )
+        .route(
             "/api/v1/products/list",
             get(handlers::products::list_products
                 .layer(require_permission(&state, "products:read"))),
@@ -75,9 +113,10 @@ pub fn router(state: AppState) -> Router {
             get(handlers::events::event_detail.layer(require_permission(&state, "events:read"))),
         )
         // approve/reject deliberately carry no static permission layer: the
-        // permission a reviewer needs is stored on the target event
-        // (required_approval_permission) and is only known after loading it,
-        // so EventService::review performs the check dynamically.
+        // permission a reviewer needs is declared per resource type
+        // (ReviewableResource::APPROVAL_PERMISSION) and is only known after
+        // loading the target event, so EventService::review performs the
+        // check dynamically.
         .route(
             "/api/v1/events/approve/{event_id}",
             post(handlers::events::approve_event),
@@ -85,6 +124,63 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/events/reject/{event_id}",
             post(handlers::events::reject_event),
+        )
+        .route(
+            "/api/v1/systems/list",
+            get(handlers::systems::list_systems.layer(require_permission(&state, "systems:read"))),
+        )
+        .route(
+            "/api/v1/systems/detail/{system_id}",
+            get(handlers::systems::system_detail.layer(require_permission(&state, "systems:read"))),
+        )
+        .route(
+            "/api/v1/systems/create",
+            post(
+                handlers::systems::create_system.layer(require_permission(&state, "systems:write")),
+            ),
+        )
+        .route(
+            "/api/v1/systems/update/{system_id}",
+            post(
+                handlers::systems::update_system.layer(require_permission(&state, "systems:write")),
+            ),
+        )
+        .route(
+            "/api/v1/systems/disable/{system_id}",
+            post(
+                handlers::systems::disable_system
+                    .layer(require_permission(&state, "systems:write")),
+            ),
+        )
+        .route(
+            "/api/v1/systems/delete/{system_id}",
+            post(
+                handlers::systems::delete_system.layer(require_permission(&state, "systems:write")),
+            ),
+        )
+        .route(
+            "/api/v1/stores/list",
+            get(handlers::stores::list_stores.layer(require_permission(&state, "stores:read"))),
+        )
+        .route(
+            "/api/v1/stores/detail/{store_id}",
+            get(handlers::stores::store_detail.layer(require_permission(&state, "stores:read"))),
+        )
+        .route(
+            "/api/v1/stores/create",
+            post(handlers::stores::create_store.layer(require_permission(&state, "stores:write"))),
+        )
+        .route(
+            "/api/v1/stores/update/{store_id}",
+            post(handlers::stores::update_store.layer(require_permission(&state, "stores:write"))),
+        )
+        .route(
+            "/api/v1/stores/disable/{store_id}",
+            post(handlers::stores::disable_store.layer(require_permission(&state, "stores:write"))),
+        )
+        .route(
+            "/api/v1/stores/delete/{store_id}",
+            post(handlers::stores::delete_store.layer(require_permission(&state, "stores:write"))),
         )
         .route(
             "/api/v1/permissions/roles",

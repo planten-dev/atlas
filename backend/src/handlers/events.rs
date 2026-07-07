@@ -183,17 +183,22 @@ mod tests {
         app,
         config::{AuthConfig, DatabaseConfig, DatabaseKind, DingTalkConfig, SessionConfig},
         db,
-        entities::products,
+        entities::{product_category, products},
         repositories::{
-            authz::AuthzRepository, events::EventRepository, products::ProductRepository,
-            sessions::SessionRepository, users::UserRepository,
+            authz::AuthzRepository, departments::DepartmentRepository, events::EventRepository,
+            product_categories::ProductCategoryRepository, products::ProductRepository,
+            sessions::SessionRepository, stores::StoreRepository, systems::SystemRepository,
+            users::UserRepository,
         },
         services::{
             auth::AuthService,
             authz::AuthzService,
             events::EventService,
+            product_categories::ProductCategoryService,
             products::ProductService,
             review::{ApplierRegistry, ApplyError, ReviewableResource},
+            stores::StoreService,
+            systems::SystemService,
             users::UserService,
         },
         state::AppState,
@@ -207,7 +212,7 @@ mod tests {
     };
     use chrono::{DateTime, Utc};
     use sea_orm::entity::prelude::Decimal;
-    use sea_orm::{ActiveModelTrait, DatabaseTransaction, Set};
+    use sea_orm::{ActiveModelTrait, DatabaseTransaction, EntityTrait, Set};
     use serde::{Deserialize, Serialize};
     use serde_json::{Value, json};
     use std::{path::PathBuf, str::FromStr, sync::Arc};
@@ -230,10 +235,15 @@ mod tests {
             tx: &DatabaseTransaction,
             now: DateTime<Utc>,
         ) -> Result<Uuid, ApplyError> {
+            // Products require a category; use one of the seeded defaults.
+            let category = product_category::Entity::find()
+                .one(tx)
+                .await?
+                .ok_or(ApplyError::ResourceMissing)?;
             let product = products::ActiveModel {
                 id: Set(Uuid::new_v4()),
                 name: Set(self.name),
-                category: Set(None),
+                category_id: Set(category.id),
                 series: Set(None),
                 brand_name: Set(None),
                 specification: Set(None),
@@ -536,7 +546,11 @@ mod tests {
             .expect("test database should initialize");
         let users = UserRepository::new(db.clone());
         let sessions = SessionRepository::new(db.clone());
+        let product_categories = ProductCategoryRepository::new(db.clone());
         let products = ProductRepository::new(db.clone());
+        let departments = DepartmentRepository::new(db.clone());
+        let systems = SystemRepository::new(db.clone());
+        let stores = StoreRepository::new(db.clone());
         let auth = AuthService::new(
             DingTalkConfig {
                 client_id: "test-client-id".to_string(),
@@ -559,7 +573,11 @@ mod tests {
             .await
             .expect("test authz service should initialize");
         let users_service = UserService::new(users.clone(), sessions);
-        let products_service = ProductService::new(products);
+        let product_categories_service =
+            ProductCategoryService::new(product_categories.clone(), products.clone());
+        let products_service = ProductService::new(products, product_categories);
+        let stores_service = StoreService::new(stores.clone(), systems.clone());
+        let systems_service = SystemService::new(systems, departments, stores);
         let mut registry = ApplierRegistry::new();
         registry.register::<TestProduct>();
         let events_service = EventService::new(
@@ -572,7 +590,10 @@ mod tests {
             auth,
             authz.clone(),
             users_service,
+            product_categories_service,
             products_service,
+            systems_service,
+            stores_service,
             events_service.clone(),
             AuthConfig {
                 frontend_callback_url: "".to_string(),

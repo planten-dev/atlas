@@ -2,18 +2,21 @@ use anyhow::{Context, Result};
 use backend::{
     app, config, db,
     repositories::{
-        authz::AuthzRepository, events::EventRepository, products::ProductRepository,
-        sessions::SessionRepository, users::UserRepository,
+        authz::AuthzRepository, departments::DepartmentRepository, events::EventRepository,
+        product_categories::ProductCategoryRepository, products::ProductRepository,
+        sessions::SessionRepository, stores::StoreRepository, systems::SystemRepository,
+        users::UserRepository,
     },
     services::{
-        auth::AuthService, authz::AuthzService, events::EventService, products::ProductService,
-        review::ApplierRegistry, users::UserService,
+        auth::AuthService, authz::AuthzService, events::EventService,
+        product_categories::ProductCategoryService, products::ProductService,
+        review::ApplierRegistry, stores::StoreService, systems::SystemService, users::UserService,
     },
     state::AppState,
 };
 use chrono::Utc;
-use std::{net::SocketAddr, sync::Arc, time::Duration};
-use tracing::{debug, error, info};
+use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -31,7 +34,11 @@ async fn main() -> Result<()> {
         .context("failed to initialize database")?;
     let users = UserRepository::new(db.clone());
     let sessions = SessionRepository::new(db.clone());
+    let product_categories = ProductCategoryRepository::new(db.clone());
     let products = ProductRepository::new(db.clone());
+    let departments = DepartmentRepository::new(db.clone());
+    let systems = SystemRepository::new(db.clone());
+    let stores = StoreRepository::new(db.clone());
     let auth = AuthService::new(
         config.dingtalk.clone(),
         users.clone(),
@@ -42,7 +49,11 @@ async fn main() -> Result<()> {
         .await
         .context("failed to initialize authorization service")?;
     let users = UserService::new(users, sessions);
-    let products = ProductService::new(products);
+    let product_categories_service =
+        ProductCategoryService::new(product_categories.clone(), products.clone());
+    let products = ProductService::new(products, product_categories);
+    let stores_service = StoreService::new(stores.clone(), systems.clone());
+    let systems = SystemService::new(systems, departments, stores);
 
     // Business tables opt into the review flow here as they adopt it, e.g.:
     // registry.register::<ProductDoc>();
@@ -62,7 +73,10 @@ async fn main() -> Result<()> {
         auth,
         authz,
         users,
+        product_categories_service,
         products,
+        systems,
+        stores_service,
         events,
         config.auth.clone(),
         config.session.clone(),
@@ -78,8 +92,11 @@ async fn main() -> Result<()> {
     info!(%addr, "starting HTTP server");
 
     axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
         .await
         .context("server exited unexpectedly")?;
+
+    info!("HTTP server stopped");
 
     Ok(())
 }
@@ -104,6 +121,80 @@ fn spawn_event_retention_sweeper(events: EventService, interval_seconds: u64) {
     });
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ShutdownSignal {
+    CtrlC,
+    Sigterm,
+}
+
+impl ShutdownSignal {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::CtrlC => "ctrl_c",
+            Self::Sigterm => "sigterm",
+        }
+    }
+}
+
+async fn shutdown_signal() {
+    let signal = wait_for_shutdown_signal().await;
+    info!(signal = signal.as_str(), "received shutdown signal");
+    info!("starting graceful shutdown");
+}
+
+async fn wait_for_shutdown_signal() -> ShutdownSignal {
+    let ctrl_c = async {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            warn!(%error, "failed to listen for Ctrl-C shutdown signal");
+        }
+    };
+
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        match signal(SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                select_shutdown_signal(
+                    ctrl_c,
+                    Some(async move {
+                        sigterm.recv().await;
+                    }),
+                )
+                .await
+            }
+            Err(error) => {
+                warn!(%error, "failed to listen for SIGTERM shutdown signal");
+                select_shutdown_signal(ctrl_c, None::<std::future::Pending<()>>).await
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        select_shutdown_signal(ctrl_c, None::<std::future::Pending<()>>).await
+    }
+}
+
+async fn select_shutdown_signal<C, T>(ctrl_c: C, sigterm: Option<T>) -> ShutdownSignal
+where
+    C: Future<Output = ()>,
+    T: Future<Output = ()>,
+{
+    if let Some(sigterm) = sigterm {
+        tokio::pin!(ctrl_c);
+        tokio::pin!(sigterm);
+
+        tokio::select! {
+            _ = &mut ctrl_c => ShutdownSignal::CtrlC,
+            _ = &mut sigterm => ShutdownSignal::Sigterm,
+        }
+    } else {
+        ctrl_c.await;
+        ShutdownSignal::CtrlC
+    }
+}
+
 fn init_tracing() {
     let filter = EnvFilter::try_from_env("ATLAS_LOG")
         .or_else(|_| EnvFilter::try_from_default_env())
@@ -113,4 +204,24 @@ fn init_tracing() {
         .with_env_filter(filter)
         .compact()
         .init();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::{pending, ready};
+
+    #[tokio::test]
+    async fn selects_ctrl_c_when_ctrl_c_completes_first() {
+        let signal = select_shutdown_signal(ready(()), Some(pending::<()>())).await;
+
+        assert_eq!(signal, ShutdownSignal::CtrlC);
+    }
+
+    #[tokio::test]
+    async fn selects_sigterm_when_sigterm_completes_first() {
+        let signal = select_shutdown_signal(pending::<()>(), Some(ready(()))).await;
+
+        assert_eq!(signal, ShutdownSignal::Sigterm);
+    }
 }

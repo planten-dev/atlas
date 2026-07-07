@@ -13,109 +13,109 @@ use uuid::Uuid;
 use crate::{
     dto::{
         auth::ErrorResponse,
-        products::{CreateProductRequest, ListProductsQuery, UpdateProductRequest},
+        systems::{CreateSystemRequest, ListSystemsQuery, UpdateSystemRequest},
     },
     repositories::RepositoryError,
-    services::products::ProductError,
+    services::systems::SystemError,
     state::AppState,
 };
 
-pub async fn list_products(
+pub async fn list_systems(
     State(state): State<AppState>,
-    query: Result<Query<ListProductsQuery>, QueryRejection>,
+    query: Result<Query<ListSystemsQuery>, QueryRejection>,
 ) -> Response {
     let query = match query {
         Ok(Query(query)) => query,
         Err(error) => return validation_error_response("invalid query parameters", error),
     };
 
-    match state.products.list_products(query).await {
+    match state.systems.list_systems(query).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => product_error_response(error),
+        Err(error) => system_error_response(error),
     }
 }
 
-pub async fn product_detail(
+pub async fn system_detail(
     State(state): State<AppState>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
-    let product_id = match path {
-        Ok(Path(product_id)) => product_id,
-        Err(error) => return validation_error_response("invalid product_id path parameter", error),
+    let system_id = match path {
+        Ok(Path(system_id)) => system_id,
+        Err(error) => return validation_error_response("invalid system_id path parameter", error),
     };
 
-    match state.products.product_detail(product_id).await {
+    match state.systems.system_detail(system_id).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => product_error_response(error),
+        Err(error) => system_error_response(error),
     }
 }
 
-pub async fn create_product(
+pub async fn create_system(
     State(state): State<AppState>,
-    request: Result<Json<CreateProductRequest>, JsonRejection>,
+    request: Result<Json<CreateSystemRequest>, JsonRejection>,
 ) -> Response {
     let request = match request {
         Ok(Json(request)) => request,
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
-    match state.products.create_product(request).await {
+    match state.systems.create_system(request).await {
         Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
-        Err(error) => product_error_response(error),
+        Err(error) => system_error_response(error),
     }
 }
 
-pub async fn update_product(
+pub async fn update_system(
     State(state): State<AppState>,
     path: Result<Path<Uuid>, PathRejection>,
-    request: Result<Json<UpdateProductRequest>, JsonRejection>,
+    request: Result<Json<UpdateSystemRequest>, JsonRejection>,
 ) -> Response {
-    let product_id = match path {
-        Ok(Path(product_id)) => product_id,
-        Err(error) => return validation_error_response("invalid product_id path parameter", error),
+    let system_id = match path {
+        Ok(Path(system_id)) => system_id,
+        Err(error) => return validation_error_response("invalid system_id path parameter", error),
     };
     let request = match request {
         Ok(Json(request)) => request,
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
-    match state.products.update_product(product_id, request).await {
+    match state.systems.update_system(system_id, request).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => product_error_response(error),
+        Err(error) => system_error_response(error),
     }
 }
 
-pub async fn disable_product(
+pub async fn disable_system(
     State(state): State<AppState>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
-    let product_id = match path {
-        Ok(Path(product_id)) => product_id,
-        Err(error) => return validation_error_response("invalid product_id path parameter", error),
+    let system_id = match path {
+        Ok(Path(system_id)) => system_id,
+        Err(error) => return validation_error_response("invalid system_id path parameter", error),
     };
 
-    match state.products.disable_product(product_id).await {
+    match state.systems.disable_system(system_id).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => product_error_response(error),
+        Err(error) => system_error_response(error),
     }
 }
 
-pub async fn delete_product(
+pub async fn delete_system(
     State(state): State<AppState>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
-    let product_id = match path {
-        Ok(Path(product_id)) => product_id,
-        Err(error) => return validation_error_response("invalid product_id path parameter", error),
+    let system_id = match path {
+        Ok(Path(system_id)) => system_id,
+        Err(error) => return validation_error_response("invalid system_id path parameter", error),
     };
 
-    match state.products.delete_product(product_id).await {
+    match state.systems.delete_system(system_id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(error) => product_error_response(error),
+        Err(error) => system_error_response(error),
     }
 }
 
-fn product_error_response(error: ProductError) -> Response {
+fn system_error_response(error: SystemError) -> Response {
     let status = status_code(&error);
     let code = error.code();
 
@@ -124,14 +124,14 @@ fn product_error_response(error: ProductError) -> Response {
             status = status.as_u16(),
             code,
             message = %error,
-            "product request failed"
+            "system request failed"
         );
     } else {
         warn!(
             status = status.as_u16(),
             code,
             message = %error,
-            "product request rejected"
+            "system request rejected"
         );
     }
 
@@ -146,7 +146,7 @@ fn product_error_response(error: ProductError) -> Response {
 }
 
 fn validation_error_response(error: &'static str, detail: impl std::fmt::Display) -> Response {
-    warn!(error, detail = %detail, "product request validation failed");
+    warn!(error, detail = %detail, "system request validation failed");
     (
         StatusCode::BAD_REQUEST,
         Json(ErrorResponse {
@@ -157,25 +157,20 @@ fn validation_error_response(error: &'static str, detail: impl std::fmt::Display
         .into_response()
 }
 
-fn status_code(error: &ProductError) -> StatusCode {
+fn status_code(error: &SystemError) -> StatusCode {
     match error {
-        ProductError::Repository(error) => match error {
+        SystemError::Repository(error) => match error {
             RepositoryError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
             RepositoryError::MissingRequiredField { .. } => StatusCode::BAD_REQUEST,
             RepositoryError::DisabledUser => StatusCode::FORBIDDEN,
         },
-        ProductError::ProductNotFound | ProductError::ProductCategoryNotFound => {
-            StatusCode::NOT_FOUND
-        }
-        ProductError::ProductCategoryDisabled
-        | ProductError::MissingRequiredField { .. }
-        | ProductError::FieldTooLong { .. }
-        | ProductError::InvalidStatus { .. }
-        | ProductError::InvalidUnitPrice { .. }
-        | ProductError::NegativeUnitPrice { .. }
-        | ProductError::UnitPriceTooLarge { .. }
-        | ProductError::InvalidPaginationMinimum { .. }
-        | ProductError::InvalidPaginationMaximum { .. } => StatusCode::BAD_REQUEST,
+        SystemError::SystemNotFound | SystemError::DepartmentNotFound => StatusCode::NOT_FOUND,
+        SystemError::SystemHasStores => StatusCode::CONFLICT,
+        SystemError::MissingRequiredField { .. }
+        | SystemError::FieldTooLong { .. }
+        | SystemError::InvalidStatus { .. }
+        | SystemError::InvalidPaginationMinimum { .. }
+        | SystemError::InvalidPaginationMaximum { .. } => StatusCode::BAD_REQUEST,
     }
 }
 
@@ -187,9 +182,14 @@ mod tests {
         config::{AuthConfig, DatabaseConfig, DatabaseKind, DingTalkConfig, SessionConfig},
         db,
         repositories::{
-            authz::AuthzRepository, departments::DepartmentRepository, events::EventRepository,
-            product_categories::ProductCategoryRepository, products::ProductRepository,
-            sessions::SessionRepository, stores::StoreRepository, systems::SystemRepository,
+            authz::AuthzRepository,
+            departments::DepartmentRepository,
+            events::EventRepository,
+            product_categories::ProductCategoryRepository,
+            products::ProductRepository,
+            sessions::SessionRepository,
+            stores::{NewStore, StoreRepository},
+            systems::SystemRepository,
             users::UserRepository,
         },
         services::{
@@ -214,37 +214,38 @@ mod tests {
         app: Router,
         users: UserRepository,
         authz: AuthzService,
-        product_categories: ProductCategoryRepository,
+        departments: DepartmentRepository,
+        stores: StoreRepository,
     }
 
     #[tokio::test]
-    async fn products_api_requires_session() {
+    async fn systems_api_requires_session() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
 
         let response = context
             .app
             .clone()
-            .oneshot(request(Method::GET, "/api/v1/products/list", None, None))
+            .oneshot(request(Method::GET, "/api/v1/systems/list", None, None))
             .await
-            .expect("products list request should be handled");
+            .expect("systems list request should be handled");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
         let response = context
             .app
             .oneshot(request(
                 Method::POST,
-                &format!("/api/v1/products/delete/{}", Uuid::new_v4()),
+                &format!("/api/v1/systems/delete/{}", Uuid::new_v4()),
                 None,
                 None,
             ))
             .await
-            .expect("product delete request should be handled");
+            .expect("system delete request should be handled");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
-    async fn session_without_product_permission_is_forbidden() {
+    async fn session_without_system_permission_is_forbidden() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
@@ -253,12 +254,12 @@ mod tests {
             .app
             .oneshot(request(
                 Method::GET,
-                "/api/v1/products/list",
+                "/api/v1/systems/list",
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("products list request should be handled");
+            .expect("systems list request should be handled");
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
         let body = response_json(response).await;
@@ -274,93 +275,78 @@ mod tests {
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        grant(&context, user_id, "products", "read").await;
+        let department_id = create_department(&context, "dept-a").await;
+        grant(&context, user_id, "systems", "read").await;
 
         let read_response = context
             .app
             .clone()
             .oneshot(request(
                 Method::GET,
-                "/api/v1/products/list",
+                "/api/v1/systems/list",
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("products list request should be handled");
+            .expect("systems list request should be handled");
         assert_eq!(read_response.status(), StatusCode::OK);
 
         let write_response = context
             .app
             .oneshot(request(
                 Method::POST,
-                "/api/v1/products/create",
+                "/api/v1/systems/create",
                 Some(&cookie),
-                Some(json!({"name": "product-a", "unit_price": "12.30"})),
+                Some(json!({"name": "system-a", "department_id": department_id})),
             ))
             .await
-            .expect("product create request should be handled");
+            .expect("system create request should be handled");
         assert_eq!(write_response.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
-    async fn product_crud_via_http() {
+    async fn system_crud_via_http() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        let category_id = default_category_id(&context).await;
-        let medical_category_id = medical_category_id(&context).await;
-        grant(&context, user_id, "products", "read").await;
-        grant(&context, user_id, "products", "write").await;
+        let department_a = create_department(&context, "dept-a").await;
+        let department_b = create_department(&context, "dept-b").await;
+        grant(&context, user_id, "systems", "read").await;
+        grant(&context, user_id, "systems", "write").await;
 
         let create_response = context
             .app
             .clone()
             .oneshot(request(
                 Method::POST,
-                "/api/v1/products/create",
+                "/api/v1/systems/create",
                 Some(&cookie),
                 Some(json!({
-                    "name": "product-a",
-                    "category_id": category_id,
-                    "series": "series-a",
-                    "brand_name": "brand-a",
-                    "specification": "spec-a",
-                    "unit": null,
-                    "unit_price": "12.3"
+                    "name": "system-a",
+                    "department_id": department_a
                 })),
             ))
             .await
-            .expect("product create request should be handled");
+            .expect("system create request should be handled");
         assert_eq!(create_response.status(), StatusCode::CREATED);
         let created = response_json(create_response).await;
         assert_eq!(
             created.pointer("/name").and_then(Value::as_str),
-            Some("product-a")
+            Some("system-a")
         );
         assert_eq!(
-            created.pointer("/category_id").and_then(Value::as_str),
-            Some(category_id.to_string().as_str())
+            created.pointer("/department_id").and_then(Value::as_str),
+            Some(department_a.to_string().as_str())
         );
         assert_eq!(
-            created.pointer("/category_name").and_then(Value::as_str),
-            Some("产品")
+            created.pointer("/status").and_then(Value::as_str),
+            Some("active")
         );
-        assert_eq!(
-            created
-                .pointer("/requires_operation_count")
-                .and_then(Value::as_bool),
-            Some(false)
-        );
-        assert_eq!(
-            created.pointer("/unit_price").and_then(Value::as_str),
-            Some("12.30")
-        );
-        assert_eq!(created.pointer("/unit"), Some(&Value::Null));
-        let product_id = created
+        let system_id = created
             .pointer("/id")
             .and_then(Value::as_str)
-            .expect("product id should be present")
+            .expect("system id should be present")
             .to_string();
 
         let list_response = context
@@ -369,13 +355,13 @@ mod tests {
             .oneshot(request(
                 Method::GET,
                 &format!(
-                    "/api/v1/products/list?status_filter=active&category_id={category_id}&page_number=1&page_size=20"
+                    "/api/v1/systems/list?status_filter=active&department_id={department_a}&page_number=1&page_size=20"
                 ),
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("products list request should be handled");
+            .expect("systems list request should be handled");
         assert_eq!(list_response.status(), StatusCode::OK);
         let list = response_json(list_response).await;
         assert_eq!(
@@ -383,8 +369,8 @@ mod tests {
             Some(1)
         );
         assert_eq!(
-            list.pointer("/products/0/id").and_then(Value::as_str),
-            Some(product_id.as_str())
+            list.pointer("/systems/0/id").and_then(Value::as_str),
+            Some(system_id.as_str())
         );
 
         let update_response = context
@@ -392,46 +378,24 @@ mod tests {
             .clone()
             .oneshot(request(
                 Method::POST,
-                &format!("/api/v1/products/update/{product_id}"),
+                &format!("/api/v1/systems/update/{system_id}"),
                 Some(&cookie),
                 Some(json!({
-                    "name": "product-b",
-                    "category_id": medical_category_id,
-                    "brand_name": null,
-                    "unit": "piece",
-                    "unit_price": "25"
+                    "name": "system-b",
+                    "department_id": department_b
                 })),
             ))
             .await
-            .expect("product update request should be handled");
+            .expect("system update request should be handled");
         assert_eq!(update_response.status(), StatusCode::OK);
         let updated = response_json(update_response).await;
         assert_eq!(
             updated.pointer("/name").and_then(Value::as_str),
-            Some("product-b")
+            Some("system-b")
         );
         assert_eq!(
-            updated.pointer("/category_id").and_then(Value::as_str),
-            Some(medical_category_id.to_string().as_str())
-        );
-        assert_eq!(
-            updated.pointer("/category_name").and_then(Value::as_str),
-            Some("医疗")
-        );
-        assert_eq!(
-            updated
-                .pointer("/requires_operation_count")
-                .and_then(Value::as_bool),
-            Some(true)
-        );
-        assert_eq!(updated.pointer("/brand_name"), Some(&Value::Null));
-        assert_eq!(
-            updated.pointer("/unit").and_then(Value::as_str),
-            Some("piece")
-        );
-        assert_eq!(
-            updated.pointer("/unit_price").and_then(Value::as_str),
-            Some("25.00")
+            updated.pointer("/department_id").and_then(Value::as_str),
+            Some(department_b.to_string().as_str())
         );
 
         let disable_response = context
@@ -439,12 +403,12 @@ mod tests {
             .clone()
             .oneshot(request(
                 Method::POST,
-                &format!("/api/v1/products/disable/{product_id}"),
+                &format!("/api/v1/systems/disable/{system_id}"),
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("product disable request should be handled");
+            .expect("system disable request should be handled");
         assert_eq!(disable_response.status(), StatusCode::OK);
         let disabled = response_json(disable_response).await;
         assert_eq!(
@@ -457,187 +421,178 @@ mod tests {
             .clone()
             .oneshot(request(
                 Method::POST,
-                &format!("/api/v1/products/delete/{product_id}"),
+                &format!("/api/v1/systems/delete/{system_id}"),
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("product delete request should be handled");
+            .expect("system delete request should be handled");
         assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
 
         let missing_detail = context
             .app
             .oneshot(request(
                 Method::GET,
-                &format!("/api/v1/products/detail/{product_id}"),
+                &format!("/api/v1/systems/detail/{system_id}"),
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("product detail request should be handled");
+            .expect("system detail request should be handled");
         assert_eq!(missing_detail.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
-    async fn product_api_validates_inputs_and_missing_products() {
+    async fn delete_system_with_stores_returns_conflict() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        let category_id = default_category_id(&context).await;
-        grant(&context, user_id, "products", "read").await;
-        grant(&context, user_id, "products", "write").await;
+        let department_id = create_department(&context, "dept-a").await;
+        grant(&context, user_id, "systems", "write").await;
+
+        let system = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/api/v1/systems/create",
+                Some(&cookie),
+                Some(json!({
+                    "name": "system-a",
+                    "department_id": department_id
+                })),
+            ))
+            .await
+            .expect("system create request should be handled");
+        assert_eq!(system.status(), StatusCode::CREATED);
+        let system = response_json(system).await;
+        let system_id = system
+            .pointer("/id")
+            .and_then(Value::as_str)
+            .and_then(|id| Uuid::parse_str(id).ok())
+            .expect("system id should be present");
+        context
+            .stores
+            .create_store(
+                NewStore {
+                    name: "store-a".to_string(),
+                    system_id,
+                    status: "active".to_string(),
+                },
+                chrono::Utc::now(),
+            )
+            .await
+            .expect("store should be created");
+
+        let delete_response = context
+            .app
+            .oneshot(request(
+                Method::POST,
+                &format!("/api/v1/systems/delete/{system_id}"),
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("system delete request should be handled");
+        assert_eq!(delete_response.status(), StatusCode::CONFLICT);
+        let body = response_json(delete_response).await;
+        assert_eq!(
+            body.pointer("/error").and_then(Value::as_str),
+            Some("system_has_stores")
+        );
+    }
+
+    #[tokio::test]
+    async fn system_api_validates_inputs_and_missing_resources() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let user_id = logged_in_user_id(&context).await;
+        let department_id = create_department(&context, "dept-a").await;
+        grant(&context, user_id, "systems", "read").await;
+        grant(&context, user_id, "systems", "write").await;
 
         for body in [
-            json!({"name": "", "unit_price": "12.30"}),
-            json!({"name": "product-a", "category_id": category_id, "unit_price": "12.345"}),
-            json!({"name": "product-a", "category_id": category_id, "unit_price": "-0.01"}),
-            json!({"name": "product-a", "category_id": category_id, "unit_price": "12.30", "status": "deleted"}),
+            json!({"name": "", "department_id": department_id}),
+            json!({"name": "system-a", "department_id": department_id, "status": "deleted"}),
         ] {
             let response = context
                 .app
                 .clone()
                 .oneshot(request(
                     Method::POST,
-                    "/api/v1/products/create",
+                    "/api/v1/systems/create",
                     Some(&cookie),
                     Some(body),
                 ))
                 .await
-                .expect("product create request should be handled");
+                .expect("system create request should be handled");
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         }
 
-        let invalid_query = context
+        let missing_department = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/api/v1/systems/create",
+                Some(&cookie),
+                Some(json!({"name": "system-a", "department_id": Uuid::new_v4()})),
+            ))
+            .await
+            .expect("system create request should be handled");
+        assert_eq!(missing_department.status(), StatusCode::NOT_FOUND);
+
+        let invalid_status_query = context
             .app
             .clone()
             .oneshot(request(
                 Method::GET,
-                "/api/v1/products/list?status_filter=deleted",
+                "/api/v1/systems/list?status_filter=deleted",
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("products list request should be handled");
-        assert_eq!(invalid_query.status(), StatusCode::BAD_REQUEST);
+            .expect("systems list request should be handled");
+        assert_eq!(invalid_status_query.status(), StatusCode::BAD_REQUEST);
 
-        let invalid_category_query = context
+        let invalid_department_query = context
             .app
             .clone()
             .oneshot(request(
                 Method::GET,
-                "/api/v1/products/list?category_id=not-a-uuid",
+                "/api/v1/systems/list?department_id=not-a-uuid",
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("products list request should be handled");
-        assert_eq!(invalid_category_query.status(), StatusCode::BAD_REQUEST);
-
-        let missing_category = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::POST,
-                "/api/v1/products/create",
-                Some(&cookie),
-                Some(json!({
-                    "name": "product-a",
-                    "category_id": Uuid::new_v4(),
-                    "unit_price": "12.30"
-                })),
-            ))
-            .await
-            .expect("product create request should be handled");
-        assert_eq!(missing_category.status(), StatusCode::NOT_FOUND);
-
-        let disabled_category_id = medical_category_id(&context).await;
-        let disabled_category = context
-            .product_categories
-            .find_by_id(disabled_category_id)
-            .await
-            .expect("category lookup should succeed")
-            .expect("category should exist");
-        context
-            .product_categories
-            .update_status(&disabled_category, "disabled", chrono::Utc::now())
-            .await
-            .expect("category should disable");
-        let disabled_category_response = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::POST,
-                "/api/v1/products/create",
-                Some(&cookie),
-                Some(json!({
-                    "name": "product-a",
-                    "category_id": disabled_category_id,
-                    "unit_price": "12.30"
-                })),
-            ))
-            .await
-            .expect("product create request should be handled");
-        assert_eq!(disabled_category_response.status(), StatusCode::BAD_REQUEST);
-
-        let create_response = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::POST,
-                "/api/v1/products/create",
-                Some(&cookie),
-                Some(json!({
-                    "name": "product-a",
-                    "category_id": category_id,
-                    "unit_price": "12.30"
-                })),
-            ))
-            .await
-            .expect("product create request should be handled");
-        assert_eq!(create_response.status(), StatusCode::CREATED);
-        let product = response_json(create_response).await;
-        let product_id = product
-            .pointer("/id")
-            .and_then(Value::as_str)
-            .expect("product id should be present");
-
-        let null_category = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::POST,
-                &format!("/api/v1/products/update/{product_id}"),
-                Some(&cookie),
-                Some(json!({"category_id": null})),
-            ))
-            .await
-            .expect("product update request should be handled");
-        assert_eq!(null_category.status(), StatusCode::BAD_REQUEST);
+            .expect("systems list request should be handled");
+        assert_eq!(invalid_department_query.status(), StatusCode::BAD_REQUEST);
 
         let invalid_id = context
             .app
             .clone()
             .oneshot(request(
                 Method::POST,
-                "/api/v1/products/update/not-a-uuid",
+                "/api/v1/systems/update/not-a-uuid",
                 Some(&cookie),
-                Some(json!({"name": "product-a"})),
+                Some(json!({"name": "system-a"})),
             ))
             .await
-            .expect("product update request should be handled");
+            .expect("system update request should be handled");
         assert_eq!(invalid_id.status(), StatusCode::BAD_REQUEST);
 
         let missing_delete = context
             .app
             .oneshot(request(
                 Method::POST,
-                &format!("/api/v1/products/delete/{}", Uuid::new_v4()),
+                &format!("/api/v1/systems/delete/{}", Uuid::new_v4()),
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("product delete request should be handled");
+            .expect("system delete request should be handled");
         assert_eq!(missing_delete.status(), StatusCode::NOT_FOUND);
     }
 
@@ -681,9 +636,9 @@ mod tests {
         let users_service = UserService::new(users.clone(), sessions);
         let product_categories_service =
             ProductCategoryService::new(product_categories.clone(), products.clone());
-        let products_service = ProductService::new(products, product_categories.clone());
+        let products_service = ProductService::new(products, product_categories);
         let stores_service = StoreService::new(stores.clone(), systems.clone());
-        let systems_service = SystemService::new(systems, departments, stores);
+        let systems_service = SystemService::new(systems, departments.clone(), stores.clone());
         let events_service = EventService::new(
             EventRepository::new(db),
             authz.clone(),
@@ -711,7 +666,8 @@ mod tests {
             app: app::router(state),
             users,
             authz,
-            product_categories,
+            departments,
+            stores,
         }
     }
 
@@ -795,23 +751,19 @@ mod tests {
             .id
     }
 
-    async fn default_category_id(context: &TestContext) -> Uuid {
+    async fn create_department(context: &TestContext, name: &str) -> Uuid {
         context
-            .product_categories
-            .find_by_category_name("产品")
+            .departments
+            .insert_department(
+                Uuid::new_v4(),
+                "manual",
+                name,
+                name,
+                None,
+                chrono::Utc::now(),
+            )
             .await
-            .expect("category lookup should work")
-            .expect("default category should exist")
-            .id
-    }
-
-    async fn medical_category_id(context: &TestContext) -> Uuid {
-        context
-            .product_categories
-            .find_by_category_name("医疗")
-            .await
-            .expect("category lookup should work")
-            .expect("medical category should exist")
+            .expect("department should be created")
             .id
     }
 

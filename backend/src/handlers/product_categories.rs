@@ -13,109 +13,123 @@ use uuid::Uuid;
 use crate::{
     dto::{
         auth::ErrorResponse,
-        products::{CreateProductRequest, ListProductsQuery, UpdateProductRequest},
+        product_categories::{
+            CreateProductCategoryRequest, ListProductCategoriesQuery, UpdateProductCategoryRequest,
+        },
     },
     repositories::RepositoryError,
-    services::products::ProductError,
+    services::product_categories::ProductCategoryError,
     state::AppState,
 };
 
-pub async fn list_products(
+pub async fn list_categories(
     State(state): State<AppState>,
-    query: Result<Query<ListProductsQuery>, QueryRejection>,
+    query: Result<Query<ListProductCategoriesQuery>, QueryRejection>,
 ) -> Response {
     let query = match query {
         Ok(Query(query)) => query,
         Err(error) => return validation_error_response("invalid query parameters", error),
     };
 
-    match state.products.list_products(query).await {
+    match state.product_categories.list_categories(query).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => product_error_response(error),
+        Err(error) => product_category_error_response(error),
     }
 }
 
-pub async fn product_detail(
+pub async fn category_detail(
     State(state): State<AppState>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
-    let product_id = match path {
-        Ok(Path(product_id)) => product_id,
-        Err(error) => return validation_error_response("invalid product_id path parameter", error),
+    let category_id = match path {
+        Ok(Path(category_id)) => category_id,
+        Err(error) => {
+            return validation_error_response("invalid category_id path parameter", error);
+        }
     };
 
-    match state.products.product_detail(product_id).await {
+    match state.product_categories.category_detail(category_id).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => product_error_response(error),
+        Err(error) => product_category_error_response(error),
     }
 }
 
-pub async fn create_product(
+pub async fn create_category(
     State(state): State<AppState>,
-    request: Result<Json<CreateProductRequest>, JsonRejection>,
+    request: Result<Json<CreateProductCategoryRequest>, JsonRejection>,
 ) -> Response {
     let request = match request {
         Ok(Json(request)) => request,
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
-    match state.products.create_product(request).await {
+    match state.product_categories.create_category(request).await {
         Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
-        Err(error) => product_error_response(error),
+        Err(error) => product_category_error_response(error),
     }
 }
 
-pub async fn update_product(
+pub async fn update_category(
     State(state): State<AppState>,
     path: Result<Path<Uuid>, PathRejection>,
-    request: Result<Json<UpdateProductRequest>, JsonRejection>,
+    request: Result<Json<UpdateProductCategoryRequest>, JsonRejection>,
 ) -> Response {
-    let product_id = match path {
-        Ok(Path(product_id)) => product_id,
-        Err(error) => return validation_error_response("invalid product_id path parameter", error),
+    let category_id = match path {
+        Ok(Path(category_id)) => category_id,
+        Err(error) => {
+            return validation_error_response("invalid category_id path parameter", error);
+        }
     };
     let request = match request {
         Ok(Json(request)) => request,
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
-    match state.products.update_product(product_id, request).await {
+    match state
+        .product_categories
+        .update_category(category_id, request)
+        .await
+    {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => product_error_response(error),
+        Err(error) => product_category_error_response(error),
     }
 }
 
-pub async fn disable_product(
+pub async fn disable_category(
     State(state): State<AppState>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
-    let product_id = match path {
-        Ok(Path(product_id)) => product_id,
-        Err(error) => return validation_error_response("invalid product_id path parameter", error),
+    let category_id = match path {
+        Ok(Path(category_id)) => category_id,
+        Err(error) => {
+            return validation_error_response("invalid category_id path parameter", error);
+        }
     };
 
-    match state.products.disable_product(product_id).await {
+    match state.product_categories.disable_category(category_id).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => product_error_response(error),
+        Err(error) => product_category_error_response(error),
     }
 }
 
-pub async fn delete_product(
+pub async fn delete_category(
     State(state): State<AppState>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
-    let product_id = match path {
-        Ok(Path(product_id)) => product_id,
-        Err(error) => return validation_error_response("invalid product_id path parameter", error),
+    let category_id = match path {
+        Ok(Path(category_id)) => category_id,
+        Err(error) => {
+            return validation_error_response("invalid category_id path parameter", error);
+        }
     };
 
-    match state.products.delete_product(product_id).await {
+    match state.product_categories.delete_category(category_id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(error) => product_error_response(error),
+        Err(error) => product_category_error_response(error),
     }
 }
 
-fn product_error_response(error: ProductError) -> Response {
+fn product_category_error_response(error: ProductCategoryError) -> Response {
     let status = status_code(&error);
     let code = error.code();
 
@@ -124,14 +138,14 @@ fn product_error_response(error: ProductError) -> Response {
             status = status.as_u16(),
             code,
             message = %error,
-            "product request failed"
+            "product category request failed"
         );
     } else {
         warn!(
             status = status.as_u16(),
             code,
             message = %error,
-            "product request rejected"
+            "product category request rejected"
         );
     }
 
@@ -146,7 +160,7 @@ fn product_error_response(error: ProductError) -> Response {
 }
 
 fn validation_error_response(error: &'static str, detail: impl std::fmt::Display) -> Response {
-    warn!(error, detail = %detail, "product request validation failed");
+    warn!(error, detail = %detail, "product category request validation failed");
     (
         StatusCode::BAD_REQUEST,
         Json(ErrorResponse {
@@ -157,25 +171,21 @@ fn validation_error_response(error: &'static str, detail: impl std::fmt::Display
         .into_response()
 }
 
-fn status_code(error: &ProductError) -> StatusCode {
+fn status_code(error: &ProductCategoryError) -> StatusCode {
     match error {
-        ProductError::Repository(error) => match error {
+        ProductCategoryError::Repository(error) => match error {
             RepositoryError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
             RepositoryError::MissingRequiredField { .. } => StatusCode::BAD_REQUEST,
             RepositoryError::DisabledUser => StatusCode::FORBIDDEN,
         },
-        ProductError::ProductNotFound | ProductError::ProductCategoryNotFound => {
-            StatusCode::NOT_FOUND
-        }
-        ProductError::ProductCategoryDisabled
-        | ProductError::MissingRequiredField { .. }
-        | ProductError::FieldTooLong { .. }
-        | ProductError::InvalidStatus { .. }
-        | ProductError::InvalidUnitPrice { .. }
-        | ProductError::NegativeUnitPrice { .. }
-        | ProductError::UnitPriceTooLarge { .. }
-        | ProductError::InvalidPaginationMinimum { .. }
-        | ProductError::InvalidPaginationMaximum { .. } => StatusCode::BAD_REQUEST,
+        ProductCategoryError::CategoryNotFound => StatusCode::NOT_FOUND,
+        ProductCategoryError::CategoryNameAlreadyExists
+        | ProductCategoryError::CategoryHasProducts => StatusCode::CONFLICT,
+        ProductCategoryError::MissingRequiredField { .. }
+        | ProductCategoryError::FieldTooLong { .. }
+        | ProductCategoryError::InvalidStatus { .. }
+        | ProductCategoryError::InvalidPaginationMinimum { .. }
+        | ProductCategoryError::InvalidPaginationMaximum { .. } => StatusCode::BAD_REQUEST,
     }
 }
 
@@ -214,37 +224,41 @@ mod tests {
         app: Router,
         users: UserRepository,
         authz: AuthzService,
-        product_categories: ProductCategoryRepository,
     }
 
     #[tokio::test]
-    async fn products_api_requires_session() {
+    async fn product_categories_api_requires_session() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
 
         let response = context
             .app
             .clone()
-            .oneshot(request(Method::GET, "/api/v1/products/list", None, None))
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/product-categories/list",
+                None,
+                None,
+            ))
             .await
-            .expect("products list request should be handled");
+            .expect("category list request should be handled");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
         let response = context
             .app
             .oneshot(request(
                 Method::POST,
-                &format!("/api/v1/products/delete/{}", Uuid::new_v4()),
+                &format!("/api/v1/product-categories/delete/{}", Uuid::new_v4()),
                 None,
                 None,
             ))
             .await
-            .expect("product delete request should be handled");
+            .expect("category delete request should be handled");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
-    async fn session_without_product_permission_is_forbidden() {
+    async fn session_without_category_permission_is_forbidden() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
@@ -253,12 +267,12 @@ mod tests {
             .app
             .oneshot(request(
                 Method::GET,
-                "/api/v1/products/list",
+                "/api/v1/product-categories/list",
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("products list request should be handled");
+            .expect("category list request should be handled");
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
         let body = response_json(response).await;
@@ -274,93 +288,76 @@ mod tests {
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        grant(&context, user_id, "products", "read").await;
+        grant(&context, user_id, "products:categories", "read").await;
 
         let read_response = context
             .app
             .clone()
             .oneshot(request(
                 Method::GET,
-                "/api/v1/products/list",
+                "/api/v1/product-categories/list",
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("products list request should be handled");
+            .expect("category list request should be handled");
         assert_eq!(read_response.status(), StatusCode::OK);
 
         let write_response = context
             .app
             .oneshot(request(
                 Method::POST,
-                "/api/v1/products/create",
+                "/api/v1/product-categories/create",
                 Some(&cookie),
-                Some(json!({"name": "product-a", "unit_price": "12.30"})),
+                Some(json!({
+                    "category_name": "custom",
+                    "requires_operation_count": true
+                })),
             ))
             .await
-            .expect("product create request should be handled");
+            .expect("category create request should be handled");
         assert_eq!(write_response.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
-    async fn product_crud_via_http() {
+    async fn product_category_crud_via_http() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        let category_id = default_category_id(&context).await;
-        let medical_category_id = medical_category_id(&context).await;
-        grant(&context, user_id, "products", "read").await;
-        grant(&context, user_id, "products", "write").await;
+        grant(&context, user_id, "products:categories", "read").await;
+        grant(&context, user_id, "products:categories", "write").await;
 
         let create_response = context
             .app
             .clone()
             .oneshot(request(
                 Method::POST,
-                "/api/v1/products/create",
+                "/api/v1/product-categories/create",
                 Some(&cookie),
                 Some(json!({
-                    "name": "product-a",
-                    "category_id": category_id,
-                    "series": "series-a",
-                    "brand_name": "brand-a",
-                    "specification": "spec-a",
-                    "unit": null,
-                    "unit_price": "12.3"
+                    "category_name": "custom",
+                    "requires_operation_count": true
                 })),
             ))
             .await
-            .expect("product create request should be handled");
+            .expect("category create request should be handled");
         assert_eq!(create_response.status(), StatusCode::CREATED);
         let created = response_json(create_response).await;
         assert_eq!(
-            created.pointer("/name").and_then(Value::as_str),
-            Some("product-a")
-        );
-        assert_eq!(
-            created.pointer("/category_id").and_then(Value::as_str),
-            Some(category_id.to_string().as_str())
-        );
-        assert_eq!(
             created.pointer("/category_name").and_then(Value::as_str),
-            Some("产品")
+            Some("custom")
         );
         assert_eq!(
             created
                 .pointer("/requires_operation_count")
                 .and_then(Value::as_bool),
-            Some(false)
+            Some(true)
         );
-        assert_eq!(
-            created.pointer("/unit_price").and_then(Value::as_str),
-            Some("12.30")
-        );
-        assert_eq!(created.pointer("/unit"), Some(&Value::Null));
-        let product_id = created
+        let category_id = created
             .pointer("/id")
             .and_then(Value::as_str)
-            .expect("product id should be present")
+            .expect("category id should be present")
             .to_string();
 
         let list_response = context
@@ -368,70 +365,58 @@ mod tests {
             .clone()
             .oneshot(request(
                 Method::GET,
-                &format!(
-                    "/api/v1/products/list?status_filter=active&category_id={category_id}&page_number=1&page_size=20"
-                ),
+                "/api/v1/product-categories/list?status_filter=active&requires_operation_count_filter=true&page_number=1&page_size=20",
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("products list request should be handled");
+            .expect("category list request should be handled");
         assert_eq!(list_response.status(), StatusCode::OK);
         let list = response_json(list_response).await;
-        assert_eq!(
-            list.pointer("/total_count").and_then(Value::as_u64),
-            Some(1)
+        assert!(
+            list.pointer("/total_count")
+                .and_then(Value::as_u64)
+                .is_some_and(|count| count >= 4)
         );
-        assert_eq!(
-            list.pointer("/products/0/id").and_then(Value::as_str),
-            Some(product_id.as_str())
-        );
+
+        let detail_response = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                &format!("/api/v1/product-categories/detail/{category_id}"),
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("category detail request should be handled");
+        assert_eq!(detail_response.status(), StatusCode::OK);
 
         let update_response = context
             .app
             .clone()
             .oneshot(request(
                 Method::POST,
-                &format!("/api/v1/products/update/{product_id}"),
+                &format!("/api/v1/product-categories/update/{category_id}"),
                 Some(&cookie),
                 Some(json!({
-                    "name": "product-b",
-                    "category_id": medical_category_id,
-                    "brand_name": null,
-                    "unit": "piece",
-                    "unit_price": "25"
+                    "category_name": "custom-updated",
+                    "requires_operation_count": false
                 })),
             ))
             .await
-            .expect("product update request should be handled");
+            .expect("category update request should be handled");
         assert_eq!(update_response.status(), StatusCode::OK);
         let updated = response_json(update_response).await;
         assert_eq!(
-            updated.pointer("/name").and_then(Value::as_str),
-            Some("product-b")
-        );
-        assert_eq!(
-            updated.pointer("/category_id").and_then(Value::as_str),
-            Some(medical_category_id.to_string().as_str())
-        );
-        assert_eq!(
             updated.pointer("/category_name").and_then(Value::as_str),
-            Some("医疗")
+            Some("custom-updated")
         );
         assert_eq!(
             updated
                 .pointer("/requires_operation_count")
                 .and_then(Value::as_bool),
-            Some(true)
-        );
-        assert_eq!(updated.pointer("/brand_name"), Some(&Value::Null));
-        assert_eq!(
-            updated.pointer("/unit").and_then(Value::as_str),
-            Some("piece")
-        );
-        assert_eq!(
-            updated.pointer("/unit_price").and_then(Value::as_str),
-            Some("25.00")
+            Some(false)
         );
 
         let disable_response = context
@@ -439,12 +424,12 @@ mod tests {
             .clone()
             .oneshot(request(
                 Method::POST,
-                &format!("/api/v1/products/disable/{product_id}"),
+                &format!("/api/v1/product-categories/disable/{category_id}"),
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("product disable request should be handled");
+            .expect("category disable request should be handled");
         assert_eq!(disable_response.status(), StatusCode::OK);
         let disabled = response_json(disable_response).await;
         assert_eq!(
@@ -457,130 +442,58 @@ mod tests {
             .clone()
             .oneshot(request(
                 Method::POST,
-                &format!("/api/v1/products/delete/{product_id}"),
+                &format!("/api/v1/product-categories/delete/{category_id}"),
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("product delete request should be handled");
+            .expect("category delete request should be handled");
         assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
 
         let missing_detail = context
             .app
             .oneshot(request(
                 Method::GET,
-                &format!("/api/v1/products/detail/{product_id}"),
+                &format!("/api/v1/product-categories/detail/{category_id}"),
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("product detail request should be handled");
+            .expect("category detail request should be handled");
         assert_eq!(missing_detail.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
-    async fn product_api_validates_inputs_and_missing_products() {
+    async fn product_category_delete_with_products_returns_conflict() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        let category_id = default_category_id(&context).await;
-        grant(&context, user_id, "products", "read").await;
+        grant(&context, user_id, "products:categories", "write").await;
         grant(&context, user_id, "products", "write").await;
 
-        for body in [
-            json!({"name": "", "unit_price": "12.30"}),
-            json!({"name": "product-a", "category_id": category_id, "unit_price": "12.345"}),
-            json!({"name": "product-a", "category_id": category_id, "unit_price": "-0.01"}),
-            json!({"name": "product-a", "category_id": category_id, "unit_price": "12.30", "status": "deleted"}),
-        ] {
-            let response = context
-                .app
-                .clone()
-                .oneshot(request(
-                    Method::POST,
-                    "/api/v1/products/create",
-                    Some(&cookie),
-                    Some(body),
-                ))
-                .await
-                .expect("product create request should be handled");
-            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        }
-
-        let invalid_query = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::GET,
-                "/api/v1/products/list?status_filter=deleted",
-                Some(&cookie),
-                None,
-            ))
-            .await
-            .expect("products list request should be handled");
-        assert_eq!(invalid_query.status(), StatusCode::BAD_REQUEST);
-
-        let invalid_category_query = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::GET,
-                "/api/v1/products/list?category_id=not-a-uuid",
-                Some(&cookie),
-                None,
-            ))
-            .await
-            .expect("products list request should be handled");
-        assert_eq!(invalid_category_query.status(), StatusCode::BAD_REQUEST);
-
-        let missing_category = context
+        let category_response = context
             .app
             .clone()
             .oneshot(request(
                 Method::POST,
-                "/api/v1/products/create",
+                "/api/v1/product-categories/create",
                 Some(&cookie),
                 Some(json!({
-                    "name": "product-a",
-                    "category_id": Uuid::new_v4(),
-                    "unit_price": "12.30"
+                    "category_name": "referenced",
+                    "requires_operation_count": true
                 })),
             ))
             .await
-            .expect("product create request should be handled");
-        assert_eq!(missing_category.status(), StatusCode::NOT_FOUND);
+            .expect("category create request should be handled");
+        assert_eq!(category_response.status(), StatusCode::CREATED);
+        let category = response_json(category_response).await;
+        let category_id = category
+            .pointer("/id")
+            .and_then(Value::as_str)
+            .expect("category id should be present");
 
-        let disabled_category_id = medical_category_id(&context).await;
-        let disabled_category = context
-            .product_categories
-            .find_by_id(disabled_category_id)
-            .await
-            .expect("category lookup should succeed")
-            .expect("category should exist");
-        context
-            .product_categories
-            .update_status(&disabled_category, "disabled", chrono::Utc::now())
-            .await
-            .expect("category should disable");
-        let disabled_category_response = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::POST,
-                "/api/v1/products/create",
-                Some(&cookie),
-                Some(json!({
-                    "name": "product-a",
-                    "category_id": disabled_category_id,
-                    "unit_price": "12.30"
-                })),
-            ))
-            .await
-            .expect("product create request should be handled");
-        assert_eq!(disabled_category_response.status(), StatusCode::BAD_REQUEST);
-
-        let create_response = context
+        let product_response = context
             .app
             .clone()
             .oneshot(request(
@@ -595,49 +508,121 @@ mod tests {
             ))
             .await
             .expect("product create request should be handled");
-        assert_eq!(create_response.status(), StatusCode::CREATED);
-        let product = response_json(create_response).await;
-        let product_id = product
-            .pointer("/id")
-            .and_then(Value::as_str)
-            .expect("product id should be present");
+        assert_eq!(product_response.status(), StatusCode::CREATED);
 
-        let null_category = context
+        let delete_response = context
+            .app
+            .oneshot(request(
+                Method::POST,
+                &format!("/api/v1/product-categories/delete/{category_id}"),
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("category delete request should be handled");
+        assert_eq!(delete_response.status(), StatusCode::CONFLICT);
+        let body = response_json(delete_response).await;
+        assert_eq!(
+            body.pointer("/error").and_then(Value::as_str),
+            Some("product_category_has_products")
+        );
+    }
+
+    #[tokio::test]
+    async fn product_category_api_validates_inputs_and_missing_categories() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let user_id = logged_in_user_id(&context).await;
+        grant(&context, user_id, "products:categories", "read").await;
+        grant(&context, user_id, "products:categories", "write").await;
+
+        for body in [
+            json!({"category_name": "", "requires_operation_count": true}),
+            json!({"category_name": "custom", "requires_operation_count": true, "status": "deleted"}),
+        ] {
+            let response = context
+                .app
+                .clone()
+                .oneshot(request(
+                    Method::POST,
+                    "/api/v1/product-categories/create",
+                    Some(&cookie),
+                    Some(body),
+                ))
+                .await
+                .expect("category create request should be handled");
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+
+        let first = context
             .app
             .clone()
             .oneshot(request(
                 Method::POST,
-                &format!("/api/v1/products/update/{product_id}"),
+                "/api/v1/product-categories/create",
                 Some(&cookie),
-                Some(json!({"category_id": null})),
+                Some(json!({
+                    "category_name": "duplicate",
+                    "requires_operation_count": true
+                })),
             ))
             .await
-            .expect("product update request should be handled");
-        assert_eq!(null_category.status(), StatusCode::BAD_REQUEST);
+            .expect("category create request should be handled");
+        assert_eq!(first.status(), StatusCode::CREATED);
+
+        let duplicate = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/api/v1/product-categories/create",
+                Some(&cookie),
+                Some(json!({
+                    "category_name": "duplicate",
+                    "requires_operation_count": false
+                })),
+            ))
+            .await
+            .expect("category create request should be handled");
+        assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+
+        let invalid_query = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/product-categories/list?status_filter=deleted",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("category list request should be handled");
+        assert_eq!(invalid_query.status(), StatusCode::BAD_REQUEST);
 
         let invalid_id = context
             .app
             .clone()
             .oneshot(request(
                 Method::POST,
-                "/api/v1/products/update/not-a-uuid",
+                "/api/v1/product-categories/update/not-a-uuid",
                 Some(&cookie),
-                Some(json!({"name": "product-a"})),
+                Some(json!({"category_name": "custom"})),
             ))
             .await
-            .expect("product update request should be handled");
+            .expect("category update request should be handled");
         assert_eq!(invalid_id.status(), StatusCode::BAD_REQUEST);
 
         let missing_delete = context
             .app
             .oneshot(request(
                 Method::POST,
-                &format!("/api/v1/products/delete/{}", Uuid::new_v4()),
+                &format!("/api/v1/product-categories/delete/{}", Uuid::new_v4()),
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("product delete request should be handled");
+            .expect("category delete request should be handled");
         assert_eq!(missing_delete.status(), StatusCode::NOT_FOUND);
     }
 
@@ -681,7 +666,7 @@ mod tests {
         let users_service = UserService::new(users.clone(), sessions);
         let product_categories_service =
             ProductCategoryService::new(product_categories.clone(), products.clone());
-        let products_service = ProductService::new(products, product_categories.clone());
+        let products_service = ProductService::new(products, product_categories);
         let stores_service = StoreService::new(stores.clone(), systems.clone());
         let systems_service = SystemService::new(systems, departments, stores);
         let events_service = EventService::new(
@@ -711,7 +696,6 @@ mod tests {
             app: app::router(state),
             users,
             authz,
-            product_categories,
         }
     }
 
@@ -792,26 +776,6 @@ mod tests {
             .await
             .expect("user lookup should work")
             .expect("logged in user should exist")
-            .id
-    }
-
-    async fn default_category_id(context: &TestContext) -> Uuid {
-        context
-            .product_categories
-            .find_by_category_name("产品")
-            .await
-            .expect("category lookup should work")
-            .expect("default category should exist")
-            .id
-    }
-
-    async fn medical_category_id(context: &TestContext) -> Uuid {
-        context
-            .product_categories
-            .find_by_category_name("医疗")
-            .await
-            .expect("category lookup should work")
-            .expect("medical category should exist")
             .id
     }
 

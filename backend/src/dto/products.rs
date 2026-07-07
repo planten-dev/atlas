@@ -3,13 +3,18 @@ use sea_orm::entity::prelude::Decimal;
 use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
-use crate::entities::products;
+use crate::{
+    dto::product_categories::ProductCategorySummary,
+    entities::{product_category, products},
+};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ProductResponse {
     pub id: Uuid,
     pub name: String,
-    pub category: Option<String>,
+    pub category_id: Uuid,
+    pub category_name: String,
+    pub requires_operation_count: bool,
     pub series: Option<String>,
     pub brand_name: Option<String>,
     pub specification: Option<String>,
@@ -28,12 +33,15 @@ pub struct ListProductsResponse {
     pub total_count: u64,
 }
 
-impl From<products::Model> for ProductResponse {
-    fn from(product: products::Model) -> Self {
+impl ProductResponse {
+    pub fn from_model(product: products::Model, category: product_category::Model) -> Self {
+        let category_summary = ProductCategorySummary::from(&category);
         Self {
             id: product.id,
             name: product.name,
-            category: product.category,
+            category_id: category_summary.category_id,
+            category_name: category_summary.category_name,
+            requires_operation_count: category_summary.requires_operation_count,
             series: product.series,
             brand_name: product.brand_name,
             specification: product.specification,
@@ -49,6 +57,7 @@ impl From<products::Model> for ProductResponse {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ListProductsQuery {
     pub status_filter: Option<String>,
+    pub category_id: Option<Uuid>,
     pub page_number: Option<u64>,
     pub page_size: Option<u64>,
 }
@@ -57,8 +66,7 @@ pub struct ListProductsQuery {
 #[serde(deny_unknown_fields)]
 pub struct CreateProductRequest {
     pub name: String,
-    #[serde(default)]
-    pub category: Option<String>,
+    pub category_id: Uuid,
     #[serde(default)]
     pub series: Option<String>,
     #[serde(default)]
@@ -78,7 +86,7 @@ pub struct UpdateProductRequest {
     #[serde(default)]
     pub name: PatchField<String>,
     #[serde(default)]
-    pub category: PatchField<String>,
+    pub category_id: PatchField<Uuid>,
     #[serde(default)]
     pub series: PatchField<String>,
     #[serde(default)]

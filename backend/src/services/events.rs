@@ -619,7 +619,7 @@ mod tests {
     use crate::{
         config::{DatabaseConfig, DatabaseKind},
         db,
-        entities::products,
+        entities::{product_category, products},
         repositories::{authz::AuthzRepository, users::UserRepository},
         services::review::ReviewableResource,
     };
@@ -649,10 +649,15 @@ mod tests {
             tx: &DatabaseTransaction,
             now: DateTime<Utc>,
         ) -> Result<Uuid, ApplyError> {
+            // Products require a category; use one of the seeded defaults.
+            let category = product_category::Entity::find()
+                .one(tx)
+                .await?
+                .ok_or(ApplyError::ResourceMissing)?;
             let product = products::ActiveModel {
                 id: Set(Uuid::new_v4()),
                 name: Set(self.name),
-                category: Set(None),
+                category_id: Set(category.id),
                 series: Set(None),
                 brand_name: Set(None),
                 specification: Set(None),
