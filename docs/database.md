@@ -78,3 +78,29 @@ CREATE TABLE users (
 | `disabled` | 用户记录已被停用，不应作为正常用户继续使用。 |
 
 `status` 默认值为 `active`，用户首次登录自动创建记录时默认进入正常状态。后续如需要停用用户，只更新该字段，不改变用户的 `id` 或 `dingtalk_user_id` 映射关系。
+
+## systems 表
+
+`systems` 表用于存储门店体系基础信息。
+
+### 字段说明
+
+| 字段 | 类型示例 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `UUID` | 是 | 体系唯一标识，作为 `systems` 表主键。 |
+| `name` | `VARCHAR(128)` | 是 | 体系名称。 |
+| `department_id` | `VARCHAR(128)` | 是 | 所属部门 id。 |
+| `status` | `VARCHAR(32)` | 是 | 体系状态，用于标识体系是否启用。 |
+| `created_at` | `TIMESTAMPTZ` | 是 | 体系记录创建时间。 |
+| `updated_at` | `TIMESTAMPTZ` | 是 | 体系记录最后更新时间。 |
+
+## systems 表设计原则
+
+- `id` 是系统内部唯一体系标识，也是 `systems` 表的主键。
+- `name` 是体系名称，不允许为空。
+- `department_id` 用于存储本地部门 id，不允许为空。
+- `status` 用于标识体系状态，例如启用、禁用。
+- `created_at` 表示体系记录创建时间，创建后不应被应用逻辑主动修改。
+- `updated_at` 表示体系记录最后更新时间，每次更新体系记录或状态时同步更新。
+- 必须保留 `created_at` 和 `updated_at` 时间审计字段。
+- 当前阶段不设计权限关联。
