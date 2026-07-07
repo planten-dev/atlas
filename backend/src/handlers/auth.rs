@@ -174,7 +174,7 @@ mod tests {
         db,
         entities::users as users_entity,
         repositories::{sessions::SessionRepository, users::UserRepository},
-        services::auth::AuthService,
+        services::{auth::AuthService, users::UserService},
     };
     use axum::{
         Router,
@@ -480,11 +480,13 @@ mod tests {
                 external_id_fields: vec!["userId".to_string()],
             },
             users.clone(),
-            sessions,
+            sessions.clone(),
             86_400,
         );
+        let users_service = UserService::new(users.clone(), sessions);
         let state = AppState::new(
             auth,
+            users_service,
             AuthConfig {
                 frontend_callback_url: "".to_string(),
             },

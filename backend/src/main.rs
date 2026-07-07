@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use backend::{
     app, config, db,
     repositories::{sessions::SessionRepository, users::UserRepository},
-    services::auth::AuthService,
+    services::{auth::AuthService, users::UserService},
     state::AppState,
 };
 use std::net::SocketAddr;
@@ -26,12 +26,14 @@ async fn main() -> Result<()> {
     let sessions = SessionRepository::new(_db);
     let auth = AuthService::new(
         config.dingtalk.clone(),
-        users,
-        sessions,
+        users.clone(),
+        sessions.clone(),
         config.session.ttl_seconds,
     );
+    let users = UserService::new(users, sessions);
     let app = app::router(AppState::new(
         auth,
+        users,
         config.auth.clone(),
         config.session.clone(),
     ));

@@ -1,5 +1,8 @@
 use chrono::{DateTime, Utc};
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, Set,
+};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -13,6 +16,39 @@ pub struct UserRepository {
 impl UserRepository {
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn find_by_id(&self, user_id: Uuid) -> Result<Option<users::Model>, RepositoryError> {
+        let user = users::Entity::find_by_id(user_id).one(&self.db).await?;
+
+        debug!(found = user.is_some(), %user_id, "looked up user by id");
+        Ok(user)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn list_users(
+        &self,
+        status_filter: Option<&str>,
+        page_number: u64,
+        page_size: u64,
+    ) -> Result<(Vec<users::Model>, u64), RepositoryError> {
+        let mut query = users::Entity::find().order_by_asc(users::Column::CreatedAt);
+
+        if let Some(status_filter) = status_filter {
+            validate_required("status_filter", status_filter)?;
+            query = query.filter(users::Column::Status.eq(status_filter.trim()));
+        }
+
+        let paginator = query.paginate(&self.db, page_size);
+        let total_count = paginator.num_items().await?;
+        let users = paginator.fetch_page(page_number.saturating_sub(1)).await?;
+
+        debug!(
+            count = users.len(),
+            total_count, page_number, page_size, "listed users"
+        );
+        Ok((users, total_count))
     }
 
     #[tracing::instrument(level = "debug", skip(self), fields(dingtalk_user_id = %dingtalk_user_id))]
@@ -77,6 +113,24 @@ impl UserRepository {
         active.last_login_at = Set(Some(now));
         let user = active.update(&self.db).await?;
         debug!("updated user login timestamp");
+        Ok(user)
+    }
+
+    #[tracing::instrument(level = "info", skip(self), fields(user_id = %user.id, status = %status))]
+    pub async fn update_status(
+        &self,
+        user: &users::Model,
+        status: &str,
+        now: DateTime<Utc>,
+    ) -> Result<users::Model, RepositoryError> {
+        validate_required("status", status)?;
+
+        let mut active: users::ActiveModel = user.clone().into();
+        active.status = Set(status.trim().to_string());
+        active.updated_at = Set(now);
+        let user = active.update(&self.db).await?;
+
+        info!(user_id = %user.id, status = %user.status, "updated user status");
         Ok(user)
     }
 }
@@ -147,6 +201,79 @@ mod tests {
 
         assert_eq!(first.id, second.id);
         assert_eq!(second.last_login_at, Some(second_login));
+    }
+
+    #[tokio::test]
+    async fn finds_user_by_id() {
+        let repository = test_repository().await;
+        let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
+        let user = repository
+            .find_or_create_for_login("ding-user-1", now)
+            .await
+            .expect("user should be created");
+
+        let found = repository
+            .find_by_id(user.id)
+            .await
+            .expect("user lookup should succeed")
+            .expect("user should be found");
+
+        assert_eq!(found.id, user.id);
+        assert!(
+            repository
+                .find_by_id(Uuid::new_v4())
+                .await
+                .expect("missing user lookup should succeed")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn lists_users_with_status_filter_and_pagination() {
+        let repository = test_repository().await;
+        let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
+        repository
+            .find_or_create_for_login("active-user", now)
+            .await
+            .expect("active user should be created");
+        let disabled = repository
+            .find_or_create_for_login("disabled-user", now)
+            .await
+            .expect("disabled user should be created");
+        repository
+            .update_status(&disabled, "disabled", now)
+            .await
+            .expect("user should be disabled");
+
+        let (users, total_count) = repository
+            .list_users(Some("disabled"), 1, 50)
+            .await
+            .expect("users should be listed");
+
+        assert_eq!(total_count, 1);
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].dingtalk_user_id, "disabled-user");
+    }
+
+    #[tokio::test]
+    async fn updates_user_status() {
+        let repository = test_repository().await;
+        let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
+        let user = repository
+            .find_or_create_for_login("ding-user-1", now)
+            .await
+            .expect("user should be created");
+        let updated_at = Utc.with_ymd_and_hms(2026, 7, 7, 1, 0, 0).unwrap();
+
+        let updated = repository
+            .update_status(&user, "disabled", updated_at)
+            .await
+            .expect("status should be updated");
+
+        assert_eq!(updated.id, user.id);
+        assert_eq!(updated.dingtalk_user_id, "ding-user-1");
+        assert_eq!(updated.status, "disabled");
+        assert_eq!(updated.updated_at, updated_at);
     }
 
     #[tokio::test]

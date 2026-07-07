@@ -217,6 +217,190 @@
           }
         }
       }
+    },
+    "/api/v1/users/list": {
+      "get": {
+        "tags": ["Users"],
+        "summary": "List users",
+        "operationId": "listUsers",
+        "description": "Lists Atlas users. User records are created only by the DingTalk external login flow; this API only reads existing users.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["active", "disabled"]
+            },
+            "description": "Only return users with this status."
+          },
+          {
+            "name": "page_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Users page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListUsersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/users/detail/{user_id}": {
+      "get": {
+        "tags": ["Users"],
+        "summary": "Get user detail",
+        "operationId": "getUserDetail",
+        "description": "Returns one Atlas user by the internal user id.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Atlas internal user id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/users/update-status/{user_id}": {
+      "post": {
+        "tags": ["Users"],
+        "summary": "Update user status",
+        "operationId": "updateUserStatus",
+        "description": "Updates only the Atlas user status. dingtalk_user_id cannot be changed through the user management API. Setting target_status to disabled revokes the user's active sessions; setting it to active does not create a session.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Atlas internal user id."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserStatusRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "User status updated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -245,6 +429,43 @@
         "properties": {
           "user": {
             "$ref": "#/components/schemas/UserResponse"
+          }
+        }
+      },
+      "ListUsersResponse": {
+        "type": "object",
+        "required": ["users", "page_number", "page_size", "total_count"],
+        "properties": {
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserResponse"
+            }
+          },
+          "page_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "total_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "UpdateUserStatusRequest": {
+        "type": "object",
+        "required": ["target_status"],
+        "additionalProperties": false,
+        "properties": {
+          "target_status": {
+            "type": "string",
+            "enum": ["active", "disabled"],
+            "description": "Target Atlas user status. disabled revokes active sessions; active does not create sessions."
           }
         }
       },
@@ -322,6 +543,16 @@
       },
       "Forbidden": {
         "description": "The mapped user exists but is disabled.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "The requested resource was not found.",
         "content": {
           "application/json": {
             "schema": {

@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::{
     config::DingTalkConfig,
-    entities::users,
+    dto::users::UserResponse,
     integrations::dingtalk::{DingTalkClient, DingTalkError},
     repositories::{
         RepositoryError,
@@ -124,7 +124,7 @@ impl AuthService {
         );
 
         Ok(LoginSession {
-            user: UserResponse::from_model(user),
+            user: UserResponse::from(user),
             session_token,
             expires_at,
         })
@@ -143,7 +143,7 @@ impl AuthService {
             .ok_or(AuthError::InvalidSession)?;
         let current = CurrentSession {
             session_id: session.session_id,
-            user: UserResponse::from_model(session.user),
+            user: UserResponse::from(session.user),
         };
 
         debug!(
@@ -203,29 +203,6 @@ pub struct CurrentSession {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LoginResponse {
     pub user: UserResponse,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct UserResponse {
-    pub id: Uuid,
-    pub dingtalk_user_id: String,
-    pub status: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub last_login_at: Option<DateTime<Utc>>,
-}
-
-impl UserResponse {
-    fn from_model(user: users::Model) -> Self {
-        Self {
-            id: user.id,
-            dingtalk_user_id: user.dingtalk_user_id,
-            status: user.status,
-            created_at: user.created_at,
-            updated_at: user.updated_at,
-            last_login_at: user.last_login_at,
-        }
-    }
 }
 
 #[derive(Debug, Error)]
