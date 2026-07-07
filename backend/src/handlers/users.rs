@@ -150,12 +150,14 @@ mod tests {
         db,
         repositories::{
             authz::AuthzRepository,
+            events::EventRepository,
             products::ProductRepository,
             sessions::{SessionRepository, hash_secret},
             users::UserRepository,
         },
         services::{
-            auth::AuthService, authz::AuthzService, products::ProductService, users::UserService,
+            auth::AuthService, authz::AuthzService, events::EventService, products::ProductService,
+            review::ApplierRegistry, users::UserService,
         },
     };
     use axum::{
@@ -671,16 +673,23 @@ mod tests {
             sessions.clone(),
             86_400,
         );
-        let authz = AuthzService::new(AuthzRepository::new(db))
+        let authz = AuthzService::new(AuthzRepository::new(db.clone()))
             .await
             .expect("test authz service should initialize");
         let users_service = UserService::new(users.clone(), sessions.clone());
         let products_service = ProductService::new(products);
+        let events_service = EventService::new(
+            EventRepository::new(db),
+            authz.clone(),
+            std::sync::Arc::new(ApplierRegistry::new()),
+            180,
+        );
         let state = AppState::new(
             auth,
             authz,
             users_service,
             products_service,
+            events_service,
             AuthConfig {
                 frontend_callback_url: "".to_string(),
             },
