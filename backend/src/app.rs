@@ -67,6 +67,39 @@ pub fn router(state: AppState) -> Router {
             ),
         )
         .route(
+            "/api/v1/systems/list",
+            get(handlers::systems::list_systems.layer(require_permission(&state, "systems:read"))),
+        )
+        .route(
+            "/api/v1/systems/detail/{system_id}",
+            get(handlers::systems::system_detail.layer(require_permission(&state, "systems:read"))),
+        )
+        .route(
+            "/api/v1/systems/create",
+            post(
+                handlers::systems::create_system.layer(require_permission(&state, "systems:write")),
+            ),
+        )
+        .route(
+            "/api/v1/systems/update/{system_id}",
+            post(
+                handlers::systems::update_system.layer(require_permission(&state, "systems:write")),
+            ),
+        )
+        .route(
+            "/api/v1/systems/disable/{system_id}",
+            post(
+                handlers::systems::disable_system
+                    .layer(require_permission(&state, "systems:write")),
+            ),
+        )
+        .route(
+            "/api/v1/systems/delete/{system_id}",
+            post(
+                handlers::systems::delete_system.layer(require_permission(&state, "systems:write")),
+            ),
+        )
+        .route(
             "/api/v1/permissions/roles",
             get(handlers::permissions::list_roles
                 .layer(require_permission(&state, "system:permissions:read")))

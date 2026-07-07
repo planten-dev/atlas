@@ -811,6 +811,362 @@
         }
       }
     },
+    "/api/v1/systems/list": {
+      "get": {
+        "tags": [
+          "Systems"
+        ],
+        "summary": "List systems",
+        "operationId": "listSystems",
+        "description": "Requires permission systems:read. Lists systems with optional status and department filtering plus pagination.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "disabled"
+              ]
+            },
+            "description": "Only return systems with this status."
+          },
+          {
+            "name": "department_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Only return systems owned by this local department id."
+          },
+          {
+            "name": "page_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Systems page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListSystemsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/systems/detail/{system_id}": {
+      "get": {
+        "tags": [
+          "Systems"
+        ],
+        "summary": "Get system detail",
+        "operationId": "getSystemDetail",
+        "description": "Requires permission systems:read. Returns one system by id.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "system_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "System id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "System detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/systems/create": {
+      "post": {
+        "tags": [
+          "Systems"
+        ],
+        "summary": "Create system",
+        "operationId": "createSystem",
+        "description": "Requires permission systems:write. Creates a system and requires department_id to reference an existing local department.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSystemRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "System created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/systems/update/{system_id}": {
+      "post": {
+        "tags": [
+          "Systems"
+        ],
+        "summary": "Update system",
+        "operationId": "updateSystem",
+        "description": "Requires permission systems:write. Applies a partial update: omitted fields are unchanged; null is rejected for required fields.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "system_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "System id."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSystemRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "System updated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/systems/disable/{system_id}": {
+      "post": {
+        "tags": [
+          "Systems"
+        ],
+        "summary": "Disable system",
+        "operationId": "disableSystem",
+        "description": "Requires permission systems:write. Sets system status to disabled and keeps the system record.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "system_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "System id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "System disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/systems/delete/{system_id}": {
+      "post": {
+        "tags": [
+          "Systems"
+        ],
+        "summary": "Delete system",
+        "operationId": "deleteSystem",
+        "description": "Requires permission systems:write. Hard deletes one system record by id.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "system_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "System id."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "System record was deleted."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/v1/permissions/roles": {
       "get": {
         "tags": [
@@ -1927,6 +2283,128 @@
             "type": "string",
             "pattern": "^\\d{1,10}(\\.\\d{1,2})?$",
             "description": "Omit to leave unchanged. null is rejected because unit_price is required."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled"
+            ],
+            "description": "Omit to leave unchanged. null is rejected because status is required."
+          }
+        }
+      },
+      "SystemResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "department_id",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "department_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Local department id from departments.id."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ListSystemsResponse": {
+        "type": "object",
+        "required": [
+          "systems",
+          "page_number",
+          "page_size",
+          "total_count"
+        ],
+        "properties": {
+          "systems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SystemResponse"
+            }
+          },
+          "page_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "total_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "CreateSystemRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "department_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "department_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Must reference an existing local department id from departments.id."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled"
+            ],
+            "default": "active"
+          }
+        }
+      },
+      "UpdateSystemRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "Omit to leave unchanged. null is rejected because name is required."
+          },
+          "department_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Omit to leave unchanged. null is rejected because department_id is required. The value must reference an existing local department."
           },
           "status": {
             "type": "string",

@@ -17,6 +17,23 @@ impl DepartmentRepository {
         Self { db }
     }
 
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn find_by_id(
+        &self,
+        department_id: Uuid,
+    ) -> Result<Option<departments::Model>, RepositoryError> {
+        let department = departments::Entity::find_by_id(department_id)
+            .one(&self.db)
+            .await?;
+
+        debug!(
+            found = department.is_some(),
+            %department_id,
+            "looked up department by id"
+        );
+        Ok(department)
+    }
+
     #[tracing::instrument(level = "debug", skip(self), fields(source = %source))]
     pub async fn list_by_source(
         &self,

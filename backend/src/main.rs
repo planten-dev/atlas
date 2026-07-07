@@ -2,11 +2,12 @@ use anyhow::{Context, Result};
 use backend::{
     app, config, db,
     repositories::{
-        authz::AuthzRepository, products::ProductRepository, sessions::SessionRepository,
-        users::UserRepository,
+        authz::AuthzRepository, departments::DepartmentRepository, products::ProductRepository,
+        sessions::SessionRepository, systems::SystemRepository, users::UserRepository,
     },
     services::{
-        auth::AuthService, authz::AuthzService, products::ProductService, users::UserService,
+        auth::AuthService, authz::AuthzService, products::ProductService, systems::SystemService,
+        users::UserService,
     },
     state::AppState,
 };
@@ -30,6 +31,8 @@ async fn main() -> Result<()> {
     let users = UserRepository::new(db.clone());
     let sessions = SessionRepository::new(db.clone());
     let products = ProductRepository::new(db.clone());
+    let departments = DepartmentRepository::new(db.clone());
+    let systems = SystemRepository::new(db.clone());
     let auth = AuthService::new(
         config.dingtalk.clone(),
         users.clone(),
@@ -41,11 +44,13 @@ async fn main() -> Result<()> {
         .context("failed to initialize authorization service")?;
     let users = UserService::new(users, sessions);
     let products = ProductService::new(products);
+    let systems = SystemService::new(systems, departments);
     let app = app::router(AppState::new(
         auth,
         authz,
         users,
         products,
+        systems,
         config.auth.clone(),
         config.session.clone(),
     ));

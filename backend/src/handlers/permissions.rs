@@ -182,11 +182,12 @@ mod tests {
         config::{AuthConfig, DatabaseConfig, DatabaseKind, DingTalkConfig, SessionConfig},
         db,
         repositories::{
-            authz::AuthzRepository, products::ProductRepository, sessions::SessionRepository,
-            users::UserRepository,
+            authz::AuthzRepository, departments::DepartmentRepository, products::ProductRepository,
+            sessions::SessionRepository, systems::SystemRepository, users::UserRepository,
         },
         services::{
-            auth::AuthService, authz::AuthzService, products::ProductService, users::UserService,
+            auth::AuthService, authz::AuthzService, products::ProductService,
+            systems::SystemService, users::UserService,
         },
         state::AppState,
     };
@@ -220,6 +221,8 @@ mod tests {
         let users = UserRepository::new(db.clone());
         let sessions = SessionRepository::new(db.clone());
         let products = ProductRepository::new(db.clone());
+        let departments = DepartmentRepository::new(db.clone());
+        let systems = SystemRepository::new(db.clone());
         let auth = AuthService::new(
             DingTalkConfig {
                 client_id: "test-client-id".to_string(),
@@ -243,11 +246,13 @@ mod tests {
             .expect("test authz service should initialize");
         let users_service = UserService::new(users.clone(), sessions);
         let products_service = ProductService::new(products);
+        let systems_service = SystemService::new(systems, departments);
         let state = AppState::new(
             auth,
             authz.clone(),
             users_service,
             products_service,
+            systems_service,
             AuthConfig {
                 frontend_callback_url: "".to_string(),
             },

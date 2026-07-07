@@ -150,12 +150,15 @@ mod tests {
         db,
         repositories::{
             authz::AuthzRepository,
+            departments::DepartmentRepository,
             products::ProductRepository,
             sessions::{SessionRepository, hash_secret},
+            systems::SystemRepository,
             users::UserRepository,
         },
         services::{
-            auth::AuthService, authz::AuthzService, products::ProductService, users::UserService,
+            auth::AuthService, authz::AuthzService, products::ProductService,
+            systems::SystemService, users::UserService,
         },
     };
     use axum::{
@@ -653,6 +656,8 @@ mod tests {
         let users = UserRepository::new(db.clone());
         let sessions = SessionRepository::new(db.clone());
         let products = ProductRepository::new(db.clone());
+        let departments = DepartmentRepository::new(db.clone());
+        let systems = SystemRepository::new(db.clone());
         let auth = AuthService::new(
             DingTalkConfig {
                 client_id: "test-client-id".to_string(),
@@ -676,11 +681,13 @@ mod tests {
             .expect("test authz service should initialize");
         let users_service = UserService::new(users.clone(), sessions.clone());
         let products_service = ProductService::new(products);
+        let systems_service = SystemService::new(systems, departments);
         let state = AppState::new(
             auth,
             authz,
             users_service,
             products_service,
+            systems_service,
             AuthConfig {
                 frontend_callback_url: "".to_string(),
             },
