@@ -34,12 +34,6 @@ Current repository structure:
 - Do not add new dependencies unless the task explicitly requires them.
 - Do not create commits unless explicitly requested.
 - Prefer simple and explicit code over clever abstractions.
-- When writing or changing code, add complete tests for the affected behavior.
-- Tests should cover successful paths, validation and error paths, and important edge cases.
-- Update existing tests when behavior changes; if tests cannot be added or run, explain the reason clearly.
-- When writing program code, add helpful output or logging at appropriate points to make debugging easier.
-- Prefer the existing logging mechanism for the stack, such as `tracing` in the backend.
-- Keep debug output focused on key inputs, decisions, and failures; do not log passwords, tokens, secrets, or unnecessary noisy details.
 - Keep business logic out of HTTP handlers when possible.
 - Prefer clear module boundaries:
   - `handlers/` for HTTP request/response handling
@@ -48,19 +42,6 @@ Current repository structure:
   - `entities/` for SeaORM entities
   - `dto/` for request/response types
   - `middleware/` for auth, audit, tracing, etc.
-
-## API Design
-
-- Use clear, meaningful API paths that describe the resource or action they represent.
-- Avoid ambiguous, overly generic, or unclear path names.
-- Prefer consistent resource naming and path structure across related endpoints.
-
-## API Documentation
-
-- When adding, removing, or changing backend HTTP APIs, update `docs/openapi.json`.
-- Keep `docs/openapi.json` as valid OpenAPI JSON, not YAML.
-- Document affected paths, methods, request bodies, response bodies, status codes, and schemas.
-- Do not add OpenAPI generation dependencies unless the task explicitly requires them.
 
 ## Agent Rules
 
