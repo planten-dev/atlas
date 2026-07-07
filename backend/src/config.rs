@@ -73,7 +73,7 @@ pub enum DatabaseKind {
 }
 
 impl DatabaseKind {
-    fn as_config_value(self) -> &'static str {
+    pub fn as_config_value(self) -> &'static str {
         match self {
             Self::Postgres => "postgres",
             Self::SqliteMemory => "sqlite-memory",
