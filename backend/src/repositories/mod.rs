@@ -2,6 +2,7 @@ pub mod authz;
 pub mod departments;
 pub mod products;
 pub mod sessions;
+pub mod stores;
 pub mod systems;
 pub mod users;
 

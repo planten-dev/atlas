@@ -177,6 +177,7 @@ CREATE TABLE departments (
 - `updated_at` 表示门店记录最后更新时间，每次更新门店记录或状态时同步更新。
 - `created_at` 和 `updated_at` 用于审计时间记录。
 - `name` 不要求全局唯一。
+- 门店相关 API 使用 `stores:read` 和 `stores:write` 权限控制访问；权限策略仍由权限管理接口维护，不在 `stores` 表中存储权限关系。
 
 ## products 表
 

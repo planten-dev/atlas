@@ -100,6 +100,30 @@ pub fn router(state: AppState) -> Router {
             ),
         )
         .route(
+            "/api/v1/stores/list",
+            get(handlers::stores::list_stores.layer(require_permission(&state, "stores:read"))),
+        )
+        .route(
+            "/api/v1/stores/detail/{store_id}",
+            get(handlers::stores::store_detail.layer(require_permission(&state, "stores:read"))),
+        )
+        .route(
+            "/api/v1/stores/create",
+            post(handlers::stores::create_store.layer(require_permission(&state, "stores:write"))),
+        )
+        .route(
+            "/api/v1/stores/update/{store_id}",
+            post(handlers::stores::update_store.layer(require_permission(&state, "stores:write"))),
+        )
+        .route(
+            "/api/v1/stores/disable/{store_id}",
+            post(handlers::stores::disable_store.layer(require_permission(&state, "stores:write"))),
+        )
+        .route(
+            "/api/v1/stores/delete/{store_id}",
+            post(handlers::stores::delete_store.layer(require_permission(&state, "stores:write"))),
+        )
+        .route(
             "/api/v1/permissions/roles",
             get(handlers::permissions::list_roles
                 .layer(require_permission(&state, "system:permissions:read")))

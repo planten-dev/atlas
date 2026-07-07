@@ -3,11 +3,12 @@ use backend::{
     app, config, db,
     repositories::{
         authz::AuthzRepository, departments::DepartmentRepository, products::ProductRepository,
-        sessions::SessionRepository, systems::SystemRepository, users::UserRepository,
+        sessions::SessionRepository, stores::StoreRepository, systems::SystemRepository,
+        users::UserRepository,
     },
     services::{
-        auth::AuthService, authz::AuthzService, products::ProductService, systems::SystemService,
-        users::UserService,
+        auth::AuthService, authz::AuthzService, products::ProductService, stores::StoreService,
+        systems::SystemService, users::UserService,
     },
     state::AppState,
 };
@@ -33,6 +34,7 @@ async fn main() -> Result<()> {
     let products = ProductRepository::new(db.clone());
     let departments = DepartmentRepository::new(db.clone());
     let systems = SystemRepository::new(db.clone());
+    let stores = StoreRepository::new(db.clone());
     let auth = AuthService::new(
         config.dingtalk.clone(),
         users.clone(),
@@ -44,13 +46,15 @@ async fn main() -> Result<()> {
         .context("failed to initialize authorization service")?;
     let users = UserService::new(users, sessions);
     let products = ProductService::new(products);
-    let systems = SystemService::new(systems, departments);
+    let stores_service = StoreService::new(stores.clone(), systems.clone());
+    let systems = SystemService::new(systems, departments, stores);
     let app = app::router(AppState::new(
         auth,
         authz,
         users,
         products,
         systems,
+        stores_service,
         config.auth.clone(),
         config.session.clone(),
     ));

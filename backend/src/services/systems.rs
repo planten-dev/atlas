@@ -11,6 +11,7 @@ use crate::{
     repositories::{
         RepositoryError,
         departments::DepartmentRepository,
+        stores::StoreRepository,
         systems::{NewSystem, SystemChanges, SystemRepository},
     },
 };
@@ -25,13 +26,19 @@ const MAX_NAME_LENGTH: usize = 128;
 pub struct SystemService {
     systems: SystemRepository,
     departments: DepartmentRepository,
+    stores: StoreRepository,
 }
 
 impl SystemService {
-    pub fn new(systems: SystemRepository, departments: DepartmentRepository) -> Self {
+    pub fn new(
+        systems: SystemRepository,
+        departments: DepartmentRepository,
+        stores: StoreRepository,
+    ) -> Self {
         Self {
             systems,
             departments,
+            stores,
         }
     }
 
@@ -164,6 +171,10 @@ impl SystemService {
         if self.systems.find_by_id(system_id).await?.is_none() {
             return Err(SystemError::SystemNotFound);
         }
+        if self.stores.count_by_system_id(system_id).await? > 0 {
+            warn!(%system_id, "rejected system delete because stores still reference it");
+            return Err(SystemError::SystemHasStores);
+        }
 
         let deleted = self.systems.delete_by_id(system_id).await?;
         if !deleted {
@@ -192,6 +203,8 @@ pub enum SystemError {
     SystemNotFound,
     #[error("department was not found")]
     DepartmentNotFound,
+    #[error("system has stores and cannot be deleted")]
+    SystemHasStores,
     #[error("{field} is required")]
     MissingRequiredField { field: &'static str },
     #[error("{field} must be at most {maximum} characters")]
@@ -214,6 +227,7 @@ impl SystemError {
             },
             Self::SystemNotFound => "system_not_found",
             Self::DepartmentNotFound => "department_not_found",
+            Self::SystemHasStores => "system_has_stores",
             Self::MissingRequiredField { .. }
             | Self::FieldTooLong { .. }
             | Self::InvalidStatus { .. }
@@ -330,6 +344,7 @@ mod tests {
     use crate::{
         config::{DatabaseConfig, DatabaseKind},
         db,
+        repositories::stores::{NewStore, StoreRepository},
     };
     use serde_json::json;
     use std::path::PathBuf;
@@ -342,14 +357,20 @@ mod tests {
         }
     }
 
-    async fn test_services() -> (DepartmentRepository, SystemRepository, SystemService) {
+    async fn test_services() -> (
+        DepartmentRepository,
+        SystemRepository,
+        StoreRepository,
+        SystemService,
+    ) {
         let db = db::connect_and_migrate(&sqlite_memory_config())
             .await
             .expect("sqlite memory database should initialize");
         let departments = DepartmentRepository::new(db.clone());
-        let systems = SystemRepository::new(db);
-        let service = SystemService::new(systems.clone(), departments.clone());
-        (departments, systems, service)
+        let systems = SystemRepository::new(db.clone());
+        let stores = StoreRepository::new(db);
+        let service = SystemService::new(systems.clone(), departments.clone(), stores.clone());
+        (departments, systems, stores, service)
     }
 
     async fn department(repository: &DepartmentRepository, name: &str) -> Uuid {
@@ -370,7 +391,7 @@ mod tests {
 
     #[tokio::test]
     async fn creates_lists_and_reads_system_detail() {
-        let (departments, _, service) = test_services().await;
+        let (departments, _, _, service) = test_services().await;
         let department_id = department(&departments, "dept-a").await;
         let created = service
             .create_system(create_request("system-a", department_id))
@@ -404,7 +425,7 @@ mod tests {
 
     #[tokio::test]
     async fn updates_disables_and_deletes_system() {
-        let (departments, _, service) = test_services().await;
+        let (departments, _, _, service) = test_services().await;
         let department_a = department(&departments, "dept-a").await;
         let department_b = department(&departments, "dept-b").await;
         let created = service
@@ -451,8 +472,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejects_delete_when_system_has_stores() {
+        let (departments, _, stores, service) = test_services().await;
+        let department_id = department(&departments, "dept-a").await;
+        let created = service
+            .create_system(create_request("system-a", department_id))
+            .await
+            .expect("system should be created");
+        stores
+            .create_store(
+                NewStore {
+                    name: "store-a".to_string(),
+                    system_id: created.id,
+                    status: "active".to_string(),
+                },
+                Utc::now(),
+            )
+            .await
+            .expect("store should be created");
+
+        assert!(matches!(
+            service.delete_system(created.id).await,
+            Err(SystemError::SystemHasStores)
+        ));
+        assert!(
+            service
+                .system_detail(created.id)
+                .await
+                .expect("system should remain after rejected delete")
+                .id
+                == created.id
+        );
+    }
+
+    #[tokio::test]
     async fn rejects_invalid_system_inputs() {
-        let (departments, _, service) = test_services().await;
+        let (departments, _, _, service) = test_services().await;
         let department_id = department(&departments, "dept-a").await;
 
         assert!(matches!(
@@ -489,7 +544,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_invalid_list_and_update_parameters() {
-        let (departments, _, service) = test_services().await;
+        let (departments, _, _, service) = test_services().await;
         let department_id = department(&departments, "dept-a").await;
         let created = service
             .create_system(create_request("system-a", department_id))

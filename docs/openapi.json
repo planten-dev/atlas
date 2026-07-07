@@ -1127,7 +1127,7 @@
         ],
         "summary": "Delete system",
         "operationId": "deleteSystem",
-        "description": "Requires permission systems:write. Hard deletes one system record by id.",
+        "description": "Requires permission systems:write. Hard deletes one system record by id. Returns 409 if the system still has stores.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -1148,6 +1148,365 @@
         "responses": {
           "204": {
             "description": "System record was deleted."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/stores/list": {
+      "get": {
+        "tags": [
+          "Stores"
+        ],
+        "summary": "List stores",
+        "operationId": "listStores",
+        "description": "Requires permission stores:read. Lists stores with optional status and system filtering plus pagination.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "disabled"
+              ]
+            },
+            "description": "Only return stores with this status."
+          },
+          {
+            "name": "system_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Only return stores owned by this system id."
+          },
+          {
+            "name": "page_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stores page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListStoresResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/stores/detail/{store_id}": {
+      "get": {
+        "tags": [
+          "Stores"
+        ],
+        "summary": "Get store detail",
+        "operationId": "getStoreDetail",
+        "description": "Requires permission stores:read. Returns one store by id.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Store id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Store detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/stores/create": {
+      "post": {
+        "tags": [
+          "Stores"
+        ],
+        "summary": "Create store",
+        "operationId": "createStore",
+        "description": "Requires permission stores:write. Creates a store and requires system_id to reference an existing system.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateStoreRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created store.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/stores/update/{store_id}": {
+      "post": {
+        "tags": [
+          "Stores"
+        ],
+        "summary": "Update store",
+        "operationId": "updateStore",
+        "description": "Requires permission stores:write. Applies a partial update: omitted fields are unchanged; null is rejected for required fields.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Store id."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateStoreRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated store.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/stores/disable/{store_id}": {
+      "post": {
+        "tags": [
+          "Stores"
+        ],
+        "summary": "Disable store",
+        "operationId": "disableStore",
+        "description": "Requires permission stores:write. Sets store status to disabled and keeps the store record.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Store id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Disabled store.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/stores/delete/{store_id}": {
+      "post": {
+        "tags": [
+          "Stores"
+        ],
+        "summary": "Delete store",
+        "operationId": "deleteStore",
+        "description": "Requires permission stores:write. Hard deletes one store record by id.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "store_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Store id."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Store record was deleted."
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -2416,6 +2775,127 @@
           }
         }
       },
+      "StoreResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "system_id",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "system_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ListStoresResponse": {
+        "type": "object",
+        "required": [
+          "stores",
+          "page_number",
+          "page_size",
+          "total_count"
+        ],
+        "properties": {
+          "stores": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StoreResponse"
+            }
+          },
+          "page_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "total_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "CreateStoreRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "system_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "system_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Must reference an existing system id from systems.id."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled"
+            ],
+            "default": "active"
+          }
+        }
+      },
+      "UpdateStoreRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "Omit to leave unchanged. null is rejected because name is required."
+          },
+          "system_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Omit to leave unchanged. null is rejected because system_id is required. The value must reference an existing system."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled"
+            ],
+            "description": "Omit to leave unchanged. null is rejected because status is required."
+          }
+        }
+      },
       "ListUsersResponse": {
         "type": "object",
         "required": [
@@ -2516,7 +2996,7 @@
         }
       },
       "Conflict": {
-        "description": "A role with the same code or an identical policy already exists.",
+        "description": "The request conflicts with existing data, such as a duplicate role/policy or a system that still has stores.",
         "content": {
           "application/json": {
             "schema": {

@@ -5,6 +5,7 @@ pub mod permission_policies;
 pub mod products;
 pub mod role_inheritances;
 pub mod roles;
+pub mod stores;
 pub mod systems;
 pub mod user_roles;
 pub mod users;
