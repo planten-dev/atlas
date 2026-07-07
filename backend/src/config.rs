@@ -49,6 +49,8 @@ pub struct DingTalkConfig {
     pub auth_url: String,
     pub token_url: String,
     pub user_info_url: String,
+    pub corp_token_url: String,
+    pub department_listsub_url: String,
     pub scope: String,
     pub corp_id: String,
     pub external_id_fields: Vec<String>,
@@ -170,6 +172,8 @@ redirect_uri = "http://127.0.0.1:3000/api/v1/auth/callback/dingtalk"
 auth_url = "https://login.dingtalk.com/oauth2/auth"
 token_url = "https://api.dingtalk.com/v1.0/oauth2/userAccessToken"
 user_info_url = "https://api.dingtalk.com/v1.0/contact/users/me"
+corp_token_url = "https://oapi.dingtalk.com/gettoken"
+department_listsub_url = "https://oapi.dingtalk.com/topapi/v2/department/listsub"
 scope = "openid corpid"
 corp_id = ""
 external_id_fields = ["userId", "userid", "user_id", "unionId", "unionid", "union_id", "openId", "openid", "open_id", "uuid"]

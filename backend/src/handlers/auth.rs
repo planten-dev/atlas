@@ -481,6 +481,8 @@ mod tests {
                 auth_url: "https://login.dingtalk.com/oauth2/auth".to_string(),
                 token_url: format!("{mock_base_url}/token"),
                 user_info_url: format!("{mock_base_url}/me"),
+                corp_token_url: format!("{mock_base_url}/gettoken"),
+                department_listsub_url: format!("{mock_base_url}/listsub"),
                 scope: "openid".to_string(),
                 corp_id: "".to_string(),
                 external_id_fields: vec!["userId".to_string()],

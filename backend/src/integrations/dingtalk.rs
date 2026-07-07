@@ -1,3 +1,6 @@
+use std::collections::{HashSet, VecDeque};
+
+use serde::Deserialize;
 use serde_json::{Value, json};
 use thiserror::Error;
 use tracing::{debug, info, warn};
@@ -5,6 +8,10 @@ use tracing::{debug, info, warn};
 use crate::config::DingTalkConfig;
 
 const PROVIDER: &str = "dingtalk";
+
+/// DingTalk's virtual root department id. `listsub` on this id returns the
+/// top-level departments; the root itself is never returned by the API.
+pub const ROOT_DEPARTMENT_ID: i64 = 1;
 
 #[derive(Clone, Debug)]
 pub struct DingTalkClient {
@@ -189,6 +196,166 @@ impl DingTalkClient {
         );
         Ok(DingTalkUserInfoResponse { raw: parsed })
     }
+
+    #[tracing::instrument(
+        level = "debug",
+        skip(self),
+        fields(provider = PROVIDER, corp_token_url = %self.config.corp_token_url)
+    )]
+    pub async fn fetch_corp_access_token(&self) -> Result<String, DingTalkError> {
+        debug!(provider = PROVIDER, "fetching DingTalk corp access token");
+        let response = self
+            .http
+            .get(&self.config.corp_token_url)
+            .query(&[
+                ("appkey", self.config.client_id.as_str()),
+                ("appsecret", self.config.client_secret.as_str()),
+            ])
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body = response.text().await?;
+        let parsed = parse_json_or_raw(body);
+
+        if !status.is_success() {
+            warn!(
+                provider = PROVIDER,
+                status = status.as_u16(),
+                "DingTalk corp token request returned non-success status"
+            );
+            return Err(DingTalkError::ProviderHttp {
+                operation: "corp_token",
+                status: status.as_u16(),
+                body: parsed,
+            });
+        }
+
+        check_oapi_errcode("corp_token", &parsed)?;
+        parsed
+            .get("access_token")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .map(ToString::to_string)
+            .ok_or(DingTalkError::MissingResponseField {
+                operation: "corp_token",
+                field: "access_token",
+            })
+    }
+
+    #[tracing::instrument(
+        level = "debug",
+        skip(self, access_token),
+        fields(provider = PROVIDER, dept_id)
+    )]
+    pub async fn list_sub_departments(
+        &self,
+        access_token: &str,
+        dept_id: i64,
+    ) -> Result<Vec<DingTalkDepartment>, DingTalkError> {
+        validate_required("access_token", access_token)?;
+        let response = self
+            .http
+            .post(&self.config.department_listsub_url)
+            .form(&[
+                ("access_token", access_token),
+                ("dept_id", &dept_id.to_string()),
+                ("language", "zh_CN"),
+            ])
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body = response.text().await?;
+        let parsed = parse_json_or_raw(body);
+
+        if !status.is_success() {
+            warn!(
+                provider = PROVIDER,
+                status = status.as_u16(),
+                "DingTalk department listsub request returned non-success status"
+            );
+            return Err(DingTalkError::ProviderHttp {
+                operation: "department_listsub",
+                status: status.as_u16(),
+                body: parsed,
+            });
+        }
+
+        check_oapi_errcode("department_listsub", &parsed)?;
+        let Some(result) = parsed.get("result") else {
+            return Ok(Vec::new());
+        };
+
+        let raw_departments: Vec<RawDingTalkDepartment> = serde_json::from_value(result.clone())
+            .map_err(|error| {
+                warn!(
+                    provider = PROVIDER,
+                    %error,
+                    "failed to parse DingTalk department listsub result"
+                );
+                DingTalkError::MissingResponseField {
+                    operation: "department_listsub",
+                    field: "result",
+                }
+            })?;
+
+        Ok(raw_departments
+            .into_iter()
+            .map(|raw| DingTalkDepartment {
+                dept_id: raw.dept_id,
+                name: raw.name,
+                parent_id: raw.parent_id,
+            })
+            .collect())
+    }
+
+    #[tracing::instrument(level = "info", skip(self), fields(provider = PROVIDER))]
+    pub async fn fetch_all_departments(&self) -> Result<Vec<DingTalkDepartment>, DingTalkError> {
+        let access_token = self.fetch_corp_access_token().await?;
+
+        let mut queue = VecDeque::from([ROOT_DEPARTMENT_ID]);
+        let mut visited = HashSet::from([ROOT_DEPARTMENT_ID]);
+        let mut departments = Vec::new();
+
+        while let Some(dept_id) = queue.pop_front() {
+            for department in self.list_sub_departments(&access_token, dept_id).await? {
+                if visited.insert(department.dept_id) {
+                    queue.push_back(department.dept_id);
+                    departments.push(department);
+                } else {
+                    warn!(
+                        provider = PROVIDER,
+                        dept_id = department.dept_id,
+                        "skipping duplicate department id from DingTalk"
+                    );
+                }
+            }
+        }
+
+        info!(
+            provider = PROVIDER,
+            count = departments.len(),
+            "fetched DingTalk department tree"
+        );
+        Ok(departments)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DingTalkDepartment {
+    pub dept_id: i64,
+    pub name: String,
+    pub parent_id: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawDingTalkDepartment {
+    dept_id: i64,
+    name: String,
+    #[serde(default)]
+    parent_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -276,6 +443,17 @@ pub enum DingTalkError {
         status: u16,
         body: Value,
     },
+    #[error("DingTalk {operation} request failed with errcode {errcode}: {errmsg}")]
+    ProviderApi {
+        operation: &'static str,
+        errcode: i64,
+        errmsg: String,
+    },
+    #[error("DingTalk {operation} response is missing `{field}`")]
+    MissingResponseField {
+        operation: &'static str,
+        field: &'static str,
+    },
     #[error("DingTalk HTTP request failed")]
     Http(#[from] reqwest::Error),
 }
@@ -336,6 +514,8 @@ fn validate_config(config: &DingTalkConfig) -> Result<(), DingTalkError> {
     validate_config_value("auth_url", &config.auth_url)?;
     validate_config_value("token_url", &config.token_url)?;
     validate_config_value("user_info_url", &config.user_info_url)?;
+    validate_config_value("corp_token_url", &config.corp_token_url)?;
+    validate_config_value("department_listsub_url", &config.department_listsub_url)?;
     validate_config_value("scope", &config.scope)?;
 
     if config.external_id_fields.is_empty() {
@@ -367,6 +547,30 @@ fn validate_required(field: &'static str, value: &str) -> Result<(), DingTalkErr
 
 fn parse_json_or_raw(body: String) -> Value {
     serde_json::from_str::<Value>(&body).unwrap_or_else(|_| json!({ "raw": body }))
+}
+
+fn check_oapi_errcode(operation: &'static str, value: &Value) -> Result<(), DingTalkError> {
+    // The oapi contract always includes `errcode` on success, so a missing
+    // field is treated as a failure rather than silently accepted.
+    let errcode = value.get("errcode").and_then(Value::as_i64).unwrap_or(-1);
+    if errcode != 0 {
+        let errmsg = value
+            .get("errmsg")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown error")
+            .to_string();
+        warn!(
+            provider = PROVIDER,
+            operation, errcode, "DingTalk API returned non-zero errcode"
+        );
+        return Err(DingTalkError::ProviderApi {
+            operation,
+            errcode,
+            errmsg,
+        });
+    }
+
+    Ok(())
 }
 
 fn first_string(value: &Value, keys: &[&str]) -> Option<String> {
@@ -440,6 +644,9 @@ mod tests {
             auth_url: "https://login.dingtalk.com/oauth2/auth".to_string(),
             token_url: "https://api.dingtalk.com/v1.0/oauth2/userAccessToken".to_string(),
             user_info_url: "https://api.dingtalk.com/v1.0/contact/users/me".to_string(),
+            corp_token_url: "https://oapi.dingtalk.com/gettoken".to_string(),
+            department_listsub_url: "https://oapi.dingtalk.com/topapi/v2/department/listsub"
+                .to_string(),
             scope: "openid corpid".to_string(),
             corp_id: "corp-id".to_string(),
             external_id_fields: vec![
@@ -574,5 +781,227 @@ mod tests {
             percent_encode("abc XYZ-_.~/"),
             "abc%20XYZ-_.~%2F".to_string()
         );
+    }
+
+    mod department_api {
+        use super::*;
+        use axum::{
+            Form, Json, Router,
+            extract::Query,
+            routing::{get, post},
+        };
+        use std::collections::HashMap;
+        use tokio::net::TcpListener;
+
+        #[derive(serde::Deserialize)]
+        struct GetTokenQuery {
+            appkey: String,
+            appsecret: String,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct ListSubForm {
+            access_token: String,
+            dept_id: i64,
+            language: String,
+        }
+
+        async fn start_mock_dingtalk_org(
+            token_response: Value,
+            listsub_responses: HashMap<i64, Value>,
+        ) -> String {
+            let gettoken = move |Query(query): Query<GetTokenQuery>| {
+                let token_response = token_response.clone();
+                async move {
+                    assert_eq!(query.appkey, "client-id");
+                    assert_eq!(query.appsecret, "client-secret");
+                    Json(token_response)
+                }
+            };
+
+            let listsub = move |Form(form): Form<ListSubForm>| {
+                let listsub_responses = listsub_responses.clone();
+                async move {
+                    assert_eq!(form.access_token, "corp-token");
+                    assert_eq!(form.language, "zh_CN");
+                    let response = listsub_responses
+                        .get(&form.dept_id)
+                        .cloned()
+                        .unwrap_or_else(|| json!({"errcode": 0, "errmsg": "ok", "result": []}));
+                    Json(response)
+                }
+            };
+
+            let app = Router::new()
+                .route("/gettoken", get(gettoken))
+                .route("/listsub", post(listsub));
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("mock DingTalk listener should bind");
+            let addr = listener.local_addr().expect("mock address should be known");
+            tokio::spawn(async move {
+                axum::serve(listener, app)
+                    .await
+                    .expect("mock DingTalk server should run");
+            });
+            format!("http://{addr}")
+        }
+
+        fn mock_config(mock_base_url: &str) -> DingTalkConfig {
+            let mut config = test_config();
+            config.corp_token_url = format!("{mock_base_url}/gettoken");
+            config.department_listsub_url = format!("{mock_base_url}/listsub");
+            config
+        }
+
+        fn ok_token_response() -> Value {
+            json!({
+                "errcode": 0,
+                "errmsg": "ok",
+                "access_token": "corp-token",
+                "expires_in": 7200
+            })
+        }
+
+        fn default_listsub_responses() -> HashMap<i64, Value> {
+            HashMap::from([
+                (
+                    ROOT_DEPARTMENT_ID,
+                    json!({
+                        "errcode": 0,
+                        "errmsg": "ok",
+                        "result": [
+                            {"dept_id": 10, "name": "总裁办", "parent_id": 1, "auto_add_user": true},
+                            {"dept_id": 20, "name": "研发", "parent_id": 1}
+                        ]
+                    }),
+                ),
+                (
+                    20,
+                    json!({
+                        "errcode": 0,
+                        "errmsg": "ok",
+                        "result": [{"dept_id": 21, "name": "后端", "parent_id": 20}]
+                    }),
+                ),
+            ])
+        }
+
+        #[tokio::test]
+        async fn fetches_corp_access_token() {
+            let mock_base_url = start_mock_dingtalk_org(ok_token_response(), HashMap::new()).await;
+            let client =
+                DingTalkClient::new(mock_config(&mock_base_url)).expect("config should be valid");
+
+            let token = client
+                .fetch_corp_access_token()
+                .await
+                .expect("corp token should be fetched");
+
+            assert_eq!(token, "corp-token");
+        }
+
+        #[tokio::test]
+        async fn corp_token_reports_provider_errcode() {
+            let mock_base_url = start_mock_dingtalk_org(
+                json!({"errcode": 40089, "errmsg": "invalid credential"}),
+                HashMap::new(),
+            )
+            .await;
+            let client =
+                DingTalkClient::new(mock_config(&mock_base_url)).expect("config should be valid");
+
+            let error = client
+                .fetch_corp_access_token()
+                .await
+                .expect_err("non-zero errcode should fail");
+
+            assert!(matches!(
+                error,
+                DingTalkError::ProviderApi {
+                    operation: "corp_token",
+                    errcode: 40089,
+                    ..
+                }
+            ));
+        }
+
+        #[tokio::test]
+        async fn lists_sub_departments_with_form_params() {
+            let mock_base_url =
+                start_mock_dingtalk_org(ok_token_response(), default_listsub_responses()).await;
+            let client =
+                DingTalkClient::new(mock_config(&mock_base_url)).expect("config should be valid");
+
+            let departments = client
+                .list_sub_departments("corp-token", ROOT_DEPARTMENT_ID)
+                .await
+                .expect("sub departments should be listed");
+
+            assert_eq!(
+                departments,
+                vec![
+                    DingTalkDepartment {
+                        dept_id: 10,
+                        name: "总裁办".to_string(),
+                        parent_id: Some(1),
+                    },
+                    DingTalkDepartment {
+                        dept_id: 20,
+                        name: "研发".to_string(),
+                        parent_id: Some(1),
+                    },
+                ]
+            );
+        }
+
+        #[tokio::test]
+        async fn listsub_reports_provider_errcode() {
+            let mock_base_url = start_mock_dingtalk_org(
+                ok_token_response(),
+                HashMap::from([(
+                    ROOT_DEPARTMENT_ID,
+                    json!({"errcode": 60011, "errmsg": "no permission"}),
+                )]),
+            )
+            .await;
+            let client =
+                DingTalkClient::new(mock_config(&mock_base_url)).expect("config should be valid");
+
+            let error = client
+                .list_sub_departments("corp-token", ROOT_DEPARTMENT_ID)
+                .await
+                .expect_err("non-zero errcode should fail");
+
+            assert!(matches!(
+                error,
+                DingTalkError::ProviderApi {
+                    operation: "department_listsub",
+                    errcode: 60011,
+                    ..
+                }
+            ));
+        }
+
+        #[tokio::test]
+        async fn fetches_full_department_tree_breadth_first() {
+            let mock_base_url =
+                start_mock_dingtalk_org(ok_token_response(), default_listsub_responses()).await;
+            let client =
+                DingTalkClient::new(mock_config(&mock_base_url)).expect("config should be valid");
+
+            let departments = client
+                .fetch_all_departments()
+                .await
+                .expect("department tree should be fetched");
+
+            let ids: Vec<i64> = departments
+                .iter()
+                .map(|department| department.dept_id)
+                .collect();
+            assert_eq!(ids, vec![10, 20, 21]);
+            assert_eq!(departments[2].name, "后端");
+            assert_eq!(departments[2].parent_id, Some(20));
+        }
     }
 }

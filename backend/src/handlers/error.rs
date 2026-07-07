@@ -109,7 +109,10 @@ fn status_code(error: &AuthError) -> StatusCode {
     match error {
         AuthError::DingTalk(error) => match error {
             DingTalkError::MissingConfig(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            DingTalkError::ProviderHttp { .. } | DingTalkError::Http(_) => StatusCode::BAD_GATEWAY,
+            DingTalkError::ProviderHttp { .. }
+            | DingTalkError::ProviderApi { .. }
+            | DingTalkError::MissingResponseField { .. }
+            | DingTalkError::Http(_) => StatusCode::BAD_GATEWAY,
             DingTalkError::MissingRequiredField { .. } | DingTalkError::MissingIdentityField(_) => {
                 StatusCode::BAD_REQUEST
             }
