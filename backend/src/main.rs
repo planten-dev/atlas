@@ -2,13 +2,14 @@ use anyhow::{Context, Result};
 use backend::{
     app, config, db,
     repositories::{
-        authz::AuthzRepository, departments::DepartmentRepository, products::ProductRepository,
+        authz::AuthzRepository, departments::DepartmentRepository,
+        product_categories::ProductCategoryRepository, products::ProductRepository,
         sessions::SessionRepository, stores::StoreRepository, systems::SystemRepository,
         users::UserRepository,
     },
     services::{
-        auth::AuthService, authz::AuthzService, products::ProductService, stores::StoreService,
-        systems::SystemService, users::UserService,
+        auth::AuthService, authz::AuthzService, product_categories::ProductCategoryService,
+        products::ProductService, stores::StoreService, systems::SystemService, users::UserService,
     },
     state::AppState,
 };
@@ -31,6 +32,7 @@ async fn main() -> Result<()> {
         .context("failed to initialize database")?;
     let users = UserRepository::new(db.clone());
     let sessions = SessionRepository::new(db.clone());
+    let product_categories = ProductCategoryRepository::new(db.clone());
     let products = ProductRepository::new(db.clone());
     let departments = DepartmentRepository::new(db.clone());
     let systems = SystemRepository::new(db.clone());
@@ -45,13 +47,16 @@ async fn main() -> Result<()> {
         .await
         .context("failed to initialize authorization service")?;
     let users = UserService::new(users, sessions);
-    let products = ProductService::new(products);
+    let product_categories_service =
+        ProductCategoryService::new(product_categories.clone(), products.clone());
+    let products = ProductService::new(products, product_categories);
     let stores_service = StoreService::new(stores.clone(), systems.clone());
     let systems = SystemService::new(systems, departments, stores);
     let app = app::router(AppState::new(
         auth,
         authz,
         users,
+        product_categories_service,
         products,
         systems,
         stores_service,

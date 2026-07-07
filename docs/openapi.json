@@ -468,6 +468,367 @@
         }
       }
     },
+    "/api/v1/product-categories/list": {
+      "get": {
+        "tags": [
+          "ProductCategories"
+        ],
+        "summary": "List product categories",
+        "operationId": "listProductCategories",
+        "description": "Requires permission products:categories:read. Lists product categories with optional status and operation-count filtering plus pagination.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "disabled"
+              ]
+            },
+            "description": "Only return product categories with this status."
+          },
+          {
+            "name": "requires_operation_count_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Only return categories that match whether operation counts are required."
+          },
+          {
+            "name": "page_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Product categories page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListProductCategoriesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/product-categories/detail/{category_id}": {
+      "get": {
+        "tags": [
+          "ProductCategories"
+        ],
+        "summary": "Get product category detail",
+        "operationId": "getProductCategoryDetail",
+        "description": "Requires permission products:categories:read. Returns one product category by id.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "category_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Product category id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Product category detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductCategoryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/product-categories/create": {
+      "post": {
+        "tags": [
+          "ProductCategories"
+        ],
+        "summary": "Create product category",
+        "operationId": "createProductCategory",
+        "description": "Requires permission products:categories:write. Creates a product category. category_name must be unique.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProductCategoryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Product category created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductCategoryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/product-categories/update/{category_id}": {
+      "post": {
+        "tags": [
+          "ProductCategories"
+        ],
+        "summary": "Update product category",
+        "operationId": "updateProductCategory",
+        "description": "Requires permission products:categories:write. Applies a partial update: omitted fields are unchanged; required fields cannot be set to null.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "category_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Product category id."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProductCategoryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Product category updated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductCategoryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/product-categories/disable/{category_id}": {
+      "post": {
+        "tags": [
+          "ProductCategories"
+        ],
+        "summary": "Disable product category",
+        "operationId": "disableProductCategory",
+        "description": "Requires permission products:categories:write. Sets product category status to disabled and keeps the category record. Existing products may continue to reference it.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "category_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Product category id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Product category disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductCategoryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/product-categories/delete/{category_id}": {
+      "post": {
+        "tags": [
+          "ProductCategories"
+        ],
+        "summary": "Delete product category",
+        "operationId": "deleteProductCategory",
+        "description": "Requires permission products:categories:write. Hard deletes one product category record by id. Returns 409 if products still reference the category.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "category_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Product category id."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Product category record was deleted."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/v1/products/list": {
       "get": {
         "tags": [
@@ -475,7 +836,7 @@
         ],
         "summary": "List products",
         "operationId": "listProducts",
-        "description": "Requires permission products:read. Lists products with optional status filtering and pagination.",
+        "description": "Requires permission products:read. Lists products with optional status/category filtering and pagination.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -494,6 +855,16 @@
               ]
             },
             "description": "Only return products with this status."
+          },
+          {
+            "name": "category_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Only return products in this product category."
           },
           {
             "name": "page_number",
@@ -604,7 +975,7 @@
         ],
         "summary": "Create product",
         "operationId": "createProduct",
-        "description": "Requires permission products:write. Creates a product. unit_price is a decimal string and is stored as DECIMAL(12,2).",
+        "description": "Requires permission products:write. Creates a product. category_id must reference an active product category. unit_price is a decimal string and is stored as DECIMAL(12,2).",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -640,6 +1011,9 @@
           "403": {
             "$ref": "#/components/responses/PermissionDenied"
           },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
@@ -653,7 +1027,7 @@
         ],
         "summary": "Update product",
         "operationId": "updateProduct",
-        "description": "Requires permission products:write. Applies a partial update: omitted fields are unchanged; nullable text fields can be cleared with null.",
+        "description": "Requires permission products:write. Applies a partial update: omitted fields are unchanged; nullable text fields can be cleared with null; category_id cannot be null and must reference an active product category.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -2421,7 +2795,9 @@
         "required": [
           "id",
           "name",
-          "category",
+          "category_id",
+          "category_name",
+          "requires_operation_count",
           "series",
           "brand_name",
           "specification",
@@ -2440,12 +2816,16 @@
             "type": "string",
             "maxLength": 128
           },
-          "category": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "maxLength": 64
+          "category_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "category_name": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "requires_operation_count": {
+            "type": "boolean"
           },
           "series": {
             "type": [
@@ -2478,7 +2858,7 @@
           "unit_price": {
             "type": "string",
             "pattern": "^\\d{1,10}(\\.\\d{1,2})?$",
-            "description": "Decimal price string stored as DECIMAL(12,2), for example \"12.30\"."
+            "description": "Decimal price string stored as DECIMAL(12,2), for example 12.30."
           },
           "status": {
             "type": "string",
@@ -2531,6 +2911,7 @@
         "type": "object",
         "required": [
           "name",
+          "category_id",
           "unit_price"
         ],
         "additionalProperties": false,
@@ -2539,12 +2920,9 @@
             "type": "string",
             "maxLength": 128
           },
-          "category": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "maxLength": 64
+          "category_id": {
+            "type": "string",
+            "format": "uuid"
           },
           "series": {
             "type": [
@@ -2595,63 +2973,54 @@
         "properties": {
           "name": {
             "type": "string",
-            "maxLength": 128,
-            "description": "Omit to leave unchanged. null is rejected because name is required."
+            "maxLength": 128
           },
-          "category": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "maxLength": 64,
-            "description": "Omit to leave unchanged; null clears the field."
+          "category_id": {
+            "type": "string",
+            "format": "uuid"
           },
           "series": {
             "type": [
               "string",
               "null"
             ],
-            "maxLength": 128,
-            "description": "Omit to leave unchanged; null clears the field."
+            "maxLength": 128
           },
           "brand_name": {
             "type": [
               "string",
               "null"
             ],
-            "maxLength": 128,
-            "description": "Omit to leave unchanged; null clears the field."
+            "maxLength": 128
           },
           "specification": {
             "type": [
               "string",
               "null"
             ],
-            "maxLength": 255,
-            "description": "Omit to leave unchanged; null clears the field."
+            "maxLength": 255
           },
           "unit": {
             "type": [
               "string",
               "null"
             ],
-            "maxLength": 32,
-            "description": "Omit to leave unchanged; null clears the field."
+            "maxLength": 32
           },
           "unit_price": {
             "type": "string",
             "pattern": "^\\d{1,10}(\\.\\d{1,2})?$",
-            "description": "Omit to leave unchanged. null is rejected because unit_price is required."
+            "description": "Decimal price string stored as DECIMAL(12,2)."
           },
           "status": {
             "type": "string",
             "enum": [
               "active",
               "disabled"
-            ],
-            "description": "Omit to leave unchanged. null is rejected because status is required."
+            ]
           }
-        }
+        },
+        "description": "Partial update request. Omitted fields are unchanged; nullable text fields can be cleared with null. category_id, name, unit_price and status reject null."
       },
       "SystemResponse": {
         "type": "object",
@@ -2942,6 +3311,121 @@
             "description": "Target Atlas user status. disabled revokes active sessions; active does not create sessions."
           }
         }
+      },
+      "ProductCategoryResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "category_name",
+          "requires_operation_count",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "category_name": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "requires_operation_count": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ListProductCategoriesResponse": {
+        "type": "object",
+        "required": [
+          "categories",
+          "page_number",
+          "page_size",
+          "total_count"
+        ],
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProductCategoryResponse"
+            }
+          },
+          "page_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "total_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "CreateProductCategoryRequest": {
+        "type": "object",
+        "required": [
+          "category_name",
+          "requires_operation_count"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "category_name": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "requires_operation_count": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled"
+            ],
+            "default": "active"
+          }
+        }
+      },
+      "UpdateProductCategoryRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "category_name": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "requires_operation_count": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled"
+            ]
+          }
+        },
+        "description": "Partial update request. Omitted fields are unchanged; null is rejected for required fields."
       }
     },
     "responses": {

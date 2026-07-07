@@ -164,8 +164,11 @@ fn status_code(error: &ProductError) -> StatusCode {
             RepositoryError::MissingRequiredField { .. } => StatusCode::BAD_REQUEST,
             RepositoryError::DisabledUser => StatusCode::FORBIDDEN,
         },
-        ProductError::ProductNotFound => StatusCode::NOT_FOUND,
-        ProductError::MissingRequiredField { .. }
+        ProductError::ProductNotFound | ProductError::ProductCategoryNotFound => {
+            StatusCode::NOT_FOUND
+        }
+        ProductError::ProductCategoryDisabled
+        | ProductError::MissingRequiredField { .. }
         | ProductError::FieldTooLong { .. }
         | ProductError::InvalidStatus { .. }
         | ProductError::InvalidUnitPrice { .. }
@@ -184,13 +187,15 @@ mod tests {
         config::{AuthConfig, DatabaseConfig, DatabaseKind, DingTalkConfig, SessionConfig},
         db,
         repositories::{
-            authz::AuthzRepository, departments::DepartmentRepository, products::ProductRepository,
+            authz::AuthzRepository, departments::DepartmentRepository,
+            product_categories::ProductCategoryRepository, products::ProductRepository,
             sessions::SessionRepository, stores::StoreRepository, systems::SystemRepository,
             users::UserRepository,
         },
         services::{
-            auth::AuthService, authz::AuthzService, products::ProductService, stores::StoreService,
-            systems::SystemService, users::UserService,
+            auth::AuthService, authz::AuthzService, product_categories::ProductCategoryService,
+            products::ProductService, stores::StoreService, systems::SystemService,
+            users::UserService,
         },
     };
     use axum::{
@@ -208,6 +213,7 @@ mod tests {
         app: Router,
         users: UserRepository,
         authz: AuthzService,
+        product_categories: ProductCategoryRepository,
     }
 
     #[tokio::test]
@@ -301,6 +307,8 @@ mod tests {
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
+        let category_id = default_category_id(&context).await;
+        let medical_category_id = medical_category_id(&context).await;
         grant(&context, user_id, "products", "read").await;
         grant(&context, user_id, "products", "write").await;
 
@@ -313,7 +321,7 @@ mod tests {
                 Some(&cookie),
                 Some(json!({
                     "name": "product-a",
-                    "category": "cat-a",
+                    "category_id": category_id,
                     "series": "series-a",
                     "brand_name": "brand-a",
                     "specification": "spec-a",
@@ -328,6 +336,20 @@ mod tests {
         assert_eq!(
             created.pointer("/name").and_then(Value::as_str),
             Some("product-a")
+        );
+        assert_eq!(
+            created.pointer("/category_id").and_then(Value::as_str),
+            Some(category_id.to_string().as_str())
+        );
+        assert_eq!(
+            created.pointer("/category_name").and_then(Value::as_str),
+            Some("产品")
+        );
+        assert_eq!(
+            created
+                .pointer("/requires_operation_count")
+                .and_then(Value::as_bool),
+            Some(false)
         );
         assert_eq!(
             created.pointer("/unit_price").and_then(Value::as_str),
@@ -345,7 +367,9 @@ mod tests {
             .clone()
             .oneshot(request(
                 Method::GET,
-                "/api/v1/products/list?status_filter=active&page_number=1&page_size=20",
+                &format!(
+                    "/api/v1/products/list?status_filter=active&category_id={category_id}&page_number=1&page_size=20"
+                ),
                 Some(&cookie),
                 None,
             ))
@@ -371,6 +395,7 @@ mod tests {
                 Some(&cookie),
                 Some(json!({
                     "name": "product-b",
+                    "category_id": medical_category_id,
                     "brand_name": null,
                     "unit": "piece",
                     "unit_price": "25"
@@ -383,6 +408,20 @@ mod tests {
         assert_eq!(
             updated.pointer("/name").and_then(Value::as_str),
             Some("product-b")
+        );
+        assert_eq!(
+            updated.pointer("/category_id").and_then(Value::as_str),
+            Some(medical_category_id.to_string().as_str())
+        );
+        assert_eq!(
+            updated.pointer("/category_name").and_then(Value::as_str),
+            Some("医疗")
+        );
+        assert_eq!(
+            updated
+                .pointer("/requires_operation_count")
+                .and_then(Value::as_bool),
+            Some(true)
         );
         assert_eq!(updated.pointer("/brand_name"), Some(&Value::Null));
         assert_eq!(
@@ -444,14 +483,15 @@ mod tests {
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
+        let category_id = default_category_id(&context).await;
         grant(&context, user_id, "products", "read").await;
         grant(&context, user_id, "products", "write").await;
 
         for body in [
             json!({"name": "", "unit_price": "12.30"}),
-            json!({"name": "product-a", "unit_price": "12.345"}),
-            json!({"name": "product-a", "unit_price": "-0.01"}),
-            json!({"name": "product-a", "unit_price": "12.30", "status": "deleted"}),
+            json!({"name": "product-a", "category_id": category_id, "unit_price": "12.345"}),
+            json!({"name": "product-a", "category_id": category_id, "unit_price": "-0.01"}),
+            json!({"name": "product-a", "category_id": category_id, "unit_price": "12.30", "status": "deleted"}),
         ] {
             let response = context
                 .app
@@ -479,6 +519,100 @@ mod tests {
             .await
             .expect("products list request should be handled");
         assert_eq!(invalid_query.status(), StatusCode::BAD_REQUEST);
+
+        let invalid_category_query = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/products/list?category_id=not-a-uuid",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("products list request should be handled");
+        assert_eq!(invalid_category_query.status(), StatusCode::BAD_REQUEST);
+
+        let missing_category = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/api/v1/products/create",
+                Some(&cookie),
+                Some(json!({
+                    "name": "product-a",
+                    "category_id": Uuid::new_v4(),
+                    "unit_price": "12.30"
+                })),
+            ))
+            .await
+            .expect("product create request should be handled");
+        assert_eq!(missing_category.status(), StatusCode::NOT_FOUND);
+
+        let disabled_category_id = medical_category_id(&context).await;
+        let disabled_category = context
+            .product_categories
+            .find_by_id(disabled_category_id)
+            .await
+            .expect("category lookup should succeed")
+            .expect("category should exist");
+        context
+            .product_categories
+            .update_status(&disabled_category, "disabled", chrono::Utc::now())
+            .await
+            .expect("category should disable");
+        let disabled_category_response = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/api/v1/products/create",
+                Some(&cookie),
+                Some(json!({
+                    "name": "product-a",
+                    "category_id": disabled_category_id,
+                    "unit_price": "12.30"
+                })),
+            ))
+            .await
+            .expect("product create request should be handled");
+        assert_eq!(disabled_category_response.status(), StatusCode::BAD_REQUEST);
+
+        let create_response = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/api/v1/products/create",
+                Some(&cookie),
+                Some(json!({
+                    "name": "product-a",
+                    "category_id": category_id,
+                    "unit_price": "12.30"
+                })),
+            ))
+            .await
+            .expect("product create request should be handled");
+        assert_eq!(create_response.status(), StatusCode::CREATED);
+        let product = response_json(create_response).await;
+        let product_id = product
+            .pointer("/id")
+            .and_then(Value::as_str)
+            .expect("product id should be present");
+
+        let null_category = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                &format!("/api/v1/products/update/{product_id}"),
+                Some(&cookie),
+                Some(json!({"category_id": null})),
+            ))
+            .await
+            .expect("product update request should be handled");
+        assert_eq!(null_category.status(), StatusCode::BAD_REQUEST);
 
         let invalid_id = context
             .app
@@ -517,6 +651,7 @@ mod tests {
             .expect("test database should initialize");
         let users = UserRepository::new(db.clone());
         let sessions = SessionRepository::new(db.clone());
+        let product_categories = ProductCategoryRepository::new(db.clone());
         let products = ProductRepository::new(db.clone());
         let departments = DepartmentRepository::new(db.clone());
         let systems = SystemRepository::new(db.clone());
@@ -543,13 +678,16 @@ mod tests {
             .await
             .expect("test authz service should initialize");
         let users_service = UserService::new(users.clone(), sessions);
-        let products_service = ProductService::new(products);
+        let product_categories_service =
+            ProductCategoryService::new(product_categories.clone(), products.clone());
+        let products_service = ProductService::new(products, product_categories.clone());
         let stores_service = StoreService::new(stores.clone(), systems.clone());
         let systems_service = SystemService::new(systems, departments, stores);
         let state = AppState::new(
             auth,
             authz.clone(),
             users_service,
+            product_categories_service,
             products_service,
             systems_service,
             stores_service,
@@ -565,6 +703,7 @@ mod tests {
             app: app::router(state),
             users,
             authz,
+            product_categories,
         }
     }
 
@@ -645,6 +784,26 @@ mod tests {
             .await
             .expect("user lookup should work")
             .expect("logged in user should exist")
+            .id
+    }
+
+    async fn default_category_id(context: &TestContext) -> Uuid {
+        context
+            .product_categories
+            .find_by_category_name("产品")
+            .await
+            .expect("category lookup should work")
+            .expect("default category should exist")
+            .id
+    }
+
+    async fn medical_category_id(context: &TestContext) -> Uuid {
+        context
+            .product_categories
+            .find_by_category_name("医疗")
+            .await
+            .expect("category lookup should work")
+            .expect("medical category should exist")
             .id
     }
 

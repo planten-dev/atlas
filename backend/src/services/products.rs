@@ -1,6 +1,6 @@
 use chrono::Utc;
 use sea_orm::entity::prelude::Decimal;
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -10,8 +10,10 @@ use crate::{
         CreateProductRequest, ListProductsQuery, ListProductsResponse, PatchField, ProductResponse,
         ProductStatus, ProductStatusParseError, UpdateProductRequest,
     },
+    entities::product_category,
     repositories::{
         RepositoryError,
+        product_categories::ProductCategoryRepository,
         products::{NewProduct, ProductChanges, ProductRepository},
     },
 };
@@ -21,7 +23,6 @@ const DEFAULT_PAGE_SIZE: u64 = 50;
 const MAX_PAGE_SIZE: u64 = 200;
 
 const MAX_NAME_LENGTH: usize = 128;
-const MAX_CATEGORY_LENGTH: usize = 64;
 const MAX_SERIES_LENGTH: usize = 128;
 const MAX_BRAND_NAME_LENGTH: usize = 128;
 const MAX_SPECIFICATION_LENGTH: usize = 255;
@@ -30,11 +31,15 @@ const MAX_UNIT_LENGTH: usize = 32;
 #[derive(Clone)]
 pub struct ProductService {
     products: ProductRepository,
+    categories: ProductCategoryRepository,
 }
 
 impl ProductService {
-    pub fn new(products: ProductRepository) -> Self {
-        Self { products }
+    pub fn new(products: ProductRepository, categories: ProductCategoryRepository) -> Self {
+        Self {
+            products,
+            categories,
+        }
     }
 
     #[tracing::instrument(level = "info", skip(self, request))]
@@ -46,9 +51,10 @@ impl ProductService {
             Some(status) => ProductStatus::parse("status", &status)?,
             None => ProductStatus::Active,
         };
+        let category = self.ensure_active_category(request.category_id).await?;
         let product = NewProduct {
             name: required_text("name", request.name, MAX_NAME_LENGTH)?,
-            category: nullable_text("category", request.category, MAX_CATEGORY_LENGTH)?,
+            category_id: category.id,
             series: nullable_text("series", request.series, MAX_SERIES_LENGTH)?,
             brand_name: nullable_text("brand_name", request.brand_name, MAX_BRAND_NAME_LENGTH)?,
             specification: nullable_text(
@@ -63,7 +69,7 @@ impl ProductService {
 
         let product = self.products.create_product(product, Utc::now()).await?;
         info!(product_id = %product.id, "created product through service");
-        Ok(ProductResponse::from(product))
+        Ok(ProductResponse::from_model(product, category))
     }
 
     #[tracing::instrument(level = "debug", skip(self, query))]
@@ -85,17 +91,19 @@ impl ProductService {
             .products
             .list_products(
                 status_filter.map(ProductStatus::as_str),
+                query.category_id,
                 page_number,
                 page_size,
             )
             .await?;
+        let products = self.product_responses(products).await?;
 
         debug!(
             count = products.len(),
             total_count, page_number, page_size, "listed products through service"
         );
         Ok(ListProductsResponse {
-            products: products.into_iter().map(ProductResponse::from).collect(),
+            products,
             page_number,
             page_size,
             total_count,
@@ -109,9 +117,14 @@ impl ProductService {
             .find_by_id(product_id)
             .await?
             .ok_or(ProductError::ProductNotFound)?;
+        let category = self
+            .categories
+            .find_by_id(product.category_id)
+            .await?
+            .ok_or(ProductError::ProductCategoryNotFound)?;
 
         debug!(%product_id, "loaded product detail");
-        Ok(ProductResponse::from(product))
+        Ok(ProductResponse::from_model(product, category))
     }
 
     #[tracing::instrument(level = "info", skip(self, request))]
@@ -125,9 +138,13 @@ impl ProductService {
             .find_by_id(product_id)
             .await?
             .ok_or(ProductError::ProductNotFound)?;
+        let category_id = required_uuid_change("category_id", request.category_id)?;
+        if let Some(category_id) = category_id {
+            self.ensure_active_category(category_id).await?;
+        }
         let changes = ProductChanges {
             name: required_text_change("name", request.name, MAX_NAME_LENGTH)?,
-            category: nullable_text_change("category", request.category, MAX_CATEGORY_LENGTH)?,
+            category_id,
             series: nullable_text_change("series", request.series, MAX_SERIES_LENGTH)?,
             brand_name: nullable_text_change(
                 "brand_name",
@@ -146,7 +163,7 @@ impl ProductService {
 
         if changes.is_empty() {
             debug!(%product_id, "product update request had no changes");
-            return Ok(ProductResponse::from(product));
+            return self.product_response(product).await;
         }
 
         let product = self
@@ -154,7 +171,7 @@ impl ProductService {
             .update_product(&product, changes, Utc::now())
             .await?;
         info!(%product_id, "updated product through service");
-        Ok(ProductResponse::from(product))
+        self.product_response(product).await
     }
 
     #[tracing::instrument(level = "info", skip(self))]
@@ -170,7 +187,7 @@ impl ProductService {
             .await?;
 
         info!(%product_id, "disabled product through service");
-        Ok(ProductResponse::from(product))
+        self.product_response(product).await
     }
 
     #[tracing::instrument(level = "info", skip(self))]
@@ -188,6 +205,58 @@ impl ProductService {
         info!(%product_id, "deleted product through service");
         Ok(())
     }
+
+    async fn ensure_active_category(
+        &self,
+        category_id: Uuid,
+    ) -> Result<product_category::Model, ProductError> {
+        let category = self
+            .categories
+            .find_by_id(category_id)
+            .await?
+            .ok_or(ProductError::ProductCategoryNotFound)?;
+
+        if category.status != ProductStatus::Active.as_str() {
+            warn!(%category_id, "rejected product category because it is disabled");
+            return Err(ProductError::ProductCategoryDisabled);
+        }
+
+        Ok(category)
+    }
+
+    async fn product_response(
+        &self,
+        product: crate::entities::products::Model,
+    ) -> Result<ProductResponse, ProductError> {
+        let category = self
+            .categories
+            .find_by_id(product.category_id)
+            .await?
+            .ok_or(ProductError::ProductCategoryNotFound)?;
+        Ok(ProductResponse::from_model(product, category))
+    }
+
+    async fn product_responses(
+        &self,
+        products: Vec<crate::entities::products::Model>,
+    ) -> Result<Vec<ProductResponse>, ProductError> {
+        let category_ids = products.iter().map(|product| product.category_id).collect();
+        let categories = self.categories.find_by_ids(category_ids).await?;
+        let categories_by_id: HashMap<Uuid, product_category::Model> = categories
+            .into_iter()
+            .map(|category| (category.id, category))
+            .collect();
+        products
+            .into_iter()
+            .map(|product| {
+                let category = categories_by_id
+                    .get(&product.category_id)
+                    .cloned()
+                    .ok_or(ProductError::ProductCategoryNotFound)?;
+                Ok(ProductResponse::from_model(product, category))
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Error)]
@@ -196,6 +265,10 @@ pub enum ProductError {
     Repository(#[from] RepositoryError),
     #[error("product was not found")]
     ProductNotFound,
+    #[error("product category was not found")]
+    ProductCategoryNotFound,
+    #[error("product category is disabled")]
+    ProductCategoryDisabled,
     #[error("{field} is required")]
     MissingRequiredField { field: &'static str },
     #[error("{field} must be at most {maximum} characters")]
@@ -223,6 +296,8 @@ impl ProductError {
                 RepositoryError::Database(_) => "database_error",
             },
             Self::ProductNotFound => "product_not_found",
+            Self::ProductCategoryNotFound => "product_category_not_found",
+            Self::ProductCategoryDisabled => "product_category_disabled",
             Self::MissingRequiredField { .. }
             | Self::FieldTooLong { .. }
             | Self::InvalidStatus { .. }
@@ -287,6 +362,17 @@ fn required_text_change(
         PatchField::Unset => Ok(None),
         PatchField::Null => Err(ProductError::MissingRequiredField { field }),
         PatchField::Value(value) => required_text(field, value, maximum).map(Some),
+    }
+}
+
+fn required_uuid_change(
+    field: &'static str,
+    value: PatchField<Uuid>,
+) -> Result<Option<Uuid>, ProductError> {
+    match value {
+        PatchField::Unset => Ok(None),
+        PatchField::Null => Err(ProductError::MissingRequiredField { field }),
+        PatchField::Value(value) => Ok(Some(value)),
     }
 }
 
@@ -413,19 +499,38 @@ mod tests {
         }
     }
 
-    async fn test_services() -> (ProductRepository, ProductService) {
+    async fn test_services() -> (ProductCategoryRepository, ProductRepository, ProductService) {
         let db = db::connect_and_migrate(&sqlite_memory_config())
             .await
             .expect("sqlite memory database should initialize");
+        let categories = ProductCategoryRepository::new(db.clone());
         let products = ProductRepository::new(db);
-        let service = ProductService::new(products.clone());
-        (products, service)
+        let service = ProductService::new(products.clone(), categories.clone());
+        (categories, products, service)
     }
 
-    fn create_request(name: &str, price: &str) -> CreateProductRequest {
+    async fn default_category(categories: &ProductCategoryRepository) -> Uuid {
+        categories
+            .find_by_category_name("产品")
+            .await
+            .expect("category lookup should succeed")
+            .expect("default category should exist")
+            .id
+    }
+
+    async fn medical_category(categories: &ProductCategoryRepository) -> Uuid {
+        categories
+            .find_by_category_name("医疗")
+            .await
+            .expect("category lookup should succeed")
+            .expect("medical category should exist")
+            .id
+    }
+
+    fn create_request(name: &str, category_id: Uuid, price: &str) -> CreateProductRequest {
         CreateProductRequest {
             name: name.to_string(),
-            category: Some("category-a".to_string()),
+            category_id,
             series: Some("series-a".to_string()),
             brand_name: Some("brand-a".to_string()),
             specification: Some("spec-a".to_string()),
@@ -437,13 +542,17 @@ mod tests {
 
     #[tokio::test]
     async fn creates_lists_and_reads_product_detail() {
-        let (_, service) = test_services().await;
+        let (categories, _, service) = test_services().await;
+        let category_id = default_category(&categories).await;
         let created = service
-            .create_product(create_request("product-a", "12.3"))
+            .create_product(create_request("product-a", category_id, "12.3"))
             .await
             .expect("product should be created");
 
         assert_eq!(created.name, "product-a");
+        assert_eq!(created.category_id, category_id);
+        assert_eq!(created.category_name, "产品");
+        assert!(!created.requires_operation_count);
         assert_eq!(created.unit, None);
         assert_eq!(created.unit_price, "12.30");
         assert_eq!(created.status, "active");
@@ -451,6 +560,7 @@ mod tests {
         let list = service
             .list_products(ListProductsQuery {
                 status_filter: Some("active".to_string()),
+                category_id: Some(category_id),
                 page_number: None,
                 page_size: None,
             })
@@ -470,15 +580,18 @@ mod tests {
 
     #[tokio::test]
     async fn updates_clears_disables_and_deletes_product() {
-        let (_, service) = test_services().await;
+        let (categories, _, service) = test_services().await;
+        let category_id = default_category(&categories).await;
+        let medical_category_id = medical_category(&categories).await;
         let created = service
-            .create_product(create_request("product-a", "12.30"))
+            .create_product(create_request("product-a", category_id, "12.30"))
             .await
             .expect("product should be created");
 
         let request: UpdateProductRequest = serde_json::from_value(json!({
             "name": "product-b",
-            "category": null,
+            "category_id": medical_category_id,
+            "brand_name": null,
             "unit": "piece",
             "unit_price": "25",
             "status": "active"
@@ -489,7 +602,10 @@ mod tests {
             .await
             .expect("product should update");
         assert_eq!(updated.name, "product-b");
-        assert_eq!(updated.category, None);
+        assert_eq!(updated.category_id, medical_category_id);
+        assert_eq!(updated.category_name, "医疗");
+        assert!(updated.requires_operation_count);
+        assert_eq!(updated.brand_name, None);
         assert_eq!(updated.unit, Some("piece".to_string()));
         assert_eq!(updated.unit_price, "25.00");
 
@@ -511,13 +627,16 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_invalid_product_inputs() {
-        let (_, service) = test_services().await;
+        let (categories, _, service) = test_services().await;
+        let category_id = default_category(&categories).await;
 
         assert!(matches!(
-            service.create_product(create_request(" ", "12.30")).await,
+            service
+                .create_product(create_request(" ", category_id, "12.30"))
+                .await,
             Err(ProductError::MissingRequiredField { field: "name" })
         ));
-        let mut invalid_status = create_request("product-a", "12.30");
+        let mut invalid_status = create_request("product-a", category_id, "12.30");
         invalid_status.status = Some("deleted".to_string());
         assert!(matches!(
             service.create_product(invalid_status).await,
@@ -528,7 +647,7 @@ mod tests {
         ));
         assert!(matches!(
             service
-                .create_product(create_request("product-a", "abc"))
+                .create_product(create_request("product-a", category_id, "abc"))
                 .await,
             Err(ProductError::InvalidUnitPrice {
                 field: "unit_price",
@@ -537,7 +656,7 @@ mod tests {
         ));
         assert!(matches!(
             service
-                .create_product(create_request("product-a", "12.345"))
+                .create_product(create_request("product-a", category_id, "12.345"))
                 .await,
             Err(ProductError::InvalidUnitPrice {
                 field: "unit_price",
@@ -546,7 +665,7 @@ mod tests {
         ));
         assert!(matches!(
             service
-                .create_product(create_request("product-a", "-0.01"))
+                .create_product(create_request("product-a", category_id, "-0.01"))
                 .await,
             Err(ProductError::NegativeUnitPrice {
                 field: "unit_price",
@@ -555,7 +674,7 @@ mod tests {
         ));
         assert!(matches!(
             service
-                .create_product(create_request("product-a", "10000000000.00"))
+                .create_product(create_request("product-a", category_id, "10000000000.00"))
                 .await,
             Err(ProductError::UnitPriceTooLarge {
                 field: "unit_price",
@@ -566,9 +685,10 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_invalid_list_and_update_parameters() {
-        let (_, service) = test_services().await;
+        let (categories, _, service) = test_services().await;
+        let category_id = default_category(&categories).await;
         let created = service
-            .create_product(create_request("product-a", "12.30"))
+            .create_product(create_request("product-a", category_id, "12.30"))
             .await
             .expect("product should be created");
 
@@ -576,6 +696,7 @@ mod tests {
             service
                 .list_products(ListProductsQuery {
                     status_filter: Some("deleted".to_string()),
+                    category_id: None,
                     page_number: None,
                     page_size: None,
                 })
@@ -589,6 +710,7 @@ mod tests {
             service
                 .list_products(ListProductsQuery {
                     status_filter: None,
+                    category_id: None,
                     page_number: Some(0),
                     page_size: None,
                 })
@@ -602,6 +724,7 @@ mod tests {
             service
                 .list_products(ListProductsQuery {
                     status_filter: None,
+                    category_id: None,
                     page_number: None,
                     page_size: Some(MAX_PAGE_SIZE + 1),
                 })
@@ -617,6 +740,55 @@ mod tests {
         assert!(matches!(
             service.update_product(created.id, null_name).await,
             Err(ProductError::MissingRequiredField { field: "name" })
+        ));
+
+        let null_category: UpdateProductRequest =
+            serde_json::from_value(json!({"category_id": null}))
+                .expect("update request should deserialize");
+        assert!(matches!(
+            service.update_product(created.id, null_category).await,
+            Err(ProductError::MissingRequiredField {
+                field: "category_id"
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejects_missing_or_disabled_category() {
+        let (categories, _, service) = test_services().await;
+        let category_id = default_category(&categories).await;
+        let created = service
+            .create_product(create_request("product-a", category_id, "12.30"))
+            .await
+            .expect("product should be created");
+
+        assert!(matches!(
+            service
+                .create_product(create_request("product-b", Uuid::new_v4(), "12.30"))
+                .await,
+            Err(ProductError::ProductCategoryNotFound)
+        ));
+
+        let medical_category_id = medical_category(&categories).await;
+        let medical_category = categories
+            .find_by_id(medical_category_id)
+            .await
+            .expect("category lookup should succeed")
+            .expect("medical category should exist");
+        categories
+            .update_status(&medical_category, "disabled", Utc::now())
+            .await
+            .expect("category should disable");
+
+        assert!(matches!(
+            service
+                .update_product(
+                    created.id,
+                    serde_json::from_value(json!({"category_id": medical_category_id}))
+                        .expect("update request should deserialize")
+                )
+                .await,
+            Err(ProductError::ProductCategoryDisabled)
         ));
     }
 }

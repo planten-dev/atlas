@@ -1,8 +1,8 @@
 use crate::{
     config::{AuthConfig, SessionConfig},
     services::{
-        auth::AuthService, authz::AuthzService, products::ProductService, stores::StoreService,
-        systems::SystemService, users::UserService,
+        auth::AuthService, authz::AuthzService, product_categories::ProductCategoryService,
+        products::ProductService, stores::StoreService, systems::SystemService, users::UserService,
     },
 };
 
@@ -11,6 +11,7 @@ pub struct AppState {
     pub auth: AuthService,
     pub authz: AuthzService,
     pub users: UserService,
+    pub product_categories: ProductCategoryService,
     pub products: ProductService,
     pub systems: SystemService,
     pub stores: StoreService,
@@ -23,6 +24,7 @@ impl AppState {
         auth: AuthService,
         authz: AuthzService,
         users: UserService,
+        product_categories: ProductCategoryService,
         products: ProductService,
         systems: SystemService,
         stores: StoreService,
@@ -33,6 +35,7 @@ impl AppState {
             auth,
             authz,
             users,
+            product_categories,
             products,
             systems,
             stores,

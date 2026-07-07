@@ -182,13 +182,15 @@ mod tests {
         config::{AuthConfig, DatabaseConfig, DatabaseKind, DingTalkConfig, SessionConfig},
         db,
         repositories::{
-            authz::AuthzRepository, departments::DepartmentRepository, products::ProductRepository,
+            authz::AuthzRepository, departments::DepartmentRepository,
+            product_categories::ProductCategoryRepository, products::ProductRepository,
             sessions::SessionRepository, stores::StoreRepository, systems::SystemRepository,
             users::UserRepository,
         },
         services::{
-            auth::AuthService, authz::AuthzService, products::ProductService, stores::StoreService,
-            systems::SystemService, users::UserService,
+            auth::AuthService, authz::AuthzService, product_categories::ProductCategoryService,
+            products::ProductService, stores::StoreService, systems::SystemService,
+            users::UserService,
         },
         state::AppState,
     };
@@ -221,6 +223,7 @@ mod tests {
             .expect("test database should initialize");
         let users = UserRepository::new(db.clone());
         let sessions = SessionRepository::new(db.clone());
+        let product_categories = ProductCategoryRepository::new(db.clone());
         let products = ProductRepository::new(db.clone());
         let departments = DepartmentRepository::new(db.clone());
         let systems = SystemRepository::new(db.clone());
@@ -247,13 +250,16 @@ mod tests {
             .await
             .expect("test authz service should initialize");
         let users_service = UserService::new(users.clone(), sessions);
-        let products_service = ProductService::new(products);
+        let product_categories_service =
+            ProductCategoryService::new(product_categories.clone(), products.clone());
+        let products_service = ProductService::new(products, product_categories);
         let stores_service = StoreService::new(stores.clone(), systems.clone());
         let systems_service = SystemService::new(systems, departments, stores);
         let state = AppState::new(
             auth,
             authz.clone(),
             users_service,
+            product_categories_service,
             products_service,
             systems_service,
             stores_service,

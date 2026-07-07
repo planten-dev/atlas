@@ -181,7 +181,7 @@ CREATE TABLE departments (
 
 ## products 表
 
-`products` 表用于存储产品基础信息。产品类别关联 `product_category` 表，系列、品牌和单位当前阶段不单独建表，直接在产品记录中保存可用于业务输入和查询的文本值。
+`products` 表用于存储产品基础信息。产品类别通过 `category_id` 关联 `product_category.id`，系列、品牌、规格和单位当前阶段不单独建表，直接在产品记录中保存文本值。
 
 ### 字段说明
 
@@ -193,26 +193,22 @@ CREATE TABLE departments (
 | `series` | `VARCHAR(128)` | 否 | 产品系列，当前阶段使用字符串存储。 |
 | `brand_name` | `VARCHAR(128)` | 否 | 品牌名称。 |
 | `specification` | `VARCHAR(255)` | 否 | 产品规格。 |
-| `unit` | `VARCHAR(32)` | 是 | 计量单位，用于报价、订单和业务计算。 |
+| `unit` | `VARCHAR(32)` | 否 | 计量单位，用于报价、订单和业务计算。 |
 | `unit_price` | `DECIMAL(12,2)` | 是 | 产品单价，使用 decimal 类型保存金额。 |
-| `status` | `VARCHAR(32)` | 是 | 产品状态，用于标识产品是否启用。 |
+| `status` | `VARCHAR(32)` | 是 | 产品状态，允许 `active`、`disabled`。 |
 | `created_at` | `TIMESTAMPTZ` | 是 | 产品记录创建时间。 |
 | `updated_at` | `TIMESTAMPTZ` | 是 | 产品记录最后更新时间。 |
 
 ## products 表设计原则
 
 - `id` 是系统内部唯一产品标识，也是 `products` 表的主键。
-- `name` 是产品名称，不允许为空。
-- `category_id` 表示产品所属类别，关联 `product_category.id`，不允许为空。
-- `series` 表示产品系列，允许为空。当前阶段不单独建产品系列表，仅在 `products` 表中保存系列名称。
-- `brand_name` 表示品牌名称，允许为空。当前阶段只保存品牌名称，不建立品牌表。
-- `specification` 表示产品规格，允许为空。
-- `unit` 表示计量单位，允许为空，需要存储在产品库中，用于报价、订单和业务计算。
-- `unit_price` 表示产品单价，不允许为空。该字段使用 decimal 类型，不使用 float 或 double，避免金额精度问题。
+- `name` 是产品名称，不允许为空，不要求全局唯一。
+- `category_id` 表示产品所属类别，不允许为空，只能关联已存在的产品类别。
+- 新建或修改产品时，`category_id` 必须引用启用中的产品类别；已存在产品可以继续显示已停用类别。
+- `series`、`brand_name`、`specification` 和 `unit` 允许为空，当前阶段不单独建字典表。
+- `unit_price` 不允许为空，使用 decimal 类型，不使用 float 或 double，避免金额精度问题。
 - `status` 用于表示产品启用、禁用状态，不允许为空。
-- `created_at` 表示产品记录创建时间，创建后不应被应用逻辑主动修改。
-- `updated_at` 表示产品记录最后更新时间，每次更新产品记录或状态时同步更新。
-- `name` 不要求全局唯一。
+- `created_at` 创建后不应被应用逻辑主动修改；`updated_at` 在产品记录或状态变更时同步更新。
 
 ## products 输入建议设计
 
@@ -220,11 +216,11 @@ CREATE TABLE departments (
 - 系列、品牌和单位当前阶段不单独建表。
 - 新建或编辑产品时，可以通过 `products` 表已有数据去重后提供输入建议。
 - 输入建议仅作为前端辅助，不限制用户填写新值。
-- 后续接口可以从 `product_category` 表中查询产品类别，并从 `products` 表中查询 `series`、`brand_name` 和 `unit` 的 distinct 值，用于提供输入建议。
+- 后续接口可以从 `products` 表查询 `series`、`brand_name` 和 `unit` 的 distinct 值，用于提供输入建议。
 
 ## product_category 表
 
-`product_category` 表用于存储产品类别基础配置。当前阶段用于维护产品类别名称，以及该类别是否需要记录操作次数。
+`product_category` 表用于存储产品类别基础配置，维护类别名称以及该类别是否需要记录操作次数。
 
 ### 字段说明
 
@@ -233,16 +229,16 @@ CREATE TABLE departments (
 | `id` | `UUID` | 是 | 产品类别唯一标识，作为 `product_category` 表主键。 |
 | `category_name` | `VARCHAR(128)` | 是 | 产品类别名称。 |
 | `requires_operation_count` | `BOOLEAN` | 是 | 是否需要记录操作次数。 |
-| `status` | `BOOLEAN` | 是 | 产品类别状态，用于标识产品类别是否启用。 |
+| `status` | `VARCHAR(32)` | 是 | 产品类别状态，允许 `active`、`disabled`。 |
 | `created_at` | `TIMESTAMPTZ` | 是 | 产品类别记录创建时间。 |
 | `updated_at` | `TIMESTAMPTZ` | 是 | 产品类别记录最后更新时间。 |
 
 ## product_category 表设计原则
 
 - `id` 是系统内部唯一产品类别标识，也是 `product_category` 表的主键。
-- `category_name` 是产品类别名称，不允许为空。
-- `requires_operation_count` 用于标识该产品类别是否需要记录操作次数，不允许为空。
+- `category_name` 不允许为空，去除首尾空格后全局唯一。
+- `requires_operation_count` 用于标识该类别售出后是否需要记录可操作次数；具体次数由现场人员在销售业务中动态决定。
 - `status` 用于表示产品类别启用、禁用状态，不允许为空。
-- `created_at` 表示产品类别记录创建时间，创建后不应被应用逻辑主动修改。
-- `updated_at` 表示产品类别记录最后更新时间，每次更新产品类别记录或状态时同步更新。
-- `created_at` 和 `updated_at` 用于审计时间记录。
+- 默认初始化四个类别：`产品` 不需要操作次数，`医疗`、`仪器`、`卡项` 需要操作次数。
+- 产品类别被产品引用时允许停用，但不允许物理删除。
+- `created_at` 创建后不应被应用逻辑主动修改；`updated_at` 在产品类别记录或状态变更时同步更新。

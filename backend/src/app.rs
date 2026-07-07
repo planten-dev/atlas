@@ -29,6 +29,44 @@ pub fn router(state: AppState) -> Router {
             post(handlers::users::delete_user),
         )
         .route(
+            "/api/v1/product-categories/list",
+            get(handlers::product_categories::list_categories
+                .layer(require_permission(&state, "products:categories:read"))),
+        )
+        .route(
+            "/api/v1/product-categories/detail/{category_id}",
+            get(handlers::product_categories::category_detail
+                .layer(require_permission(&state, "products:categories:read"))),
+        )
+        .route(
+            "/api/v1/product-categories/create",
+            post(
+                handlers::product_categories::create_category
+                    .layer(require_permission(&state, "products:categories:write")),
+            ),
+        )
+        .route(
+            "/api/v1/product-categories/update/{category_id}",
+            post(
+                handlers::product_categories::update_category
+                    .layer(require_permission(&state, "products:categories:write")),
+            ),
+        )
+        .route(
+            "/api/v1/product-categories/disable/{category_id}",
+            post(
+                handlers::product_categories::disable_category
+                    .layer(require_permission(&state, "products:categories:write")),
+            ),
+        )
+        .route(
+            "/api/v1/product-categories/delete/{category_id}",
+            post(
+                handlers::product_categories::delete_category
+                    .layer(require_permission(&state, "products:categories:write")),
+            ),
+        )
+        .route(
             "/api/v1/products/list",
             get(handlers::products::list_products
                 .layer(require_permission(&state, "products:read"))),

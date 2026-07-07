@@ -2,6 +2,7 @@ pub mod auth_sessions;
 pub mod departments;
 pub mod oauth_login_states;
 pub mod permission_policies;
+pub mod product_category;
 pub mod products;
 pub mod role_inheritances;
 pub mod roles;
