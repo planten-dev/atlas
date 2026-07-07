@@ -19,6 +19,10 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/users/update-status/{user_id}",
             post(handlers::users::update_user_status),
         )
+        .route(
+            "/api/v1/users/delete/{user_id}",
+            post(handlers::users::delete_user),
+        )
         .route_layer(from_fn_with_state(state.clone(), require_auth));
 
     Router::new()

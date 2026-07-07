@@ -401,6 +401,51 @@
           }
         }
       }
+    },
+    "/api/v1/users/delete/{user_id}": {
+      "post": {
+        "tags": ["Users"],
+        "summary": "Delete user",
+        "operationId": "deleteUser",
+        "description": "Hard deletes one Atlas user record by internal user id. The user's auth_sessions records are deleted first to satisfy current foreign key constraints. User records are still created only by DingTalk external login; after deletion, the same dingtalk_user_id can be recreated by a future DingTalk login.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Atlas internal user id."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "User record and the user's auth sessions were deleted."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
     }
   },
   "components": {

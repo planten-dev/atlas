@@ -183,6 +183,21 @@ impl SessionRepository {
         Ok(count)
     }
 
+    #[tracing::instrument(level = "info", skip(self), fields(user_id = %user_id))]
+    pub async fn delete_sessions_for_user(&self, user_id: Uuid) -> Result<u64, RepositoryError> {
+        let result = auth_sessions::Entity::delete_many()
+            .filter(auth_sessions::Column::UserId.eq(user_id))
+            .exec(&self.db)
+            .await?;
+
+        info!(
+            user_id = %user_id,
+            deleted_count = result.rows_affected,
+            "deleted auth sessions for user"
+        );
+        Ok(result.rows_affected)
+    }
+
     #[tracing::instrument(level = "debug", skip(self, state_hash), fields(provider = %provider))]
     pub async fn create_oauth_state(
         &self,
@@ -395,6 +410,63 @@ mod tests {
                 .await
                 .expect("other session lookup should succeed")
                 .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn deletes_all_sessions_for_user_only() {
+        let (users, sessions) = test_repositories().await;
+        let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
+        let user = users
+            .find_or_create_for_login("ding-user-1", now)
+            .await
+            .expect("user should be created");
+        let other_user = users
+            .find_or_create_for_login("ding-user-2", now)
+            .await
+            .expect("other user should be created");
+        let active_hash = hash_secret("active");
+        let expired_hash = hash_secret("expired");
+        let other_hash = hash_secret("other");
+        sessions
+            .create_session(user.id, &active_hash, now, now + Duration::hours(1))
+            .await
+            .expect("active session should be created");
+        sessions
+            .create_session(user.id, &expired_hash, now, now - Duration::seconds(1))
+            .await
+            .expect("expired session should be created");
+        sessions
+            .create_session(other_user.id, &other_hash, now, now + Duration::hours(1))
+            .await
+            .expect("other session should be created");
+
+        let deleted = sessions
+            .delete_sessions_for_user(user.id)
+            .await
+            .expect("sessions should be deleted");
+
+        assert_eq!(deleted, 2);
+        assert!(
+            sessions
+                .find_valid_session(&active_hash, now)
+                .await
+                .expect("active session lookup should succeed")
+                .is_none()
+        );
+        assert!(
+            sessions
+                .find_valid_session(&other_hash, now)
+                .await
+                .expect("other session lookup should succeed")
+                .is_some()
+        );
+        assert_eq!(
+            sessions
+                .delete_sessions_for_user(user.id)
+                .await
+                .expect("second delete should succeed"),
+            0
         );
     }
 

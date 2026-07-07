@@ -133,6 +133,15 @@ impl UserRepository {
         info!(user_id = %user.id, status = %user.status, "updated user status");
         Ok(user)
     }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn delete_by_id(&self, user_id: Uuid) -> Result<bool, RepositoryError> {
+        let result = users::Entity::delete_by_id(user_id).exec(&self.db).await?;
+        let deleted = result.rows_affected > 0;
+
+        info!(%user_id, deleted, "deleted user by id");
+        Ok(deleted)
+    }
 }
 
 fn validate_required(field: &'static str, value: &str) -> Result<(), RepositoryError> {
@@ -274,6 +283,36 @@ mod tests {
         assert_eq!(updated.dingtalk_user_id, "ding-user-1");
         assert_eq!(updated.status, "disabled");
         assert_eq!(updated.updated_at, updated_at);
+    }
+
+    #[tokio::test]
+    async fn deletes_user_by_id() {
+        let repository = test_repository().await;
+        let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
+        let user = repository
+            .find_or_create_for_login("ding-user-1", now)
+            .await
+            .expect("user should be created");
+
+        let deleted = repository
+            .delete_by_id(user.id)
+            .await
+            .expect("user delete should succeed");
+
+        assert!(deleted);
+        assert!(
+            repository
+                .find_by_id(user.id)
+                .await
+                .expect("user lookup should succeed")
+                .is_none()
+        );
+        assert!(
+            !repository
+                .delete_by_id(Uuid::new_v4())
+                .await
+                .expect("missing user delete should succeed")
+        );
     }
 
     #[tokio::test]
