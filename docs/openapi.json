@@ -1,0 +1,355 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Atlas API",
+    "version": "0.1.0",
+    "description": "Atlas backend API. Authentication uses a server-side session stored in an HttpOnly cookie named atlas_session. JWT is not used, and session ids are not returned in response bodies."
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Health check",
+        "operationId": "healthCheck",
+        "responses": {
+          "200": {
+            "description": "Service is healthy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/login/dingtalk": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Start DingTalk login",
+        "operationId": "startDingTalkLogin",
+        "description": "Creates a one-time OAuth state and redirects the browser to the DingTalk authorization page.",
+        "security": [],
+        "responses": {
+          "302": {
+            "description": "Redirect to DingTalk authorization page.",
+            "headers": {
+              "Location": {
+                "description": "DingTalk authorization URL.",
+                "schema": {
+                  "type": "string",
+                  "format": "uri"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/callback/dingtalk": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Handle DingTalk login callback",
+        "operationId": "handleDingTalkCallback",
+        "description": "Validates OAuth state, exchanges the DingTalk authorization code, maps the DingTalk user to users.dingtalk_user_id, creates a server-side session, and sets atlas_session as an HttpOnly cookie. The response body does not include the session id.",
+        "security": [],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "authCode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error_description",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "DingTalk identity verified and mapped to an Atlas user. A session cookie is set.",
+            "headers": {
+              "Set-Cookie": {
+                "description": "HttpOnly atlas_session cookie.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "302": {
+            "description": "Browser redirect to configured frontend callback URL when the request prefers HTML.",
+            "headers": {
+              "Location": {
+                "description": "Frontend callback URL.",
+                "schema": {
+                  "type": "string",
+                  "format": "uri"
+                }
+              },
+              "Set-Cookie": {
+                "description": "HttpOnly atlas_session cookie on successful login.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Get current user",
+        "operationId": "getCurrentUser",
+        "description": "Reads the atlas_session HttpOnly cookie and returns the current Atlas user.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current authenticated user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Logout current session",
+        "operationId": "logout",
+        "description": "Revokes the current server-side session and clears the atlas_session cookie.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Session revoked and cookie cleared.",
+            "headers": {
+              "Set-Cookie": {
+                "description": "Clears atlas_session with Max-Age=0.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "AtlasSessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "atlas_session",
+        "description": "Server-side session cookie. It is set as HttpOnly by the backend and is not returned as a JSON field."
+      }
+    },
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "ok"
+          }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "required": ["user"],
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/UserResponse"
+          }
+        }
+      },
+      "UserResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "dingtalk_user_id",
+          "status",
+          "created_at",
+          "updated_at",
+          "last_login_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Atlas internal user id."
+          },
+          "dingtalk_user_id": {
+            "type": "string",
+            "description": "DingTalk user id used for external login mapping."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["active", "disabled"]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_login_at": {
+            "type": ["string", "null"],
+            "format": "date-time"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error", "message"],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Request validation failed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Missing, invalid, expired, or revoked session.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "The mapped user exists but is disabled.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "BadGateway": {
+        "description": "DingTalk request failed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "InternalError": {
+        "description": "Internal server error.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    }
+  }
+}

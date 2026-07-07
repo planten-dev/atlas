@@ -1,6 +1,10 @@
 use anyhow::{Context, Result};
-use axum::{Router, routing::get};
-use backend::{config, db, handlers};
+use backend::{
+    app, config, db,
+    repositories::{sessions::SessionRepository, users::UserRepository},
+    services::auth::AuthService,
+    state::AppState,
+};
 use std::net::SocketAddr;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -18,7 +22,19 @@ async fn main() -> Result<()> {
     let _db = db::connect_and_migrate(&config.database)
         .await
         .context("failed to initialize database")?;
-    let app = Router::new().route("/health", get(handlers::health));
+    let users = UserRepository::new(_db.clone());
+    let sessions = SessionRepository::new(_db);
+    let auth = AuthService::new(
+        config.dingtalk.clone(),
+        users,
+        sessions,
+        config.session.ttl_seconds,
+    );
+    let app = app::router(AppState::new(
+        auth,
+        config.auth.clone(),
+        config.session.clone(),
+    ));
     let addr: SocketAddr = config
         .server
         .bind_addr
