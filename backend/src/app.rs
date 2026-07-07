@@ -15,6 +15,19 @@ pub fn router(state: AppState) -> Router {
     let authenticated_routes = Router::new()
         .route("/api/v1/auth/me", get(handlers::auth::me))
         .route("/api/v1/auth/logout", post(handlers::auth::logout))
+        .route("/api/v1/users/list", get(handlers::users::list_users))
+        .route(
+            "/api/v1/users/detail/{user_id}",
+            get(handlers::users::user_detail),
+        )
+        .route(
+            "/api/v1/users/update-status/{user_id}",
+            post(handlers::users::update_user_status),
+        )
+        .route(
+            "/api/v1/users/delete/{user_id}",
+            post(handlers::users::delete_user),
+        )
         .route(
             "/api/v1/permissions/roles",
             get(handlers::permissions::list_roles

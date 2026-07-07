@@ -176,7 +176,7 @@ mod tests {
         repositories::{
             authz::AuthzRepository, sessions::SessionRepository, users::UserRepository,
         },
-        services::{auth::AuthService, authz::AuthzService},
+        services::{auth::AuthService, authz::AuthzService, users::UserService},
     };
     use axum::{
         Router,
@@ -482,15 +482,17 @@ mod tests {
                 external_id_fields: vec!["userId".to_string()],
             },
             users.clone(),
-            sessions,
+            sessions.clone(),
             86_400,
         );
         let authz = AuthzService::new(AuthzRepository::new(db))
             .await
             .expect("test authz service should initialize");
+        let users_service = UserService::new(users.clone(), sessions);
         let state = AppState::new(
             auth,
             authz,
+            users_service,
             AuthConfig {
                 frontend_callback_url: "".to_string(),
             },

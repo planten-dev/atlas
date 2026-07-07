@@ -8,7 +8,9 @@
   "paths": {
     "/health": {
       "get": {
-        "tags": ["Health"],
+        "tags": [
+          "Health"
+        ],
         "summary": "Health check",
         "operationId": "healthCheck",
         "responses": {
@@ -27,7 +29,9 @@
     },
     "/api/v1/auth/login/dingtalk": {
       "get": {
-        "tags": ["Auth"],
+        "tags": [
+          "Auth"
+        ],
         "summary": "Start DingTalk login",
         "operationId": "startDingTalkLogin",
         "description": "Creates a one-time OAuth state and redirects the browser to the DingTalk authorization page.",
@@ -53,7 +57,9 @@
     },
     "/api/v1/auth/callback/dingtalk": {
       "get": {
-        "tags": ["Auth"],
+        "tags": [
+          "Auth"
+        ],
         "summary": "Handle DingTalk login callback",
         "operationId": "handleDingTalkCallback",
         "description": "Validates OAuth state, exchanges the DingTalk authorization code, maps the DingTalk user to users.dingtalk_user_id, creates a server-side session, and sets atlas_session as an HttpOnly cookie. The response body does not include the session id.",
@@ -143,18 +149,20 @@
           "403": {
             "$ref": "#/components/responses/Forbidden"
           },
-          "502": {
-            "$ref": "#/components/responses/BadGateway"
-          },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
           }
         }
       }
     },
     "/api/v1/auth/me": {
       "get": {
-        "tags": ["Auth"],
+        "tags": [
+          "Auth"
+        ],
         "summary": "Get current user",
         "operationId": "getCurrentUser",
         "description": "Reads the atlas_session HttpOnly cookie and returns the current Atlas user.",
@@ -188,7 +196,9 @@
     },
     "/api/v1/auth/logout": {
       "post": {
-        "tags": ["Auth"],
+        "tags": [
+          "Auth"
+        ],
         "summary": "Logout current session",
         "operationId": "logout",
         "description": "Revokes the current server-side session and clears the atlas_session cookie.",
@@ -218,13 +228,259 @@
         }
       }
     },
+    "/api/v1/users/list": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "List users",
+        "operationId": "listUsers",
+        "description": "Lists Atlas users. User records are created only by the DingTalk external login flow; this API only reads existing users.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "disabled"
+              ]
+            },
+            "description": "Only return users with this status."
+          },
+          {
+            "name": "page_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Users page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListUsersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/users/detail/{user_id}": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Get user detail",
+        "operationId": "getUserDetail",
+        "description": "Returns one Atlas user by the internal user id.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Atlas internal user id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/users/update-status/{user_id}": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Update user status",
+        "operationId": "updateUserStatus",
+        "description": "Updates only the Atlas user status. dingtalk_user_id cannot be changed through the user management API. Setting target_status to disabled revokes the user's active sessions; setting it to active does not create a session.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Atlas internal user id."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserStatusRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "User status updated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/users/delete/{user_id}": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Delete user",
+        "operationId": "deleteUser",
+        "description": "Hard deletes one Atlas user record by internal user id. The user's auth_sessions records are deleted first to satisfy current foreign key constraints. User records are still created only by DingTalk external login; after deletion, the same dingtalk_user_id can be recreated by a future DingTalk login.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Atlas internal user id."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "User record and the user's auth sessions were deleted."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/v1/permissions/roles": {
       "get": {
-        "tags": ["Permissions"],
+        "tags": [
+          "Permissions"
+        ],
         "summary": "List roles",
         "operationId": "listRoles",
         "description": "Requires permission system:permissions:read.",
-        "security": [{ "AtlasSessionCookie": [] }],
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "All roles ordered by priority, then code.",
@@ -232,27 +488,43 @@
               "application/json": {
                 "schema": {
                   "type": "array",
-                  "items": { "$ref": "#/components/schemas/RoleResponse" }
+                  "items": {
+                    "$ref": "#/components/schemas/RoleResponse"
+                  }
                 }
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/PermissionDenied" },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       },
       "post": {
-        "tags": ["Permissions"],
+        "tags": [
+          "Permissions"
+        ],
         "summary": "Create role",
         "operationId": "createRole",
         "description": "Requires permission system:permissions:write. The role kind is immutable after creation. When priority is omitted, kind defaults apply: position=20, department=30, custom=40 (smaller wins; 0 is reserved for user-level policies).",
-        "security": [{ "AtlasSessionCookie": [] }],
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/CreateRoleRequest" }
+              "schema": {
+                "$ref": "#/components/schemas/CreateRoleRequest"
+              }
             }
           }
         },
@@ -261,15 +533,27 @@
             "description": "Role created.",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/RoleResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/RoleResponse"
+                }
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/PermissionDenied" },
-          "409": { "$ref": "#/components/responses/Conflict" },
-          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       }
     },
@@ -279,41 +563,68 @@
           "name": "roleId",
           "in": "path",
           "required": true,
-          "schema": { "type": "string", "format": "uuid" }
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
         }
       ],
       "get": {
-        "tags": ["Permissions"],
+        "tags": [
+          "Permissions"
+        ],
         "summary": "Get role with parents",
         "operationId": "getRole",
         "description": "Requires permission system:permissions:read.",
-        "security": [{ "AtlasSessionCookie": [] }],
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "Role detail including direct parent role ids.",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/RoleDetailResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/RoleDetailResponse"
+                }
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/PermissionDenied" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       },
       "patch": {
-        "tags": ["Permissions"],
+        "tags": [
+          "Permissions"
+        ],
         "summary": "Update role name or priority",
         "operationId": "updateRole",
         "description": "Requires permission system:permissions:write. kind cannot be changed.",
-        "security": [{ "AtlasSessionCookie": [] }],
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/UpdateRoleRequest" }
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRoleRequest"
+              }
             }
           }
         },
@@ -322,29 +633,57 @@
             "description": "Role updated.",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/RoleResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/RoleResponse"
+                }
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/PermissionDenied" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       },
       "delete": {
-        "tags": ["Permissions"],
+        "tags": [
+          "Permissions"
+        ],
         "summary": "Delete role",
         "operationId": "deleteRole",
         "description": "Requires permission system:permissions:write. Also removes the role's policies, inheritance links, and user assignments.",
-        "security": [{ "AtlasSessionCookie": [] }],
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
         "responses": {
-          "204": { "description": "Role deleted." },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/PermissionDenied" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "204": {
+            "description": "Role deleted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       }
     },
@@ -354,30 +693,53 @@
           "name": "roleId",
           "in": "path",
           "required": true,
-          "schema": { "type": "string", "format": "uuid" }
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
         }
       ],
       "put": {
-        "tags": ["Permissions"],
+        "tags": [
+          "Permissions"
+        ],
         "summary": "Replace parent roles",
         "operationId": "setRoleParents",
         "description": "Requires permission system:permissions:write. Replaces the full parent set. The child role inherits every policy of its parents (e.g. sub-department inherits parent department). Cycles and inheritance chains deeper than 8 links are rejected.",
-        "security": [{ "AtlasSessionCookie": [] }],
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/SetRoleParentsRequest" }
+              "schema": {
+                "$ref": "#/components/schemas/SetRoleParentsRequest"
+              }
             }
           }
         },
         "responses": {
-          "204": { "description": "Parent roles replaced." },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/PermissionDenied" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "204": {
+            "description": "Parent roles replaced."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       }
     },
@@ -387,41 +749,68 @@
           "name": "userId",
           "in": "path",
           "required": true,
-          "schema": { "type": "string", "format": "uuid" }
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
         }
       ],
       "get": {
-        "tags": ["Permissions"],
+        "tags": [
+          "Permissions"
+        ],
         "summary": "List a user's roles",
         "operationId": "listUserRoles",
         "description": "Requires permission system:permissions:read.",
-        "security": [{ "AtlasSessionCookie": [] }],
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "Roles directly assigned to the user.",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/UserRolesResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/UserRolesResponse"
+                }
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/PermissionDenied" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       },
       "put": {
-        "tags": ["Permissions"],
+        "tags": [
+          "Permissions"
+        ],
         "summary": "Replace a user's roles",
         "operationId": "setUserRoles",
         "description": "Requires permission system:permissions:write. Replaces the full role set of the user.",
-        "security": [{ "AtlasSessionCookie": [] }],
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/SetUserRolesRequest" }
+              "schema": {
+                "$ref": "#/components/schemas/SetUserRolesRequest"
+              }
             }
           }
         },
@@ -430,37 +819,64 @@
             "description": "Updated role assignments.",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/UserRolesResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/UserRolesResponse"
+                }
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/PermissionDenied" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       }
     },
     "/api/v1/permissions/policies": {
       "get": {
-        "tags": ["Permissions"],
+        "tags": [
+          "Permissions"
+        ],
         "summary": "List permission policies",
         "operationId": "listPolicies",
         "description": "Requires permission system:permissions:read.",
-        "security": [{ "AtlasSessionCookie": [] }],
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
         "parameters": [
           {
             "name": "subject_kind",
             "in": "query",
             "required": false,
-            "schema": { "type": "string", "enum": ["user", "role"] }
+            "schema": {
+              "type": "string",
+              "enum": [
+                "user",
+                "role"
+              ]
+            }
           },
           {
             "name": "subject_id",
             "in": "query",
             "required": false,
-            "schema": { "type": "string", "format": "uuid" }
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         ],
         "responses": {
@@ -470,28 +886,46 @@
               "application/json": {
                 "schema": {
                   "type": "array",
-                  "items": { "$ref": "#/components/schemas/PolicyResponse" }
+                  "items": {
+                    "$ref": "#/components/schemas/PolicyResponse"
+                  }
                 }
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/PermissionDenied" },
-          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       },
       "post": {
-        "tags": ["Permissions"],
+        "tags": [
+          "Permissions"
+        ],
         "summary": "Create permission policy",
         "operationId": "createPolicy",
         "description": "Requires permission system:permissions:write. Objects are colon-separated scopes (e.g. finance:invoices). In policy objects, a trailing * matches all remaining segments and * matches one segment. Effect resolution: user policies override role policies; roles with smaller priority override larger; within the same priority, deny overrides allow.",
-        "security": [{ "AtlasSessionCookie": [] }],
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/CreatePolicyRequest" }
+              "schema": {
+                "$ref": "#/components/schemas/CreatePolicyRequest"
+              }
             }
           }
         },
@@ -500,16 +934,30 @@
             "description": "Policy created and enforced on subsequent requests.",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/PolicyResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyResponse"
+                }
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/PermissionDenied" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "409": { "$ref": "#/components/responses/Conflict" },
-          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       }
     },
@@ -519,21 +967,40 @@
           "name": "policyId",
           "in": "path",
           "required": true,
-          "schema": { "type": "string", "format": "uuid" }
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
         }
       ],
       "delete": {
-        "tags": ["Permissions"],
+        "tags": [
+          "Permissions"
+        ],
         "summary": "Delete permission policy",
         "operationId": "deletePolicy",
         "description": "Requires permission system:permissions:write.",
-        "security": [{ "AtlasSessionCookie": [] }],
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
         "responses": {
-          "204": { "description": "Policy deleted and no longer enforced." },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/PermissionDenied" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "204": {
+            "description": "Policy deleted and no longer enforced."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       }
     }
@@ -550,7 +1017,9 @@
     "schemas": {
       "HealthResponse": {
         "type": "object",
-        "required": ["status"],
+        "required": [
+          "status"
+        ],
         "properties": {
           "status": {
             "type": "string",
@@ -560,7 +1029,9 @@
       },
       "LoginResponse": {
         "type": "object",
-        "required": ["user"],
+        "required": [
+          "user"
+        ],
         "properties": {
           "user": {
             "$ref": "#/components/schemas/UserResponse"
@@ -589,7 +1060,10 @@
           },
           "status": {
             "type": "string",
-            "enum": ["active", "disabled"]
+            "enum": [
+              "active",
+              "disabled"
+            ]
           },
           "created_at": {
             "type": "string",
@@ -600,14 +1074,20 @@
             "format": "date-time"
           },
           "last_login_at": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "date-time"
           }
         }
       },
       "ErrorResponse": {
         "type": "object",
-        "required": ["error", "message"],
+        "required": [
+          "error",
+          "message"
+        ],
         "properties": {
           "error": {
             "type": "string"
@@ -619,7 +1099,11 @@
       },
       "CreateRoleRequest": {
         "type": "object",
-        "required": ["code", "name", "kind"],
+        "required": [
+          "code",
+          "name",
+          "kind"
+        ],
         "properties": {
           "code": {
             "type": "string",
@@ -632,11 +1116,18 @@
           },
           "kind": {
             "type": "string",
-            "enum": ["position", "department", "custom"],
+            "enum": [
+              "position",
+              "department",
+              "custom"
+            ],
             "description": "Immutable after creation. Determines the default priority layer."
           },
           "priority": {
-            "type": ["integer", "null"],
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 1,
             "description": "Smaller values take precedence. Defaults by kind: position=20, department=30, custom=40."
           }
@@ -646,41 +1137,81 @@
         "type": "object",
         "properties": {
           "name": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "maxLength": 128
           },
           "priority": {
-            "type": ["integer", "null"],
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 1
           }
         }
       },
       "RoleResponse": {
         "type": "object",
-        "required": ["id", "code", "name", "kind", "priority", "created_at", "updated_at"],
+        "required": [
+          "id",
+          "code",
+          "name",
+          "kind",
+          "priority",
+          "created_at",
+          "updated_at"
+        ],
         "properties": {
-          "id": { "type": "string", "format": "uuid" },
-          "code": { "type": "string" },
-          "name": { "type": "string" },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
           "kind": {
             "type": "string",
-            "enum": ["position", "department", "custom"]
+            "enum": [
+              "position",
+              "department",
+              "custom"
+            ]
           },
-          "priority": { "type": "integer" },
-          "created_at": { "type": "string", "format": "date-time" },
-          "updated_at": { "type": "string", "format": "date-time" }
+          "priority": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "RoleDetailResponse": {
         "allOf": [
-          { "$ref": "#/components/schemas/RoleResponse" },
+          {
+            "$ref": "#/components/schemas/RoleResponse"
+          },
           {
             "type": "object",
-            "required": ["parent_role_ids"],
+            "required": [
+              "parent_role_ids"
+            ],
             "properties": {
               "parent_role_ids": {
                 "type": "array",
-                "items": { "type": "string", "format": "uuid" },
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
                 "description": "Direct parent roles whose policies this role inherits."
               }
             }
@@ -689,42 +1220,69 @@
       },
       "SetRoleParentsRequest": {
         "type": "object",
-        "required": ["parent_role_ids"],
+        "required": [
+          "parent_role_ids"
+        ],
         "properties": {
           "parent_role_ids": {
             "type": "array",
-            "items": { "type": "string", "format": "uuid" }
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         }
       },
       "SetUserRolesRequest": {
         "type": "object",
-        "required": ["role_ids"],
+        "required": [
+          "role_ids"
+        ],
         "properties": {
           "role_ids": {
             "type": "array",
-            "items": { "type": "string", "format": "uuid" }
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         }
       },
       "UserRolesResponse": {
         "type": "object",
-        "required": ["user_id", "roles"],
+        "required": [
+          "user_id",
+          "roles"
+        ],
         "properties": {
-          "user_id": { "type": "string", "format": "uuid" },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
           "roles": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/RoleResponse" }
+            "items": {
+              "$ref": "#/components/schemas/RoleResponse"
+            }
           }
         }
       },
       "CreatePolicyRequest": {
         "type": "object",
-        "required": ["subject_kind", "subject_id", "object", "action", "effect"],
+        "required": [
+          "subject_kind",
+          "subject_id",
+          "object",
+          "action",
+          "effect"
+        ],
         "properties": {
           "subject_kind": {
             "type": "string",
-            "enum": ["user", "role"]
+            "enum": [
+              "user",
+              "role"
+            ]
           },
           "subject_id": {
             "type": "string",
@@ -738,25 +1296,113 @@
           },
           "action": {
             "type": "string",
-            "enum": ["read", "write", "approve", "*"]
+            "enum": [
+              "read",
+              "write",
+              "approve",
+              "*"
+            ]
           },
           "effect": {
             "type": "string",
-            "enum": ["allow", "deny"]
+            "enum": [
+              "allow",
+              "deny"
+            ]
           }
         }
       },
       "PolicyResponse": {
         "type": "object",
-        "required": ["id", "subject_kind", "subject_id", "object", "action", "effect", "created_at"],
+        "required": [
+          "id",
+          "subject_kind",
+          "subject_id",
+          "object",
+          "action",
+          "effect",
+          "created_at"
+        ],
         "properties": {
-          "id": { "type": "string", "format": "uuid" },
-          "subject_kind": { "type": "string", "enum": ["user", "role"] },
-          "subject_id": { "type": "string", "format": "uuid" },
-          "object": { "type": "string" },
-          "action": { "type": "string" },
-          "effect": { "type": "string", "enum": ["allow", "deny"] },
-          "created_at": { "type": "string", "format": "date-time" }
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "subject_kind": {
+            "type": "string",
+            "enum": [
+              "user",
+              "role"
+            ]
+          },
+          "subject_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "object": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "effect": {
+            "type": "string",
+            "enum": [
+              "allow",
+              "deny"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ListUsersResponse": {
+        "type": "object",
+        "required": [
+          "users",
+          "page_number",
+          "page_size",
+          "total_count"
+        ],
+        "properties": {
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserResponse"
+            }
+          },
+          "page_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "total_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "UpdateUserStatusRequest": {
+        "type": "object",
+        "required": [
+          "target_status"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "target_status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled"
+            ],
+            "description": "Target Atlas user status. disabled revokes active sessions; active does not create sessions."
+          }
         }
       }
     },
@@ -802,7 +1448,7 @@
         }
       },
       "NotFound": {
-        "description": "The referenced role, user, or policy does not exist.",
+        "description": "The requested resource was not found.",
         "content": {
           "application/json": {
             "schema": {

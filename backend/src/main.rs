@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use backend::{
     app, config, db,
     repositories::{authz::AuthzRepository, sessions::SessionRepository, users::UserRepository},
-    services::{auth::AuthService, authz::AuthzService},
+    services::{auth::AuthService, authz::AuthzService, users::UserService},
     state::AppState,
 };
 use std::net::SocketAddr;
@@ -26,16 +26,18 @@ async fn main() -> Result<()> {
     let sessions = SessionRepository::new(db.clone());
     let auth = AuthService::new(
         config.dingtalk.clone(),
-        users,
-        sessions,
+        users.clone(),
+        sessions.clone(),
         config.session.ttl_seconds,
     );
     let authz = AuthzService::new(AuthzRepository::new(db))
         .await
         .context("failed to initialize authorization service")?;
+    let users = UserService::new(users, sessions);
     let app = app::router(AppState::new(
         auth,
         authz,
+        users,
         config.auth.clone(),
         config.session.clone(),
     ));
