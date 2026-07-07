@@ -5,6 +5,7 @@ pub mod dto;
 pub mod entities;
 pub mod handlers;
 pub mod integrations;
+pub mod middleware;
 pub mod migration;
 pub mod repositories;
 pub mod services;

@@ -14,6 +14,12 @@ pub struct SessionRepository {
     db: DatabaseConnection,
 }
 
+#[derive(Debug, Clone)]
+pub struct AuthenticatedSessionRecord {
+    pub session_id: Uuid,
+    pub user: users::Model,
+}
+
 impl SessionRepository {
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
@@ -70,9 +76,22 @@ impl SessionRepository {
         session_token_hash: &str,
         now: DateTime<Utc>,
     ) -> Result<Option<users::Model>, RepositoryError> {
+        Ok(self
+            .find_session_and_user_by_valid_session(session_token_hash, now)
+            .await?
+            .map(|session| session.user))
+    }
+
+    #[tracing::instrument(level = "debug", skip(self, session_token_hash))]
+    pub async fn find_session_and_user_by_valid_session(
+        &self,
+        session_token_hash: &str,
+        now: DateTime<Utc>,
+    ) -> Result<Option<AuthenticatedSessionRecord>, RepositoryError> {
         let Some(session) = self.find_valid_session(session_token_hash, now).await? else {
             return Ok(None);
         };
+        let session_id = session.id;
 
         let user = users::Entity::find_by_id(session.user_id)
             .one(&self.db)
@@ -88,10 +107,11 @@ impl SessionRepository {
         active.update(&self.db).await?;
 
         debug!(
+            session_id = %session_id,
             found = user.is_some(),
             "resolved user from valid auth session"
         );
-        Ok(user)
+        Ok(user.map(|user| AuthenticatedSessionRecord { session_id, user }))
     }
 
     #[tracing::instrument(level = "info", skip(self, session_token_hash))]
@@ -106,6 +126,31 @@ impl SessionRepository {
         };
 
         let session_id = session.id;
+        let mut active: auth_sessions::ActiveModel = session.into();
+        active.revoked_at = Set(Some(now));
+        active.update(&self.db).await?;
+
+        info!(session_id = %session_id, "revoked auth session");
+        Ok(true)
+    }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn revoke_session_by_id(
+        &self,
+        session_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<bool, RepositoryError> {
+        let session = auth_sessions::Entity::find_by_id(session_id)
+            .filter(auth_sessions::Column::RevokedAt.is_null())
+            .filter(auth_sessions::Column::ExpiresAt.gt(now))
+            .one(&self.db)
+            .await?;
+
+        let Some(session) = session else {
+            debug!(session_id = %session_id, "session revoke skipped because session was not active");
+            return Ok(false);
+        };
+
         let mut active: auth_sessions::ActiveModel = session.into();
         active.revoked_at = Set(Some(now));
         active.update(&self.db).await?;

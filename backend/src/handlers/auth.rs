@@ -1,19 +1,17 @@
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{Extension, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
 };
-use tracing::{error, warn};
 
 use crate::{
-    dto::auth::{DingTalkCallbackQuery, ErrorResponse},
-    repositories::RepositoryError,
-    services::auth::{AuthError, DingTalkCallbackInput, LoginResponse},
+    dto::auth::DingTalkCallbackQuery,
+    handlers::error::auth_error_response,
+    middleware::auth::SESSION_COOKIE_NAME,
+    services::auth::{AuthError, CurrentSession, DingTalkCallbackInput, LoginResponse},
     state::AppState,
 };
-
-const SESSION_COOKIE_NAME: &str = "atlas_session";
 
 pub async fn dingtalk_login(State(state): State<AppState>) -> Response {
     match state.auth.begin_dingtalk_login().await {
@@ -75,19 +73,17 @@ pub async fn dingtalk_callback(
     }
 }
 
-pub async fn me(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    let session_token = session_cookie_value(&headers);
-    match state.auth.current_user(session_token.as_deref()).await {
-        Ok(user) => (StatusCode::OK, Json(user)).into_response(),
-        Err(error) => auth_error_response(error),
-    }
+pub async fn me(Extension(current_session): Extension<CurrentSession>) -> Response {
+    (StatusCode::OK, Json(current_session.user)).into_response()
 }
 
-pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    let session_token = session_cookie_value(&headers);
+pub async fn logout(
+    State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
+) -> Response {
     let clear_cookie = clear_session_cookie(state.session_config.cookie_secure);
 
-    match state.auth.logout(session_token.as_deref()).await {
+    match state.auth.logout(current_session.session_id).await {
         Ok(()) => {
             let mut response = StatusCode::NO_CONTENT.into_response();
             response
@@ -102,62 +98,6 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Respon
                 .insert(header::SET_COOKIE, clear_cookie);
             response
         }
-    }
-}
-
-fn auth_error_response(error: AuthError) -> Response {
-    let status = status_code(&error);
-    let code = error.code();
-
-    if status.is_server_error() {
-        error!(
-            status = status.as_u16(),
-            code,
-            message = %error,
-            "auth request failed"
-        );
-    } else {
-        warn!(
-            status = status.as_u16(),
-            code,
-            message = %error,
-            "auth request rejected"
-        );
-    }
-
-    (
-        status,
-        Json(ErrorResponse {
-            error: code.to_string(),
-            message: error.to_string(),
-        }),
-    )
-        .into_response()
-}
-
-fn status_code(error: &AuthError) -> StatusCode {
-    match error {
-        AuthError::DingTalk(error) => match error {
-            crate::integrations::dingtalk::DingTalkError::MissingConfig(_) => {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
-            crate::integrations::dingtalk::DingTalkError::ProviderHttp { .. }
-            | crate::integrations::dingtalk::DingTalkError::Http(_) => StatusCode::BAD_GATEWAY,
-            crate::integrations::dingtalk::DingTalkError::MissingRequiredField { .. }
-            | crate::integrations::dingtalk::DingTalkError::MissingIdentityField(_) => {
-                StatusCode::BAD_REQUEST
-            }
-        },
-        AuthError::Repository(error) => match error {
-            RepositoryError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            RepositoryError::MissingRequiredField { .. } => StatusCode::BAD_REQUEST,
-            RepositoryError::DisabledUser => StatusCode::FORBIDDEN,
-        },
-        AuthError::MissingCallbackField(_)
-        | AuthError::ProviderRejected { .. }
-        | AuthError::StateMismatch => StatusCode::BAD_REQUEST,
-        AuthError::MissingSession | AuthError::InvalidSession => StatusCode::UNAUTHORIZED,
-        AuthError::InvalidSessionTtl => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
@@ -210,18 +150,6 @@ fn clear_session_cookie(secure: bool) -> header::HeaderValue {
     header::HeaderValue::from_str(&cookie).expect("clear cookie should be a valid header")
 }
 
-fn session_cookie_value(headers: &HeaderMap) -> Option<String> {
-    let cookie_header = headers.get(header::COOKIE)?.to_str().ok()?;
-    cookie_header.split(';').find_map(|part| {
-        let (name, value) = part.trim().split_once('=')?;
-        if name == SESSION_COOKIE_NAME && !value.trim().is_empty() {
-            Some(value.trim().to_string())
-        } else {
-            None
-        }
-    })
-}
-
 fn percent_encode(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
 
@@ -244,6 +172,7 @@ mod tests {
         app,
         config::{AuthConfig, DatabaseConfig, DatabaseKind, DingTalkConfig, SessionConfig},
         db,
+        entities::users as users_entity,
         repositories::{sessions::SessionRepository, users::UserRepository},
         services::auth::AuthService,
     };
@@ -253,10 +182,16 @@ mod tests {
         http::{Method, Request},
         routing::{get, post},
     };
+    use sea_orm::{ActiveModelTrait, Set};
     use serde_json::{Value, json};
     use std::path::PathBuf;
     use tokio::net::TcpListener;
     use tower::ServiceExt;
+
+    struct TestContext {
+        app: Router,
+        users: UserRepository,
+    }
 
     #[tokio::test]
     async fn login_redirects_to_dingtalk_and_callback_creates_session_cookie() {
@@ -426,6 +361,58 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
+    #[tokio::test]
+    async fn invalid_session_cookie_returns_unauthorized() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let app = test_app(&mock_base_url).await;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/auth/me")
+                    .header(header::COOKIE, "atlas_session=invalid")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("me request should be handled");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn disabled_user_session_returns_forbidden() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let user = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("user should exist after login");
+        let mut active: users_entity::ActiveModel = user.into();
+        active.status = Set("disabled".to_string());
+        active
+            .update(&context.users.db)
+            .await
+            .expect("user should be disabled");
+
+        let response = context
+            .app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/auth/me")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("me request should be handled");
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
     async fn login_and_cookie(app: Router) -> String {
         let login_response = app
             .clone()
@@ -466,6 +453,10 @@ mod tests {
     }
 
     async fn test_app(mock_base_url: &str) -> Router {
+        test_context(mock_base_url).await.app
+    }
+
+    async fn test_context(mock_base_url: &str) -> TestContext {
         let database = DatabaseConfig {
             kind: DatabaseKind::SqliteMemory,
             url: "postgres://unused".to_string(),
@@ -488,7 +479,7 @@ mod tests {
                 corp_id: "".to_string(),
                 external_id_fields: vec!["userId".to_string()],
             },
-            users,
+            users.clone(),
             sessions,
             86_400,
         );
@@ -502,7 +493,10 @@ mod tests {
                 cookie_secure: false,
             },
         );
-        app::router(state)
+        TestContext {
+            app: app::router(state),
+            users,
+        }
     }
 
     async fn start_mock_dingtalk() -> String {

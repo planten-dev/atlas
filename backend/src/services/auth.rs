@@ -131,34 +131,49 @@ impl AuthService {
     }
 
     #[tracing::instrument(level = "debug", skip(self, session_token))]
+    pub async fn authenticate_session(
+        &self,
+        session_token: Option<&str>,
+    ) -> Result<CurrentSession, AuthError> {
+        let session_token = session_token.ok_or(AuthError::MissingSession)?;
+        let session = self
+            .sessions
+            .find_session_and_user_by_valid_session(&hash_secret(session_token), Utc::now())
+            .await?
+            .ok_or(AuthError::InvalidSession)?;
+        let current = CurrentSession {
+            session_id: session.session_id,
+            user: UserResponse::from_model(session.user),
+        };
+
+        debug!(
+            user_id = %current.user.id,
+            session_id = %current.session_id,
+            "authenticated current session"
+        );
+        Ok(current)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self, session_token))]
     pub async fn current_user(
         &self,
         session_token: Option<&str>,
     ) -> Result<UserResponse, AuthError> {
-        let session_token = session_token.ok_or(AuthError::MissingSession)?;
-        let user = self
-            .sessions
-            .find_user_by_valid_session(&hash_secret(session_token), Utc::now())
-            .await?
-            .ok_or(AuthError::InvalidSession)?;
-
-        debug!(user_id = %user.id, "loaded current user from session");
-        Ok(UserResponse::from_model(user))
+        Ok(self.authenticate_session(session_token).await?.user)
     }
 
-    #[tracing::instrument(level = "info", skip(self, session_token))]
-    pub async fn logout(&self, session_token: Option<&str>) -> Result<(), AuthError> {
-        let session_token = session_token.ok_or(AuthError::MissingSession)?;
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn logout(&self, session_id: Uuid) -> Result<(), AuthError> {
         let revoked = self
             .sessions
-            .revoke_session(&hash_secret(session_token), Utc::now())
+            .revoke_session_by_id(session_id, Utc::now())
             .await?;
 
         if !revoked {
             return Err(AuthError::InvalidSession);
         }
 
-        info!("logged out current session");
+        info!(session_id = %session_id, "logged out current session");
         Ok(())
     }
 }
@@ -177,6 +192,12 @@ pub struct LoginSession {
     pub user: UserResponse,
     pub session_token: String,
     pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CurrentSession {
+    pub session_id: Uuid,
+    pub user: UserResponse,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
