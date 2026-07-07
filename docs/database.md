@@ -104,3 +104,30 @@ CREATE TABLE users (
 - `updated_at` 表示体系记录最后更新时间，每次更新体系记录或状态时同步更新。
 - 必须保留 `created_at` 和 `updated_at` 时间审计字段。
 - 当前阶段不设计权限关联。
+
+## stores 表
+
+`stores` 表用于存储门店基础信息。一个体系可以包含多个门店，一个门店只能属于一个体系。
+
+### 字段说明
+
+| 字段 | 类型示例 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `UUID` | 是 | 门店唯一标识，作为 `stores` 表主键。 |
+| `name` | `VARCHAR(128)` | 是 | 门店名称。 |
+| `system_id` | `UUID` | 是 | 所属体系 ID，关联 `systems.id`。 |
+| `status` | `VARCHAR(32)` | 是 | 门店状态，用于标识门店是否启用。 |
+| `created_at` | `TIMESTAMPTZ` | 是 | 门店记录创建时间。 |
+| `updated_at` | `TIMESTAMPTZ` | 是 | 门店记录最后更新时间。 |
+
+## stores 表设计原则
+
+- `id` 是系统内部唯一门店标识，也是 `stores` 表的主键。
+- `name` 是门店名称，不允许为空。
+- `system_id` 表示门店所属体系，关联 `systems.id`，不允许为空。
+- 一个体系可以包含多个门店，一个门店只能属于一个体系。
+- `status` 用于表示门店启用、禁用状态，不允许为空。
+- `created_at` 表示门店记录创建时间，创建后不应被应用逻辑主动修改。
+- `updated_at` 表示门店记录最后更新时间，每次更新门店记录或状态时同步更新。
+- `created_at` 和 `updated_at` 用于审计时间记录。
+- `name` 不要求全局唯一。
