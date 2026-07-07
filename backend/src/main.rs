@@ -13,8 +13,8 @@ use backend::{
     },
     state::AppState,
 };
-use std::net::SocketAddr;
-use tracing::info;
+use std::{future::Future, net::SocketAddr};
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -74,10 +74,87 @@ async fn main() -> Result<()> {
     info!(%addr, "starting HTTP server");
 
     axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
         .await
         .context("server exited unexpectedly")?;
 
+    info!("HTTP server stopped");
+
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ShutdownSignal {
+    CtrlC,
+    Sigterm,
+}
+
+impl ShutdownSignal {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::CtrlC => "ctrl_c",
+            Self::Sigterm => "sigterm",
+        }
+    }
+}
+
+async fn shutdown_signal() {
+    let signal = wait_for_shutdown_signal().await;
+    info!(signal = signal.as_str(), "received shutdown signal");
+    info!("starting graceful shutdown");
+}
+
+async fn wait_for_shutdown_signal() -> ShutdownSignal {
+    let ctrl_c = async {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            warn!(%error, "failed to listen for Ctrl-C shutdown signal");
+        }
+    };
+
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        match signal(SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                select_shutdown_signal(
+                    ctrl_c,
+                    Some(async move {
+                        sigterm.recv().await;
+                    }),
+                )
+                .await
+            }
+            Err(error) => {
+                warn!(%error, "failed to listen for SIGTERM shutdown signal");
+                select_shutdown_signal(ctrl_c, None::<std::future::Pending<()>>).await
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        select_shutdown_signal(ctrl_c, None::<std::future::Pending<()>>).await
+    }
+}
+
+async fn select_shutdown_signal<C, T>(ctrl_c: C, sigterm: Option<T>) -> ShutdownSignal
+where
+    C: Future<Output = ()>,
+    T: Future<Output = ()>,
+{
+    if let Some(sigterm) = sigterm {
+        tokio::pin!(ctrl_c);
+        tokio::pin!(sigterm);
+
+        tokio::select! {
+            _ = &mut ctrl_c => ShutdownSignal::CtrlC,
+            _ = &mut sigterm => ShutdownSignal::Sigterm,
+        }
+    } else {
+        ctrl_c.await;
+        ShutdownSignal::CtrlC
+    }
 }
 
 fn init_tracing() {
@@ -89,4 +166,24 @@ fn init_tracing() {
         .with_env_filter(filter)
         .compact()
         .init();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::{pending, ready};
+
+    #[tokio::test]
+    async fn selects_ctrl_c_when_ctrl_c_completes_first() {
+        let signal = select_shutdown_signal(ready(()), Some(pending::<()>())).await;
+
+        assert_eq!(signal, ShutdownSignal::CtrlC);
+    }
+
+    #[tokio::test]
+    async fn selects_sigterm_when_sigterm_completes_first() {
+        let signal = select_shutdown_signal(pending::<()>(), Some(ready(()))).await;
+
+        assert_eq!(signal, ShutdownSignal::Sigterm);
+    }
 }
