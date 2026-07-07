@@ -79,6 +79,52 @@ CREATE TABLE users (
 
 `status` 默认值为 `active`，用户首次登录自动创建记录时默认进入正常状态。后续如需要停用用户，只更新该字段，不改变用户的 `id` 或 `dingtalk_user_id` 映射关系。
 
+## departments 表
+
+`departments` 表用于存储组织部门信息。部门数据可以来自钉钉同步，也可以由系统内手动创建（手动创建当前阶段尚未实现）。
+
+### 表结构示例
+
+```sql
+CREATE TABLE departments (
+    id UUID PRIMARY KEY,
+    source VARCHAR(32) NOT NULL,
+    external_department_id VARCHAR(128) NOT NULL,
+    parent_id UUID NULL REFERENCES departments (id),
+    name VARCHAR(255) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uidx_departments_source_external_department_id UNIQUE (source, external_department_id)
+);
+```
+
+### 字段说明
+
+| 字段 | 类型示例 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `UUID` | 是 | 系统内部唯一部门标识，作为 `departments` 表主键。系统内部逻辑统一使用该字段识别部门。 |
+| `source` | `VARCHAR(32)` | 是 | 部门来源，取值为 `dingtalk`（钉钉同步）或 `manual`（手动创建）。 |
+| `external_department_id` | `VARCHAR(128)` | 是 | 外部部门标识。来源为钉钉时保存钉钉部门 `dept_id`（转为字符串）。 |
+| `parent_id` | `UUID` | 否 | 上级部门 `id`，自引用外键。顶层部门为空。 |
+| `name` | `VARCHAR(255)` | 是 | 部门名称。 |
+| `status` | `VARCHAR(32)` | 是 | 部门状态，`active` 或 `disabled`，默认 `active`。 |
+| `created_at` | `TIMESTAMPTZ` | 是 | 部门记录创建时间。 |
+| `updated_at` | `TIMESTAMPTZ` | 是 | 部门记录最后更新时间。 |
+
+### 设计原则
+
+- `id` 是系统内部唯一部门标识；`external_department_id` 只作为外部映射字段使用，不作为主键。
+- `(source, external_department_id)` 组合唯一，保证同一来源下的外部部门只映射到一条系统部门记录；不同来源之间外部标识互不冲突。
+- `parent_id` 自引用 `departments.id` 表示部门树结构，并建立普通索引以支持按父部门查询。
+
+### 钉钉同步行为
+
+- 同步从钉钉根部门（`dept_id = 1`）开始逐层拉取子部门。根部门本身不入库，钉钉侧一级部门在系统中 `parent_id` 为空。
+- 同步只处理新增和修改（名称、上级部门变化），**不同步删除**：钉钉侧已删除的部门在系统中保留不动。
+- 新同步的部门 `status` 为 `active`；后续同步只更新名称与上级部门，不修改 `status`，手动停用的部门保持停用状态。
+- 同步只影响 `source = 'dingtalk'` 的记录，手动创建的部门不受同步影响。
+
 ## systems 表
 
 `systems` 表用于存储门店体系基础信息。

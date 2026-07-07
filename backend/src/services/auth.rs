@@ -232,7 +232,10 @@ impl AuthError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::DingTalk(error) => match error {
-                DingTalkError::ProviderHttp { .. } | DingTalkError::Http(_) => "dingtalk_error",
+                DingTalkError::ProviderHttp { .. }
+                | DingTalkError::ProviderApi { .. }
+                | DingTalkError::MissingResponseField { .. }
+                | DingTalkError::Http(_) => "dingtalk_error",
                 DingTalkError::MissingConfig(_) => "dingtalk_configuration_error",
                 DingTalkError::MissingRequiredField { .. }
                 | DingTalkError::MissingIdentityField(_) => "dingtalk_validation_error",

@@ -1,4 +1,5 @@
 pub mod authz;
+pub mod departments;
 pub mod sessions;
 pub mod users;
 
