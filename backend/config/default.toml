@@ -1,0 +1,24 @@
+[server]
+bind_addr = "127.0.0.1:3000"
+
+[database]
+kind = "postgres"
+url = "postgres://postgres:postgres@localhost:5432/atlas"
+sqlite_file = "data/atlas.sqlite"
+
+[dingtalk]
+client_id = ""
+client_secret = ""
+redirect_uri = "http://127.0.0.1:3000/api/v1/auth/callback/dingtalk"
+auth_url = "https://login.dingtalk.com/oauth2/auth"
+token_url = "https://api.dingtalk.com/v1.0/oauth2/userAccessToken"
+user_info_url = "https://api.dingtalk.com/v1.0/contact/users/me"
+scope = "openid corpid"
+corp_id = ""
+
+[auth]
+frontend_callback_url = ""
+
+[session]
+ttl_seconds = 86400
+cookie_secure = false
