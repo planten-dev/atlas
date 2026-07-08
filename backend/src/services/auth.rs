@@ -281,7 +281,7 @@ impl AuthService {
                     remark: Some("dingtalk_profile_sync".to_string()),
                     // Audit-only events are final from creation; setting
                     // updated_at makes the retention sweeper clean them up.
-                    updated_at: Some(now),
+                    updated_at: Some(context.now),
                 },
                 context.now,
             )
