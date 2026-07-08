@@ -24,10 +24,17 @@ pub struct NewEvent {
     pub event_type: EventType,
     pub approval_status: ApprovalStatus,
     pub required_approval_count: Option<i16>,
+    /// Names the caller-defined kind for EventType::Custom events.
+    pub custom_type: Option<String>,
     pub target_event_id: Option<Uuid>,
     pub old_value: Option<serde_json::Value>,
     pub new_value: Option<serde_json::Value>,
     pub remark: Option<String>,
+    /// When the event is already final at insertion time (audit-only
+    /// events recorded with approval_status = None), set this so the
+    /// retention sweeper picks it up. Reviewable submissions leave it None
+    /// until they are finalized.
+    pub updated_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -36,6 +43,7 @@ pub struct EventFilter {
     pub resource_id: Option<Uuid>,
     pub event_type: Option<EventType>,
     pub approval_status: Option<ApprovalStatus>,
+    pub custom_type: Option<String>,
     pub target_event_id: Option<Uuid>,
 }
 
@@ -63,12 +71,13 @@ impl EventRepository {
             event_type: Set(event.event_type),
             approval_status: Set(event.approval_status),
             required_approval_count: Set(event.required_approval_count),
+            custom_type: Set(event.custom_type),
             target_event_id: Set(event.target_event_id),
             old_value: Set(event.old_value),
             new_value: Set(event.new_value),
             remark: Set(event.remark),
             created_at: Set(now),
-            updated_at: Set(None),
+            updated_at: Set(event.updated_at),
         }
         .insert(conn)
         .await?;
@@ -148,6 +157,9 @@ impl EventRepository {
         if let Some(approval_status) = filter.approval_status {
             query = query.filter(events::Column::ApprovalStatus.eq(approval_status));
         }
+        if let Some(custom_type) = filter.custom_type {
+            query = query.filter(events::Column::CustomType.eq(custom_type));
+        }
         if let Some(target_event_id) = filter.target_event_id {
             query = query.filter(events::Column::TargetEventId.eq(target_event_id));
         }
@@ -198,13 +210,18 @@ impl EventRepository {
     ) -> Result<u64, RepositoryError> {
         let tx = self.db.begin().await?;
 
+        // ApprovalStatus::None covers audit-only events, which are final
+        // from creation (updated_at set on insert). Approve/reject review
+        // events also carry status None but keep updated_at NULL, so they
+        // never match the cutoff and are only removed by the cascade below.
         let expired_ids: Vec<Uuid> = events::Entity::find()
             .select_only()
             .column(events::Column::Id)
-            .filter(
-                events::Column::ApprovalStatus
-                    .is_in([ApprovalStatus::Approved, ApprovalStatus::Rejected]),
-            )
+            .filter(events::Column::ApprovalStatus.is_in([
+                ApprovalStatus::Approved,
+                ApprovalStatus::Rejected,
+                ApprovalStatus::None,
+            ]))
             .filter(events::Column::UpdatedAt.lt(cutoff))
             .limit(batch_size)
             .into_tuple()

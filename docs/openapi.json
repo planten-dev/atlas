@@ -1374,10 +1374,11 @@
                 1,
                 2,
                 3,
-                4
+                4,
+                5
               ]
             },
-            "description": "Event type: 0 create, 1 update, 2 delete, 3 approve, 4 reject."
+            "description": "Event type: 0 create, 1 update, 2 delete, 3 approve, 4 reject, 5 custom."
           },
           {
             "name": "approval_status",
@@ -1392,7 +1393,17 @@
                 3
               ]
             },
-            "description": "Approval status: 0 none, 1 pending, 2 approved, 3 rejected."
+            "description": "Approval status: 0 none (review events and audit-only records), 1 pending, 2 approved, 3 rejected."
+          },
+          {
+            "name": "custom_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "description": "Only return custom events (event_type 5) whose caller-defined kind equals this value."
           },
           {
             "name": "target_event_id",
@@ -6859,9 +6870,10 @@
               1,
               2,
               3,
-              4
+              4,
+              5
             ],
-            "description": "0 create, 1 update, 2 delete, 3 approve, 4 reject."
+            "description": "0 create, 1 update, 2 delete, 3 approve, 4 reject, 5 custom (caller-defined audit event named by custom_type)."
           },
           "approval_status": {
             "type": "integer",
@@ -6871,7 +6883,7 @@
               2,
               3
             ],
-            "description": "0 none (approve/reject events are never themselves reviewed), 1 pending, 2 approved, 3 rejected."
+            "description": "0 none (the event needs no review: an approve/reject review event, an audit-only record, or a custom event), 1 pending, 2 approved, 3 rejected."
           },
           "required_approval_count": {
             "type": [
@@ -6880,6 +6892,14 @@
             ],
             "minimum": 1,
             "description": "Distinct approvers needed before the change is applied. Null for approve/reject events."
+          },
+          "custom_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64,
+            "description": "Caller-defined kind name for custom events (event_type 5), e.g. login or export. Null for all other event types."
           },
           "target_event_id": {
             "type": [

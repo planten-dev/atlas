@@ -26,6 +26,7 @@ const DEFAULT_PAGE_SIZE: u64 = 50;
 const MAX_PAGE_SIZE: u64 = 200;
 
 const MAX_RESOURCE_TYPE_LENGTH: usize = 64;
+const MAX_CUSTOM_TYPE_LENGTH: usize = 64;
 const MAX_REMARK_LENGTH: usize = 2000;
 
 /// Rows removed per sweeper transaction; keeps each delete short-lived.
@@ -51,6 +52,24 @@ pub struct SubmitEvent {
     pub old_value: Option<serde_json::Value>,
     pub new_value: Option<serde_json::Value>,
     pub required_approval_count: i16,
+}
+
+/// An audit-only submission: recorded as already-final (approval_status =
+/// None (0)), never reviewed, never applied. Use it when the caller has
+/// performed (or does not need) the actual mutation itself and only wants
+/// the audit trail. The resource_type does not have to be registered in
+/// the ApplierRegistry, and old/new_value are free-form.
+#[derive(Debug, Clone)]
+pub struct RecordEvent {
+    pub resource_type: String,
+    pub resource_id: Option<Uuid>,
+    pub actor_user_id: Option<Uuid>,
+    pub event_type: EventType,
+    /// Names the event kind when `event_type` is [`EventType::Custom`]
+    /// (required there, forbidden otherwise), e.g. `login` or `export`.
+    pub custom_type: Option<String>,
+    pub old_value: Option<serde_json::Value>,
+    pub new_value: Option<serde_json::Value>,
 }
 
 #[derive(Clone)]
@@ -158,16 +177,157 @@ impl EventService {
                     event_type: submission.event_type,
                     approval_status: ApprovalStatus::Pending,
                     required_approval_count: Some(submission.required_approval_count),
+                    custom_type: None,
                     target_event_id: None,
                     old_value: submission.old_value,
                     new_value: submission.new_value,
                     remark: None,
+                    updated_at: None,
                 },
                 Utc::now(),
             )
             .await?;
 
         info!(event_id = %event.id, "submitted event for review");
+        Ok(EventResponse::from(event))
+    }
+
+    // --- audit-only recording (no review, no apply) ---
+
+    /// Records an audit-only create event. `resource_id` may carry the id
+    /// of the row the caller already inserted.
+    pub async fn record_create<T: Serialize>(
+        &self,
+        resource_type: &str,
+        actor_user_id: Uuid,
+        resource_id: Option<Uuid>,
+        new_value: &T,
+    ) -> Result<EventResponse, EventError> {
+        self.record(RecordEvent {
+            resource_type: resource_type.to_string(),
+            resource_id,
+            actor_user_id: Some(actor_user_id),
+            event_type: EventType::Create,
+            custom_type: None,
+            old_value: None,
+            new_value: Some(to_json(new_value)?),
+        })
+        .await
+    }
+
+    /// Records an audit-only update event.
+    pub async fn record_update<T: Serialize>(
+        &self,
+        resource_type: &str,
+        actor_user_id: Uuid,
+        resource_id: Uuid,
+        old_value: &T,
+        new_value: &T,
+    ) -> Result<EventResponse, EventError> {
+        self.record(RecordEvent {
+            resource_type: resource_type.to_string(),
+            resource_id: Some(resource_id),
+            actor_user_id: Some(actor_user_id),
+            event_type: EventType::Update,
+            custom_type: None,
+            old_value: Some(to_json(old_value)?),
+            new_value: Some(to_json(new_value)?),
+        })
+        .await
+    }
+
+    /// Records an audit-only delete event.
+    pub async fn record_delete<T: Serialize>(
+        &self,
+        resource_type: &str,
+        actor_user_id: Uuid,
+        resource_id: Uuid,
+        old_value: &T,
+    ) -> Result<EventResponse, EventError> {
+        self.record(RecordEvent {
+            resource_type: resource_type.to_string(),
+            resource_id: Some(resource_id),
+            actor_user_id: Some(actor_user_id),
+            event_type: EventType::Delete,
+            custom_type: None,
+            old_value: Some(to_json(old_value)?),
+            new_value: None,
+        })
+        .await
+    }
+
+    /// Records an audit-only event of a caller-defined kind
+    /// (EventType::Custom). `custom_type` names the kind, e.g. `login` or
+    /// `export`; old/new_value are free-form context and may be None.
+    pub async fn record_custom<T: Serialize>(
+        &self,
+        resource_type: &str,
+        custom_type: &str,
+        actor_user_id: Uuid,
+        resource_id: Option<Uuid>,
+        payload: Option<&T>,
+    ) -> Result<EventResponse, EventError> {
+        self.record(RecordEvent {
+            resource_type: resource_type.to_string(),
+            resource_id,
+            actor_user_id: Some(actor_user_id),
+            event_type: EventType::Custom,
+            custom_type: Some(custom_type.to_string()),
+            old_value: None,
+            new_value: payload.map(to_json).transpose()?,
+        })
+        .await
+    }
+
+    /// Inserts an audit-only event: approval_status = None so it can never
+    /// be reviewed, and updated_at is set immediately (the event is final
+    /// from creation) so the retention sweeper treats it like a finalized
+    /// event.
+    #[tracing::instrument(level = "info", skip(self, record), fields(resource_type = %record.resource_type))]
+    pub async fn record(&self, record: RecordEvent) -> Result<EventResponse, EventError> {
+        validate_resource_type(&record.resource_type)?;
+        match record.event_type {
+            EventType::Approve | EventType::Reject => {
+                return Err(EventError::InvalidInput(
+                    "approve/reject events are created through review, not record",
+                ));
+            }
+            EventType::Custom => {
+                validate_custom_type(record.custom_type.as_deref())?;
+            }
+            EventType::Create | EventType::Update | EventType::Delete => {
+                if record.custom_type.is_some() {
+                    return Err(EventError::InvalidInput(
+                        "custom_type is only allowed on custom events",
+                    ));
+                }
+            }
+        }
+
+        let now = Utc::now();
+        let event = self
+            .events
+            .insert_event(
+                &self.events.db,
+                NewEvent {
+                    resource_type: record.resource_type,
+                    resource_id: record.resource_id,
+                    actor_user_id: record.actor_user_id,
+                    event_type: record.event_type,
+                    approval_status: ApprovalStatus::None,
+                    required_approval_count: None,
+                    custom_type: record.custom_type,
+                    target_event_id: None,
+                    old_value: record.old_value,
+                    new_value: record.new_value,
+                    remark: None,
+                    updated_at: Some(now),
+                },
+                now,
+            )
+            .await?;
+
+        info!(event_id = %event.id, "recorded audit-only event");
         Ok(EventResponse::from(event))
     }
 
@@ -193,7 +353,10 @@ impl EventService {
             .find_by_id_for_update(&tx, event_id)
             .await?
             .ok_or(EventError::EventNotFound)?;
-        if matches!(target.event_type, EventType::Approve | EventType::Reject) {
+        if matches!(
+            target.event_type,
+            EventType::Approve | EventType::Reject | EventType::Custom
+        ) {
             return Err(EventError::EventNotReviewable);
         }
         if target.approval_status != ApprovalStatus::Pending {
@@ -243,10 +406,12 @@ impl EventService {
                     event_type: review_type,
                     approval_status: ApprovalStatus::None,
                     required_approval_count: None,
+                    custom_type: None,
                     target_event_id: Some(target.id),
                     old_value: None,
                     new_value: None,
                     remark,
+                    updated_at: None,
                 },
                 now,
             )
@@ -345,7 +510,11 @@ impl EventService {
                 applier.apply_delete(tx, resource_id, now).await?;
                 Ok(None)
             }
-            EventType::Approve | EventType::Reject => Err(EventError::EventNotReviewable),
+            // Custom events are audit-only (created via record with
+            // approval_status = None) and can never reach the apply path.
+            EventType::Approve | EventType::Reject | EventType::Custom => {
+                Err(EventError::EventNotReviewable)
+            }
         }
     }
 
@@ -372,6 +541,7 @@ impl EventService {
                 .approval_status
                 .map(|value| parse_enum::<ApprovalStatus>("approval_status", value))
                 .transpose()?,
+            custom_type: query.custom_type,
             target_event_id: query.target_event_id,
         };
         let (events, total_count) = self
@@ -493,8 +663,8 @@ fn to_json<T: Serialize>(value: &T) -> Result<serde_json::Value, EventError> {
     Ok(serde_json::to_value(value)?)
 }
 
-fn validate_submission(submission: &SubmitEvent) -> Result<(), EventError> {
-    let resource_type = submission.resource_type.trim();
+fn validate_resource_type(resource_type: &str) -> Result<(), EventError> {
+    let resource_type = resource_type.trim();
     if resource_type.is_empty() {
         return Err(EventError::InvalidInput("resource_type must not be empty"));
     }
@@ -503,6 +673,33 @@ fn validate_submission(submission: &SubmitEvent) -> Result<(), EventError> {
             "resource_type must be at most 64 characters",
         ));
     }
+
+    Ok(())
+}
+
+fn validate_custom_type(custom_type: Option<&str>) -> Result<(), EventError> {
+    let Some(custom_type) = custom_type else {
+        return Err(EventError::InvalidInput(
+            "custom events require a custom_type",
+        ));
+    };
+    let custom_type = custom_type.trim();
+    if custom_type.is_empty() {
+        return Err(EventError::InvalidInput(
+            "custom events require a custom_type",
+        ));
+    }
+    if custom_type.chars().count() > MAX_CUSTOM_TYPE_LENGTH {
+        return Err(EventError::InvalidInput(
+            "custom_type must be at most 64 characters",
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_submission(submission: &SubmitEvent) -> Result<(), EventError> {
+    validate_resource_type(&submission.resource_type)?;
     if submission.required_approval_count < 1 {
         return Err(EventError::InvalidInput(
             "required_approval_count must be at least 1",
@@ -554,6 +751,11 @@ fn validate_submission(submission: &SubmitEvent) -> Result<(), EventError> {
         EventType::Approve | EventType::Reject => {
             return Err(EventError::InvalidInput(
                 "approve/reject events are created through review, not submit",
+            ));
+        }
+        EventType::Custom => {
+            return Err(EventError::InvalidInput(
+                "custom events are audit-only; use record instead of submit",
             ));
         }
     }
@@ -1307,10 +1509,12 @@ mod tests {
                             event_type: EventType::Update,
                             approval_status: ApprovalStatus::Pending,
                             required_approval_count: Some(1),
+                            custom_type: None,
                             target_event_id: None,
                             old_value: Some(serde_json::json!({})),
                             new_value: Some(serde_json::json!({})),
                             remark: None,
+                            updated_at: None,
                         },
                         finalized_at - Duration::days(1),
                     )
@@ -1332,10 +1536,12 @@ mod tests {
                             event_type: EventType::Approve,
                             approval_status: ApprovalStatus::None,
                             required_approval_count: None,
+                            custom_type: None,
                             target_event_id: Some(event.id),
                             old_value: None,
                             new_value: None,
                             remark: None,
+                            updated_at: None,
                         },
                         finalized_at,
                     )
@@ -1361,28 +1567,71 @@ mod tests {
                     event_type: EventType::Create,
                     approval_status: ApprovalStatus::Pending,
                     required_approval_count: Some(1),
+                    custom_type: None,
                     target_event_id: None,
                     old_value: None,
                     new_value: Some(serde_json::json!({})),
                     remark: None,
+                    updated_at: None,
                 },
                 now - Duration::days(400),
             )
             .await
             .expect("pending event should insert");
 
+        // Audit-only events (status None, updated_at set on insert) age
+        // out on the same schedule as finalized events.
+        let audit_event = |days: i64| {
+            let events = h.events.clone();
+            let created_at = now - Duration::days(days);
+            async move {
+                events
+                    .insert_event(
+                        &events.db,
+                        NewEvent {
+                            resource_type: "login_audit".to_string(),
+                            resource_id: Some(Uuid::new_v4()),
+                            actor_user_id: Some(actor),
+                            event_type: EventType::Update,
+                            approval_status: ApprovalStatus::None,
+                            required_approval_count: None,
+                            custom_type: None,
+                            target_event_id: None,
+                            old_value: None,
+                            new_value: Some(serde_json::json!({})),
+                            remark: None,
+                            updated_at: Some(created_at),
+                        },
+                        created_at,
+                    )
+                    .await
+                    .expect("audit event should insert")
+                    .id
+            }
+        };
+        let expired_audit_id = audit_event(181).await;
+        let fresh_audit_id = audit_event(179).await;
+
         let deleted = h
             .service
             .sweep_expired(now)
             .await
             .expect("sweep should succeed");
-        assert_eq!(deleted, 2, "expired event and its review event");
+        assert_eq!(
+            deleted, 3,
+            "expired event, its review event, and the expired audit event"
+        );
 
         assert!(matches!(
             h.service.event_detail(expired_id).await,
             Err(EventError::EventNotFound)
         ));
+        assert!(matches!(
+            h.service.event_detail(expired_audit_id).await,
+            Err(EventError::EventNotFound)
+        ));
         assert!(h.service.event_detail(fresh_id).await.is_ok());
+        assert!(h.service.event_detail(fresh_audit_id).await.is_ok());
         assert!(h.service.event_detail(pending.id).await.is_ok());
 
         // Second sweep is a no-op.
@@ -1393,6 +1642,202 @@ mod tests {
                 .expect("sweep should succeed"),
             0
         );
+    }
+
+    #[tokio::test]
+    async fn record_creates_final_audit_events_without_review_or_apply() {
+        let h = Harness::new().await;
+        let actor = h.user("actor").await;
+        let reviewer = h.reviewer("reviewer", "products:approve").await;
+
+        // resource_type does not need to be registered in the registry.
+        let recorded = h
+            .service
+            .record_create(
+                "login_audit",
+                actor,
+                Some(Uuid::new_v4()),
+                &serde_json::json!({"ip": "10.0.0.1"}),
+            )
+            .await
+            .expect("audit event should be recorded");
+        assert_eq!(recorded.event_type, 0);
+        assert_eq!(recorded.approval_status, 0);
+        assert_eq!(recorded.required_approval_count, None);
+        assert_eq!(
+            recorded.updated_at,
+            Some(recorded.created_at),
+            "audit events are final from creation"
+        );
+        assert!(
+            products::Entity::find()
+                .all(&h.db)
+                .await
+                .expect("products should list")
+                .is_empty(),
+            "record must never apply anything"
+        );
+
+        // Audit events can never be reviewed.
+        assert!(matches!(
+            h.approve(recorded.id, reviewer).await,
+            Err(EventError::EventNotPending)
+        ));
+
+        // update/delete helpers and validation.
+        let updated = h
+            .service
+            .record_update(
+                "login_audit",
+                actor,
+                Uuid::new_v4(),
+                &serde_json::json!({"before": 1}),
+                &serde_json::json!({"after": 2}),
+            )
+            .await
+            .expect("audit update should be recorded");
+        assert_eq!(updated.event_type, 1);
+        let deleted = h
+            .service
+            .record_delete(
+                "login_audit",
+                actor,
+                Uuid::new_v4(),
+                &serde_json::json!({"gone": true}),
+            )
+            .await
+            .expect("audit delete should be recorded");
+        assert_eq!(deleted.event_type, 2);
+
+        assert!(matches!(
+            h.service
+                .record(RecordEvent {
+                    resource_type: " ".to_string(),
+                    resource_id: None,
+                    actor_user_id: Some(actor),
+                    event_type: EventType::Create,
+                    custom_type: None,
+                    old_value: None,
+                    new_value: None,
+                })
+                .await,
+            Err(EventError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            h.service
+                .record(RecordEvent {
+                    resource_type: "login_audit".to_string(),
+                    resource_id: None,
+                    actor_user_id: Some(actor),
+                    event_type: EventType::Approve,
+                    custom_type: None,
+                    old_value: None,
+                    new_value: None,
+                })
+                .await,
+            Err(EventError::InvalidInput(_))
+        ));
+
+        // Audit events are visible through the normal listing filters.
+        let audits = h
+            .service
+            .list_events(ListEventsQuery {
+                resource_type: Some("login_audit".to_string()),
+                approval_status: Some(0),
+                ..ListEventsQuery::default()
+            })
+            .await
+            .expect("audit events should list");
+        assert_eq!(audits.total_count, 3);
+    }
+
+    #[tokio::test]
+    async fn record_custom_events_carry_their_kind() {
+        let h = Harness::new().await;
+        let actor = h.user("actor").await;
+        let reviewer = h.reviewer("reviewer", "products:approve").await;
+
+        let login = h
+            .service
+            .record_custom(
+                "users",
+                "login",
+                actor,
+                Some(actor),
+                Some(&serde_json::json!({"ip": "10.0.0.1"})),
+            )
+            .await
+            .expect("custom event should be recorded");
+        assert_eq!(login.event_type, 5);
+        assert_eq!(login.approval_status, 0);
+        assert_eq!(login.custom_type.as_deref(), Some("login"));
+        assert_eq!(login.updated_at, Some(login.created_at));
+
+        // Payload is optional for custom events.
+        let export = h
+            .service
+            .record_custom::<serde_json::Value>("reports", "export", actor, None, None)
+            .await
+            .expect("payload-less custom event should be recorded");
+        assert_eq!(export.new_value, None);
+        assert_eq!(export.custom_type.as_deref(), Some("export"));
+
+        // Custom events can never be reviewed.
+        assert!(matches!(
+            h.approve(login.id, reviewer).await,
+            Err(EventError::EventNotReviewable)
+        ));
+
+        // custom_type is required on custom events and forbidden elsewhere.
+        assert!(matches!(
+            h.service
+                .record(RecordEvent {
+                    resource_type: "users".to_string(),
+                    resource_id: None,
+                    actor_user_id: Some(actor),
+                    event_type: EventType::Custom,
+                    custom_type: None,
+                    old_value: None,
+                    new_value: None,
+                })
+                .await,
+            Err(EventError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            h.service
+                .record(RecordEvent {
+                    resource_type: "users".to_string(),
+                    resource_id: None,
+                    actor_user_id: Some(actor),
+                    event_type: EventType::Create,
+                    custom_type: Some("login".to_string()),
+                    old_value: None,
+                    new_value: Some(serde_json::json!({})),
+                })
+                .await,
+            Err(EventError::InvalidInput(_))
+        ));
+
+        // Filterable by custom_type and by event_type = 5.
+        let logins = h
+            .service
+            .list_events(ListEventsQuery {
+                custom_type: Some("login".to_string()),
+                ..ListEventsQuery::default()
+            })
+            .await
+            .expect("custom events should list");
+        assert_eq!(logins.total_count, 1);
+        assert_eq!(logins.events[0].id, login.id);
+        let customs = h
+            .service
+            .list_events(ListEventsQuery {
+                event_type: Some(5),
+                ..ListEventsQuery::default()
+            })
+            .await
+            .expect("custom events should list");
+        assert_eq!(customs.total_count, 2);
     }
 
     #[tokio::test]
