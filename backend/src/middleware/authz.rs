@@ -36,12 +36,21 @@ pub type PermissionLayer =
 /// permission string. Must run inside a router group protected by
 /// `require_auth`, which inserts `CurrentSession` into request extensions.
 ///
-/// Panics on a malformed permission string: this runs at router build
-/// time, so a bad declaration fails startup (same failure mode as an
-/// invalid axum route path).
+/// Panics on a malformed permission string or one missing from the
+/// permission catalog: this runs at router build time, so a bad
+/// declaration fails startup (same failure mode as an invalid axum route
+/// path). The catalog check keeps route declarations and the catalog —
+/// which the permission panel and effective-permission queries enumerate —
+/// from drifting apart.
 pub fn require_permission(state: &AppState, permission: &'static str) -> PermissionLayer {
     let (object, action) = parse_permission(permission)
         .unwrap_or_else(|reason| panic!("invalid route permission `{permission}`: {reason}"));
+    if !state.authz.catalog().contains(object, action) {
+        panic!(
+            "route permission `{permission}` is not in the permission catalog; \
+             add it to PermissionCatalog::builtin"
+        );
+    }
 
     from_fn_with_state(
         PermissionCheck {

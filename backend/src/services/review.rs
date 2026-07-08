@@ -189,6 +189,23 @@ impl ApplierRegistry {
         self.registrations.get(resource_type)
     }
 
+    /// Iterates `(resource_type, object, action)` for every registered
+    /// approval permission, so `main.rs` can merge them into the
+    /// permission catalog alongside the builtin route permissions.
+    pub fn approval_permissions(
+        &self,
+    ) -> impl Iterator<Item = (&'static str, &'static str, &'static str)> + '_ {
+        self.registrations
+            .iter()
+            .map(|(resource_type, registration)| {
+                (
+                    *resource_type,
+                    registration.approval_object,
+                    registration.approval_action,
+                )
+            })
+    }
+
     pub fn contains(&self, resource_type: &str) -> bool {
         self.registrations.contains_key(resource_type)
     }

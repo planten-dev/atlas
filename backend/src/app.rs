@@ -14,6 +14,13 @@ use crate::{
 pub fn router(state: AppState) -> Router {
     let authenticated_routes = Router::new()
         .route("/api/v1/auth/me", get(handlers::auth::me))
+        // Deliberately carries no permission layer: every authenticated
+        // user may read their own effective permissions (frontend menu
+        // and button gating depends on this).
+        .route(
+            "/api/v1/auth/me/permissions",
+            get(handlers::permissions::my_permissions),
+        )
         .route("/api/v1/auth/logout", post(handlers::auth::logout))
         .route("/api/v1/users/list", get(handlers::users::list_users))
         .route(
@@ -233,6 +240,16 @@ pub fn router(state: AppState) -> Router {
                 handlers::permissions::delete_policy
                     .layer(require_permission(&state, "system:permissions:write")),
             ),
+        )
+        .route(
+            "/api/v1/permissions/catalog",
+            get(handlers::permissions::permission_catalog
+                .layer(require_permission(&state, "system:permissions:read"))),
+        )
+        .route(
+            "/api/v1/permissions/subjects/{subjectKind}/{subjectId}/policies",
+            put(handlers::permissions::replace_subject_policies
+                .layer(require_permission(&state, "system:permissions:write"))),
         )
         .route_layer(from_fn_with_state(state.clone(), require_auth));
 

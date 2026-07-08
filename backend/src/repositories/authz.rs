@@ -32,6 +32,15 @@ pub struct PolicyRow {
     pub created_at: DateTime<Utc>,
 }
 
+/// One policy to insert during a batch replace: `(object, action, effect)`
+/// for a subject that is fixed by the surrounding call.
+#[derive(Debug, Clone)]
+pub struct NewPolicy {
+    pub object: String,
+    pub action: String,
+    pub effect: String,
+}
+
 /// Everything needed to build a casbin enforcer in one consistent snapshot.
 #[derive(Debug, Default)]
 pub struct AuthzSnapshot {
@@ -408,6 +417,49 @@ impl AuthzRepository {
 
         info!(policy_id = %policy.id, "created permission policy");
         Ok(policy)
+    }
+
+    /// Replaces every policy of one subject in a single transaction and
+    /// returns the new rows in insertion order.
+    #[tracing::instrument(
+        level = "info",
+        skip(self, policies),
+        fields(subject_kind = %subject_kind, subject_id = %subject_id, policy_count = policies.len())
+    )]
+    pub async fn replace_subject_policies(
+        &self,
+        subject_kind: &str,
+        subject_id: Uuid,
+        policies: &[NewPolicy],
+        now: DateTime<Utc>,
+    ) -> Result<Vec<permission_policies::Model>, RepositoryError> {
+        let tx = self.db.begin().await?;
+
+        permission_policies::Entity::delete_many()
+            .filter(permission_policies::Column::SubjectKind.eq(subject_kind))
+            .filter(permission_policies::Column::SubjectId.eq(subject_id))
+            .exec(&tx)
+            .await?;
+
+        let mut created = Vec::with_capacity(policies.len());
+        for policy in policies {
+            let row = permission_policies::ActiveModel {
+                id: Set(Uuid::new_v4()),
+                subject_kind: Set(subject_kind.to_string()),
+                subject_id: Set(subject_id),
+                object: Set(policy.object.clone()),
+                action: Set(policy.action.clone()),
+                effect: Set(policy.effect.clone()),
+                created_at: Set(now),
+            }
+            .insert(&tx)
+            .await?;
+            created.push(row);
+        }
+
+        tx.commit().await?;
+        info!("replaced subject policies");
+        Ok(created)
     }
 
     #[tracing::instrument(level = "info", skip(self), fields(policy_id = %id))]

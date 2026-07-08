@@ -15,8 +15,12 @@ use crate::{
     entities::{permission_policies, roles},
     repositories::{
         RepositoryError,
-        authz::{AuthzRepository, EFFECT_ALLOW, EFFECT_DENY, SUBJECT_KIND_ROLE, SUBJECT_KIND_USER},
+        authz::{
+            AuthzRepository, EFFECT_ALLOW, EFFECT_DENY, NewPolicy, SUBJECT_KIND_ROLE,
+            SUBJECT_KIND_USER,
+        },
     },
+    services::authz_catalog::PermissionCatalog,
 };
 
 /// Casbin model: implicit priority — the first policy row whose matcher
@@ -58,18 +62,34 @@ const MAX_INHERITANCE_DEPTH: usize = 8;
 #[derive(Clone)]
 pub struct AuthzService {
     repo: AuthzRepository,
+    catalog: Arc<PermissionCatalog>,
     enforcer: Arc<tokio::sync::RwLock<Enforcer>>,
     reload_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl AuthzService {
     pub async fn new(repo: AuthzRepository) -> Result<Self, AuthzError> {
+        Self::with_catalog(repo, PermissionCatalog::builtin()).await
+    }
+
+    /// Builds the service with an explicit catalog — used by `main.rs` to
+    /// merge approval permissions from the review registry into the
+    /// builtin route permissions.
+    pub async fn with_catalog(
+        repo: AuthzRepository,
+        catalog: PermissionCatalog,
+    ) -> Result<Self, AuthzError> {
         let enforcer = build_enforcer(&repo).await?;
         Ok(Self {
             repo,
+            catalog: Arc::new(catalog),
             enforcer: Arc::new(tokio::sync::RwLock::new(enforcer)),
             reload_lock: Arc::new(tokio::sync::Mutex::new(())),
         })
+    }
+
+    pub fn catalog(&self) -> &PermissionCatalog {
+        &self.catalog
     }
 
     /// Checks whether the user may perform `action` on `object`.
@@ -85,6 +105,30 @@ impl AuthzService {
         let allowed = enforcer.enforce((subject, object, action))?;
         debug!(allowed, "evaluated permission");
         Ok(allowed)
+    }
+
+    /// Evaluates every catalog permission for the user and returns the
+    /// granted ones as concrete `object:action` strings, with wildcards,
+    /// role inheritance, and layer precedence already resolved. This is
+    /// what the frontend consumes for menu and button gating.
+    #[tracing::instrument(level = "debug", skip(self), fields(user_id = %user_id))]
+    pub async fn effective_permissions(&self, user_id: Uuid) -> Result<Vec<String>, AuthzError> {
+        let subject = user_subject(user_id);
+        let enforcer = self.enforcer.read().await;
+
+        let mut permissions = Vec::new();
+        for entry in self.catalog.entries() {
+            for action in entry.actions() {
+                if enforcer.enforce((subject.as_str(), entry.object(), action.as_str()))? {
+                    permissions.push(format!("{}:{}", entry.object(), action));
+                }
+            }
+        }
+        debug!(
+            granted = permissions.len(),
+            "computed effective permissions"
+        );
+        Ok(permissions)
     }
 
     /// Rebuilds the enforcer from the database and swaps it in. Rebuilds
@@ -293,28 +337,9 @@ impl AuthzService {
         action: String,
         effect: String,
     ) -> Result<permission_policies::Model, AuthzError> {
-        match subject_kind.as_str() {
-            SUBJECT_KIND_USER => {
-                if !self.repo.user_exists(subject_id).await? {
-                    return Err(AuthzError::UserNotFound);
-                }
-            }
-            SUBJECT_KIND_ROLE => {
-                if self.repo.find_role(subject_id).await?.is_none() {
-                    return Err(AuthzError::RoleNotFound);
-                }
-            }
-            _ => return Err(AuthzError::InvalidSubjectKind),
-        }
-        if effect != EFFECT_ALLOW && effect != EFFECT_DENY {
-            return Err(AuthzError::InvalidEffect);
-        }
-        validate_policy_object(&object)?;
-        if action != "*" && !ACTIONS.contains(&action.as_str()) {
-            return Err(AuthzError::InvalidInput(
-                "action must be one of read/write/approve or *",
-            ));
-        }
+        self.ensure_subject_exists(&subject_kind, subject_id)
+            .await?;
+        self.validate_policy_content(&object, &action, &effect)?;
         if self
             .repo
             .find_policy(&subject_kind, subject_id, &object, &action)
@@ -344,6 +369,85 @@ impl AuthzService {
             return Err(AuthzError::PolicyNotFound);
         }
         self.reload().await?;
+        Ok(())
+    }
+
+    /// Replaces the full policy set of one subject in a single transaction
+    /// followed by exactly one enforcer reload — the bulk operation behind
+    /// the permission panel's "edit matrix, then save" flow.
+    pub async fn replace_subject_policies(
+        &self,
+        subject_kind: String,
+        subject_id: Uuid,
+        policies: Vec<NewPolicy>,
+    ) -> Result<Vec<permission_policies::Model>, AuthzError> {
+        self.ensure_subject_exists(&subject_kind, subject_id)
+            .await?;
+        let mut seen: HashSet<(&str, &str)> = HashSet::new();
+        for policy in &policies {
+            self.validate_policy_content(&policy.object, &policy.action, &policy.effect)?;
+            if !seen.insert((policy.object.as_str(), policy.action.as_str())) {
+                return Err(AuthzError::InvalidInput(
+                    "policies must not repeat the same object and action",
+                ));
+            }
+        }
+
+        let created = self
+            .repo
+            .replace_subject_policies(&subject_kind, subject_id, &policies, Utc::now())
+            .await?;
+        self.reload().await?;
+        Ok(created)
+    }
+
+    async fn ensure_subject_exists(
+        &self,
+        subject_kind: &str,
+        subject_id: Uuid,
+    ) -> Result<(), AuthzError> {
+        match subject_kind {
+            SUBJECT_KIND_USER => {
+                if !self.repo.user_exists(subject_id).await? {
+                    return Err(AuthzError::UserNotFound);
+                }
+            }
+            SUBJECT_KIND_ROLE => {
+                if self.repo.find_role(subject_id).await?.is_none() {
+                    return Err(AuthzError::RoleNotFound);
+                }
+            }
+            _ => return Err(AuthzError::InvalidSubjectKind),
+        }
+        Ok(())
+    }
+
+    /// Shared validation for single and bulk policy writes. The object
+    /// must be covered by the catalog (exactly, or as a wildcard pattern
+    /// matching at least one catalog object) so a typo can never create a
+    /// policy that silently grants nothing.
+    fn validate_policy_content(
+        &self,
+        object: &str,
+        action: &str,
+        effect: &str,
+    ) -> Result<(), AuthzError> {
+        if effect != EFFECT_ALLOW && effect != EFFECT_DENY {
+            return Err(AuthzError::InvalidEffect);
+        }
+        validate_policy_object(object)?;
+        if action != "*" && !ACTIONS.contains(&action) {
+            return Err(AuthzError::InvalidInput(
+                "action must be one of read/write/approve or *",
+            ));
+        }
+        let covers_catalog_permission = self.catalog.entries().iter().any(|entry| {
+            scope_match(entry.object(), object)
+                && (action == "*" || entry.actions().iter().any(|a| a == action))
+        });
+        if !covers_catalog_permission {
+            return Err(AuthzError::PermissionNotInCatalog);
+        }
         Ok(())
     }
 
@@ -531,6 +635,8 @@ pub enum AuthzError {
     DuplicateRoleCode,
     #[error("an identical policy already exists")]
     DuplicatePolicy,
+    #[error("object/action does not cover any known permission")]
+    PermissionNotInCatalog,
     #[error("kind must be one of position/department/custom")]
     InvalidRoleKind,
     #[error("subject_kind must be user or role")]
@@ -563,6 +669,7 @@ impl AuthzError {
             Self::PolicyNotFound => "policy_not_found",
             Self::DuplicateRoleCode => "duplicate_role_code",
             Self::DuplicatePolicy => "duplicate_policy",
+            Self::PermissionNotInCatalog => "permission_not_in_catalog",
             Self::InvalidRoleKind => "invalid_role_kind",
             Self::InvalidSubjectKind => "invalid_subject_kind",
             Self::InvalidEffect => "invalid_effect",
@@ -687,7 +794,21 @@ mod tests {
                     .await
                     .expect("sqlite memory database should initialize");
                 let users = UserRepository::new(db.clone());
-                let authz = AuthzService::new(AuthzRepository::new(db))
+                // Policy writes validate objects against the catalog, so
+                // the fixture objects used below must be registered — the
+                // same way main.rs merges approval permissions in.
+                let mut catalog = PermissionCatalog::builtin();
+                for (object, action) in [
+                    ("finance:invoices", "read"),
+                    ("finance:invoices", "write"),
+                    ("finance:reports", "approve"),
+                    ("finance:ledger", "read"),
+                    ("finance:x", "read"),
+                    ("hr:staff", "read"),
+                ] {
+                    catalog.add_permission(object, action, "test", object);
+                }
+                let authz = AuthzService::with_catalog(AuthzRepository::new(db), catalog)
                     .await
                     .expect("authz service should initialize");
                 Self { authz, users }
@@ -933,6 +1054,225 @@ mod tests {
                     result.expect("chain within depth limit should be allowed");
                 }
             }
+        }
+
+        #[tokio::test]
+        async fn effective_permissions_resolve_wildcards_and_layers() {
+            let h = Harness::new().await;
+            let user = h.user("ding-1").await;
+            let role = h.role("accountant", KIND_POSITION, None).await;
+            h.assign(user, vec![role]).await;
+
+            // Wildcard object and action on the role layer...
+            h.policy("role", role, "finance:*", "*", "allow").await;
+            // ...with one user-layer deny carved out.
+            h.policy("user", user, "finance:invoices", "write", "deny")
+                .await;
+
+            let permissions = h
+                .authz
+                .effective_permissions(user)
+                .await
+                .expect("effective permissions should compute");
+
+            assert!(permissions.contains(&"finance:invoices:read".to_string()));
+            assert!(permissions.contains(&"finance:reports:approve".to_string()));
+            // The user-layer deny wins over the role wildcard allow.
+            assert!(!permissions.contains(&"finance:invoices:write".to_string()));
+            // Nothing outside the granted subtree leaks in.
+            assert!(!permissions.contains(&"products:read".to_string()));
+
+            // Every returned permission is enumerable from the catalog.
+            for permission in &permissions {
+                let (object, action) = permission
+                    .rsplit_once(':')
+                    .expect("permission should be object:action");
+                assert!(h.authz.catalog().contains(object, action));
+            }
+        }
+
+        #[tokio::test]
+        async fn effective_permissions_are_empty_without_policies() {
+            let h = Harness::new().await;
+            let user = h.user("ding-1").await;
+            let permissions = h
+                .authz
+                .effective_permissions(user)
+                .await
+                .expect("effective permissions should compute");
+            assert!(permissions.is_empty());
+        }
+
+        #[tokio::test]
+        async fn replace_subject_policies_swaps_the_full_set_atomically() {
+            let h = Harness::new().await;
+            let user = h.user("ding-1").await;
+            let role = h.role("accountant", KIND_POSITION, None).await;
+            h.assign(user, vec![role]).await;
+
+            h.policy("role", role, "finance:invoices", "read", "allow")
+                .await;
+            assert!(h.check(user, "finance:invoices", "read").await);
+
+            let created = h
+                .authz
+                .replace_subject_policies(
+                    "role".to_string(),
+                    role,
+                    vec![
+                        NewPolicy {
+                            object: "finance:reports".to_string(),
+                            action: "approve".to_string(),
+                            effect: "allow".to_string(),
+                        },
+                        NewPolicy {
+                            object: "finance:ledger".to_string(),
+                            action: "read".to_string(),
+                            effect: "deny".to_string(),
+                        },
+                    ],
+                )
+                .await
+                .expect("replace should succeed");
+            assert_eq!(created.len(), 2);
+
+            // The old policy is gone, the new set is live.
+            assert!(!h.check(user, "finance:invoices", "read").await);
+            assert!(h.check(user, "finance:reports", "approve").await);
+            assert!(!h.check(user, "finance:ledger", "read").await);
+
+            let listed = h
+                .authz
+                .list_policies(Some("role".to_string()), Some(role))
+                .await
+                .expect("policies should list");
+            assert_eq!(listed.len(), 2);
+
+            // Replacing with an empty set clears every policy.
+            h.authz
+                .replace_subject_policies("role".to_string(), role, vec![])
+                .await
+                .expect("empty replace should succeed");
+            assert!(!h.check(user, "finance:reports", "approve").await);
+        }
+
+        #[tokio::test]
+        async fn replace_subject_policies_validates_input_and_leaves_state_untouched() {
+            let h = Harness::new().await;
+            let user = h.user("ding-1").await;
+            let role = h.role("accountant", KIND_POSITION, None).await;
+            h.assign(user, vec![role]).await;
+            h.policy("role", role, "finance:invoices", "read", "allow")
+                .await;
+
+            let valid = NewPolicy {
+                object: "finance:reports".to_string(),
+                action: "approve".to_string(),
+                effect: "allow".to_string(),
+            };
+
+            let duplicate_pair = h
+                .authz
+                .replace_subject_policies(
+                    "role".to_string(),
+                    role,
+                    vec![
+                        valid.clone(),
+                        NewPolicy {
+                            effect: "deny".to_string(),
+                            ..valid.clone()
+                        },
+                    ],
+                )
+                .await;
+            assert!(matches!(duplicate_pair, Err(AuthzError::InvalidInput(_))));
+
+            let unknown_object = h
+                .authz
+                .replace_subject_policies(
+                    "role".to_string(),
+                    role,
+                    vec![NewPolicy {
+                        object: "nonexistent:domain".to_string(),
+                        ..valid.clone()
+                    }],
+                )
+                .await;
+            assert!(matches!(
+                unknown_object,
+                Err(AuthzError::PermissionNotInCatalog)
+            ));
+
+            let bad_effect = h
+                .authz
+                .replace_subject_policies(
+                    "role".to_string(),
+                    role,
+                    vec![NewPolicy {
+                        effect: "maybe".to_string(),
+                        ..valid.clone()
+                    }],
+                )
+                .await;
+            assert!(matches!(bad_effect, Err(AuthzError::InvalidEffect)));
+
+            let bad_kind = h
+                .authz
+                .replace_subject_policies("group".to_string(), role, vec![valid.clone()])
+                .await;
+            assert!(matches!(bad_kind, Err(AuthzError::InvalidSubjectKind)));
+
+            let missing_role = h
+                .authz
+                .replace_subject_policies("role".to_string(), Uuid::new_v4(), vec![valid.clone()])
+                .await;
+            assert!(matches!(missing_role, Err(AuthzError::RoleNotFound)));
+
+            let missing_user = h
+                .authz
+                .replace_subject_policies("user".to_string(), Uuid::new_v4(), vec![valid])
+                .await;
+            assert!(matches!(missing_user, Err(AuthzError::UserNotFound)));
+
+            // Every failure left the original policy set untouched.
+            assert!(h.check(user, "finance:invoices", "read").await);
+        }
+
+        #[tokio::test]
+        async fn create_policy_rejects_objects_outside_the_catalog() {
+            let h = Harness::new().await;
+            let user = h.user("ding-1").await;
+
+            // A typo'd object must not create a dead policy.
+            let typo = h
+                .authz
+                .create_policy(
+                    "user".to_string(),
+                    user,
+                    "finanse:invoices".to_string(),
+                    "read".to_string(),
+                    "allow".to_string(),
+                )
+                .await;
+            assert!(matches!(typo, Err(AuthzError::PermissionNotInCatalog)));
+
+            // A wildcard covering catalog objects is accepted.
+            h.policy("user", user, "finance:*", "read", "allow").await;
+            // An action no covered entry supports is rejected.
+            let wrong_action = h
+                .authz
+                .create_policy(
+                    "user".to_string(),
+                    user,
+                    "finance:ledger".to_string(),
+                    "approve".to_string(),
+                    "allow".to_string(),
+                )
+                .await;
+            assert!(matches!(
+                wrong_action,
+                Err(AuthzError::PermissionNotInCatalog)
+            ));
         }
 
         #[tokio::test]

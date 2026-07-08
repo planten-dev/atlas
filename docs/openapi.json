@@ -194,6 +194,39 @@
         }
       }
     },
+    "/api/v1/auth/me/permissions": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Get current user's effective permissions",
+        "operationId": "getMyPermissions",
+        "description": "Requires only an authenticated session; every user may read their own permissions. Evaluates every catalog permission for the current user and returns the granted ones as concrete object:action strings, with wildcards, role inheritance, and layer precedence already resolved. Intended for frontend menu and button gating; the backend still enforces permissions on every request.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Effective permissions of the current user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyPermissionsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/v1/auth/logout": {
       "post": {
         "tags": [
@@ -2690,7 +2723,7 @@
         ],
         "summary": "Create permission policy",
         "operationId": "createPolicy",
-        "description": "Requires permission system:permissions:write. Objects are colon-separated scopes (e.g. finance:invoices). In policy objects, a trailing * matches all remaining segments and * matches one segment. Effect resolution: user policies override role policies; roles with smaller priority override larger; within the same priority, deny overrides allow.",
+        "description": "Requires permission system:permissions:write. Objects are colon-separated scopes (e.g. finance:invoices). In policy objects, a trailing * matches all remaining segments and * matches one segment. The object/action must cover at least one permission from the catalog (see /api/v1/permissions/catalog); otherwise the request is rejected with error code permission_not_in_catalog. Effect resolution: user policies override role policies; roles with smaller priority override larger; within the same priority, deny overrides allow.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -2774,6 +2807,120 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/permissions/catalog": {
+      "get": {
+        "tags": [
+          "Permissions"
+        ],
+        "summary": "List the permission catalog",
+        "operationId": "getPermissionCatalog",
+        "description": "Requires permission system:permissions:read. Returns every permission the backend enforces: builtin route permissions plus approval permissions of registered review resource types. Policy writes are validated against this catalog, so it is the authoritative list for the permission panel's selection matrix.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "All enforceable permissions with grouping metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CatalogEntryResponse"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/permissions/subjects/{subjectKind}/{subjectId}/policies": {
+      "parameters": [
+        {
+          "name": "subjectKind",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "user",
+              "role"
+            ]
+          }
+        },
+        {
+          "name": "subjectId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "put": {
+        "tags": [
+          "Permissions"
+        ],
+        "summary": "Replace all policies of a subject",
+        "operationId": "replaceSubjectPolicies",
+        "description": "Requires permission system:permissions:write. Replaces the full policy set of one user or role in a single transaction followed by exactly one policy reload — the bulk save behind the permission panel's edit-matrix flow. An empty policies array clears every policy of the subject. Each object must cover at least one catalog permission (exactly or via wildcards) and (object, action) pairs must not repeat; any validation failure rejects the whole request and leaves the existing policy set untouched.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplaceSubjectPoliciesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "New policy set of the subject, enforced on subsequent requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectPoliciesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
@@ -3132,6 +3279,129 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "MyPermissionsResponse": {
+        "type": "object",
+        "required": [
+          "permissions"
+        ],
+        "properties": {
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Concrete object:action permission strings the current user holds, e.g. products:read. Wildcards, role inheritance, and layer precedence are already resolved."
+          }
+        }
+      },
+      "CatalogEntryResponse": {
+        "type": "object",
+        "required": [
+          "object",
+          "actions",
+          "group",
+          "label"
+        ],
+        "properties": {
+          "object": {
+            "type": "string",
+            "description": "Colon-separated scope path this entry describes, e.g. products:categories."
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "write",
+                "approve"
+              ]
+            },
+            "description": "Actions the backend enforces on this object."
+          },
+          "group": {
+            "type": "string",
+            "description": "Display group for the permission panel, e.g. 商品."
+          },
+          "label": {
+            "type": "string",
+            "description": "Human-readable label of the object."
+          }
+        }
+      },
+      "ReplacePolicyItem": {
+        "type": "object",
+        "required": [
+          "object",
+          "action",
+          "effect"
+        ],
+        "properties": {
+          "object": {
+            "type": "string",
+            "maxLength": 255,
+            "description": "Colon-separated scope path. May contain * segments; a trailing * matches all remaining segments. Must cover at least one catalog permission."
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write",
+              "approve",
+              "*"
+            ]
+          },
+          "effect": {
+            "type": "string",
+            "enum": [
+              "allow",
+              "deny"
+            ]
+          }
+        }
+      },
+      "ReplaceSubjectPoliciesRequest": {
+        "type": "object",
+        "required": [
+          "policies"
+        ],
+        "properties": {
+          "policies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReplacePolicyItem"
+            },
+            "description": "The subject's new full policy set. (object, action) pairs must not repeat. An empty array clears every policy of the subject."
+          }
+        }
+      },
+      "SubjectPoliciesResponse": {
+        "type": "object",
+        "required": [
+          "subject_kind",
+          "subject_id",
+          "policies"
+        ],
+        "properties": {
+          "subject_kind": {
+            "type": "string",
+            "enum": [
+              "user",
+              "role"
+            ]
+          },
+          "subject_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "policies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicyResponse"
+            }
           }
         }
       },

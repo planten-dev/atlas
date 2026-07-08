@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -8,13 +8,91 @@ use uuid::Uuid;
 
 use crate::{
     dto::permissions::{
-        CreatePolicyRequest, CreateRoleRequest, ListPoliciesQuery, PolicyResponse,
-        RoleDetailResponse, RoleResponse, SetRoleParentsRequest, SetUserRolesRequest,
+        CatalogEntryResponse, CreatePolicyRequest, CreateRoleRequest, ListPoliciesQuery,
+        MyPermissionsResponse, PolicyResponse, ReplaceSubjectPoliciesRequest, RoleDetailResponse,
+        RoleResponse, SetRoleParentsRequest, SetUserRolesRequest, SubjectPoliciesResponse,
         UpdateRoleRequest, UserRolesResponse,
     },
     handlers::error::authz_error_response,
+    repositories::authz::NewPolicy,
+    services::auth::CurrentSession,
     state::AppState,
 };
+
+/// Effective permissions of the calling user, for frontend menu and
+/// button gating. Requires only an authenticated session: every user may
+/// read their own permissions.
+pub async fn my_permissions(
+    State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
+) -> Response {
+    match state
+        .authz
+        .effective_permissions(current_session.user.id)
+        .await
+    {
+        Ok(permissions) => {
+            (StatusCode::OK, Json(MyPermissionsResponse { permissions })).into_response()
+        }
+        Err(error) => authz_error_response(error),
+    }
+}
+
+/// Every permission the backend enforces, grouped for the permission
+/// panel's selection matrix.
+pub async fn permission_catalog(State(state): State<AppState>) -> Response {
+    let entries: Vec<CatalogEntryResponse> = state
+        .authz
+        .catalog()
+        .entries()
+        .iter()
+        .map(|entry| CatalogEntryResponse {
+            object: entry.object().to_string(),
+            actions: entry.actions().to_vec(),
+            group: entry.group().to_string(),
+            label: entry.label().to_string(),
+        })
+        .collect();
+    (StatusCode::OK, Json(entries)).into_response()
+}
+
+/// Replaces the full policy set of one subject in a single transaction
+/// with one enforcer reload — the bulk save behind the permission panel.
+pub async fn replace_subject_policies(
+    State(state): State<AppState>,
+    Path((subject_kind, subject_id)): Path<(String, Uuid)>,
+    Json(request): Json<ReplaceSubjectPoliciesRequest>,
+) -> Response {
+    let policies: Vec<NewPolicy> = request
+        .policies
+        .into_iter()
+        .map(|policy| NewPolicy {
+            object: policy.object,
+            action: policy.action,
+            effect: policy.effect,
+        })
+        .collect();
+
+    match state
+        .authz
+        .replace_subject_policies(subject_kind.clone(), subject_id, policies)
+        .await
+    {
+        Ok(created) => (
+            StatusCode::OK,
+            Json(SubjectPoliciesResponse {
+                subject_kind,
+                subject_id,
+                policies: created
+                    .into_iter()
+                    .map(PolicyResponse::from_model)
+                    .collect(),
+            }),
+        )
+            .into_response(),
+        Err(error) => authz_error_response(error),
+    }
+}
 
 pub async fn list_roles(State(state): State<AppState>) -> Response {
     match state.authz.list_roles().await {
@@ -418,6 +496,262 @@ mod tests {
             .await
             .expect("body should be readable");
         serde_json::from_slice(&bytes).expect("body should be json")
+    }
+
+    #[tokio::test]
+    async fn my_permissions_requires_only_a_session() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+
+        // Unauthenticated: 401.
+        let anonymous = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/auth/me/permissions",
+                None,
+                None,
+            ))
+            .await
+            .expect("request should be handled");
+        assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+
+        // Authenticated with no policies: 200 with an empty list.
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let empty = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/auth/me/permissions",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("request should be handled");
+        assert_eq!(empty.status(), StatusCode::OK);
+        let body = json_body(empty).await;
+        assert_eq!(
+            body.pointer("/permissions")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0)
+        );
+
+        // Grants become visible without any permission-management rights.
+        let user_id = logged_in_user_id(&context).await;
+        grant(&context, user_id, "products", "read").await;
+        grant(&context, user_id, "products:categories", "write").await;
+
+        let granted = context
+            .app
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/auth/me/permissions",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("request should be handled");
+        assert_eq!(granted.status(), StatusCode::OK);
+        let body = json_body(granted).await;
+        let permissions: Vec<&str> = body
+            .pointer("/permissions")
+            .and_then(Value::as_array)
+            .expect("permissions should be an array")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(permissions.contains(&"products:read"));
+        assert!(permissions.contains(&"products:categories:write"));
+        assert!(!permissions.contains(&"products:write"));
+    }
+
+    #[tokio::test]
+    async fn catalog_lists_grouped_permissions_behind_read_permission() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+
+        let forbidden = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/permissions/catalog",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("request should be handled");
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+
+        let user_id = logged_in_user_id(&context).await;
+        grant(&context, user_id, "system:permissions", "read").await;
+
+        let response = context
+            .app
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/permissions/catalog",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("request should be handled");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        let entries = body.as_array().expect("catalog should be an array");
+        assert!(!entries.is_empty());
+
+        let products = entries
+            .iter()
+            .find(|entry| entry.pointer("/object").and_then(Value::as_str) == Some("products"))
+            .expect("products entry should exist");
+        let actions: Vec<&str> = products
+            .pointer("/actions")
+            .and_then(Value::as_array)
+            .expect("actions should be an array")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(actions.contains(&"read"));
+        assert!(actions.contains(&"write"));
+        assert!(
+            products.pointer("/group").and_then(Value::as_str).is_some(),
+            "entries should carry group metadata"
+        );
+        assert!(
+            products.pointer("/label").and_then(Value::as_str).is_some(),
+            "entries should carry label metadata"
+        );
+    }
+
+    #[tokio::test]
+    async fn replace_subject_policies_via_http() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let user_id = logged_in_user_id(&context).await;
+        grant(&context, user_id, "system:permissions", "write").await;
+
+        let role_id = context
+            .authz
+            .create_role("editors".into(), "编辑".into(), "custom".into(), None)
+            .await
+            .expect("role should be created")
+            .id;
+
+        let replace = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::PUT,
+                &format!("/api/v1/permissions/subjects/role/{role_id}/policies"),
+                Some(&cookie),
+                Some(json!({
+                    "policies": [
+                        {"object": "products", "action": "read", "effect": "allow"},
+                        {"object": "products", "action": "write", "effect": "allow"},
+                        {"object": "stores", "action": "read", "effect": "deny"}
+                    ]
+                })),
+            ))
+            .await
+            .expect("request should be handled");
+        assert_eq!(replace.status(), StatusCode::OK);
+        let body = json_body(replace).await;
+        assert_eq!(
+            body.pointer("/subject_kind").and_then(Value::as_str),
+            Some("role")
+        );
+        assert_eq!(
+            body.pointer("/policies")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(3)
+        );
+
+        // A second replace fully swaps the set instead of appending.
+        let swap = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::PUT,
+                &format!("/api/v1/permissions/subjects/role/{role_id}/policies"),
+                Some(&cookie),
+                Some(json!({
+                    "policies": [
+                        {"object": "systems", "action": "read", "effect": "allow"}
+                    ]
+                })),
+            ))
+            .await
+            .expect("request should be handled");
+        assert_eq!(swap.status(), StatusCode::OK);
+        let body = json_body(swap).await;
+        let policies = body
+            .pointer("/policies")
+            .and_then(Value::as_array)
+            .expect("policies should be an array");
+        assert_eq!(policies.len(), 1);
+        assert_eq!(
+            policies[0].pointer("/object").and_then(Value::as_str),
+            Some("systems")
+        );
+
+        // Validation failures surface as 422 and leave the set untouched.
+        let invalid = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::PUT,
+                &format!("/api/v1/permissions/subjects/role/{role_id}/policies"),
+                Some(&cookie),
+                Some(json!({
+                    "policies": [
+                        {"object": "not:a:real:object", "action": "read", "effect": "allow"}
+                    ]
+                })),
+            ))
+            .await
+            .expect("request should be handled");
+        assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = json_body(invalid).await;
+        assert_eq!(
+            body.pointer("/error").and_then(Value::as_str),
+            Some("permission_not_in_catalog")
+        );
+
+        // Unknown subject kinds and missing subjects are rejected.
+        let bad_kind = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::PUT,
+                &format!("/api/v1/permissions/subjects/group/{role_id}/policies"),
+                Some(&cookie),
+                Some(json!({"policies": []})),
+            ))
+            .await
+            .expect("request should be handled");
+        assert_eq!(bad_kind.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        let missing_role = context
+            .app
+            .oneshot(request(
+                Method::PUT,
+                &format!(
+                    "/api/v1/permissions/subjects/role/{}/policies",
+                    Uuid::new_v4()
+                ),
+                Some(&cookie),
+                Some(json!({"policies": []})),
+            ))
+            .await
+            .expect("request should be handled");
+        assert_eq!(missing_role.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

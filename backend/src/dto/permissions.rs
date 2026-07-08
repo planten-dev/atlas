@@ -105,3 +105,37 @@ pub struct ListPoliciesQuery {
     pub subject_kind: Option<String>,
     pub subject_id: Option<Uuid>,
 }
+
+#[derive(Debug, Serialize)]
+pub struct MyPermissionsResponse {
+    /// Concrete `object:action` strings the current user holds, with
+    /// wildcards, role inheritance, and layer precedence already resolved.
+    pub permissions: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CatalogEntryResponse {
+    pub object: String,
+    pub actions: Vec<String>,
+    pub group: String,
+    pub label: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReplacePolicyItem {
+    pub object: String,
+    pub action: String,
+    pub effect: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReplaceSubjectPoliciesRequest {
+    pub policies: Vec<ReplacePolicyItem>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SubjectPoliciesResponse {
+    pub subject_kind: String,
+    pub subject_id: Uuid,
+    pub policies: Vec<PolicyResponse>,
+}

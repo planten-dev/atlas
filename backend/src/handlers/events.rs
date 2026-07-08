@@ -569,7 +569,15 @@ mod tests {
             sessions.clone(),
             86_400,
         );
-        let authz = AuthzService::new(AuthzRepository::new(db.clone()))
+        let mut registry = ApplierRegistry::new();
+        registry.register::<TestProduct>();
+        // Merge approval permissions into the catalog, mirroring the
+        // startup wiring in main.rs, so reviewer policies validate.
+        let mut catalog = crate::services::authz_catalog::PermissionCatalog::builtin();
+        for (resource_type, object, action) in registry.approval_permissions() {
+            catalog.add_permission(object, action, "审核", resource_type);
+        }
+        let authz = AuthzService::with_catalog(AuthzRepository::new(db.clone()), catalog)
             .await
             .expect("test authz service should initialize");
         let users_service = UserService::new(users.clone(), sessions);
@@ -578,8 +586,6 @@ mod tests {
         let products_service = ProductService::new(products, product_categories);
         let stores_service = StoreService::new(stores.clone(), systems.clone());
         let systems_service = SystemService::new(systems, departments, stores);
-        let mut registry = ApplierRegistry::new();
-        registry.register::<TestProduct>();
         let events_service = EventService::new(
             EventRepository::new(db),
             authz.clone(),

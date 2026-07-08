@@ -99,6 +99,7 @@ fn authz_status_code(error: &AuthzError) -> StatusCode {
         | AuthzError::InvalidSubjectKind
         | AuthzError::InvalidEffect
         | AuthzError::InvalidInput(_)
+        | AuthzError::PermissionNotInCatalog
         | AuthzError::InheritanceCycle
         | AuthzError::InheritanceTooDeep => StatusCode::UNPROCESSABLE_ENTITY,
         AuthzError::MissingSession => StatusCode::UNAUTHORIZED,

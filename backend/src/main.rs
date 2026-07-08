@@ -8,8 +8,8 @@ use backend::{
         users::UserRepository,
     },
     services::{
-        auth::AuthService, authz::AuthzService, events::EventService,
-        product_categories::ProductCategoryService, products::ProductService,
+        auth::AuthService, authz::AuthzService, authz_catalog::PermissionCatalog,
+        events::EventService, product_categories::ProductCategoryService, products::ProductService,
         review::ApplierRegistry, stores::StoreService, systems::SystemService, users::UserService,
     },
     state::AppState,
@@ -45,7 +45,21 @@ async fn main() -> Result<()> {
         sessions.clone(),
         config.session.ttl_seconds,
     );
-    let authz = AuthzService::new(AuthzRepository::new(db.clone()))
+    // Business tables opt into the review flow here as they adopt it, e.g.:
+    // registry.register::<ProductDoc>();
+    // Each type declares its reviewer permission via
+    // ReviewableResource::APPROVAL_PERMISSION; malformed declarations
+    // panic here at startup.
+    let registry = ApplierRegistry::new();
+
+    // The catalog is the single enumeration of every enforceable
+    // permission: builtin route permissions plus the approval permissions
+    // of registered review resource types.
+    let mut catalog = PermissionCatalog::builtin();
+    for (resource_type, object, action) in registry.approval_permissions() {
+        catalog.add_permission(object, action, "审核", resource_type);
+    }
+    let authz = AuthzService::with_catalog(AuthzRepository::new(db.clone()), catalog)
         .await
         .context("failed to initialize authorization service")?;
     let users = UserService::new(users, sessions);
@@ -54,13 +68,6 @@ async fn main() -> Result<()> {
     let products = ProductService::new(products, product_categories);
     let stores_service = StoreService::new(stores.clone(), systems.clone());
     let systems = SystemService::new(systems, departments, stores);
-
-    // Business tables opt into the review flow here as they adopt it, e.g.:
-    // registry.register::<ProductDoc>();
-    // Each type declares its reviewer permission via
-    // ReviewableResource::APPROVAL_PERMISSION; malformed declarations
-    // panic here at startup.
-    let registry = ApplierRegistry::new();
     let events = EventService::new(
         EventRepository::new(db),
         authz.clone(),

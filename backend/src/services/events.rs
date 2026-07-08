@@ -764,12 +764,18 @@ mod tests {
                 .await
                 .expect("sqlite memory database should initialize");
             let users = UserRepository::new(db.clone());
-            let authz = AuthzService::new(AuthzRepository::new(db.clone()))
-                .await
-                .expect("authz service should initialize");
             let mut registry = ApplierRegistry::new();
             registry.register::<TestProduct>();
             registry.register::<TestDocument>();
+            // Merge approval permissions into the catalog, mirroring the
+            // startup wiring in main.rs, so reviewer policies validate.
+            let mut catalog = crate::services::authz_catalog::PermissionCatalog::builtin();
+            for (resource_type, object, action) in registry.approval_permissions() {
+                catalog.add_permission(object, action, "审核", resource_type);
+            }
+            let authz = AuthzService::with_catalog(AuthzRepository::new(db.clone()), catalog)
+                .await
+                .expect("authz service should initialize");
             let events = EventRepository::new(db.clone());
             let service = EventService::new(events.clone(), authz.clone(), Arc::new(registry), 180);
             Self {

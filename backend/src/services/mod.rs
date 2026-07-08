@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod authz;
+pub mod authz_catalog;
 pub mod departments;
 pub mod events;
 pub mod product_categories;
