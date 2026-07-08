@@ -74,6 +74,7 @@ pub async fn create_customer(
 
 pub async fn update_customer(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
     request: Result<Json<UpdateCustomerRequest>, JsonRejection>,
 ) -> Response {
@@ -88,7 +89,11 @@ pub async fn update_customer(
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
-    match state.customers.update_customer(customer_id, request).await {
+    match state
+        .customers
+        .update_customer_as(Some(current_session.user.id), customer_id, request)
+        .await
+    {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => customer_error_response(error),
     }
@@ -96,6 +101,7 @@ pub async fn update_customer(
 
 pub async fn disable_customer(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let customer_id = match path {
@@ -105,7 +111,11 @@ pub async fn disable_customer(
         }
     };
 
-    match state.customers.disable_customer(customer_id).await {
+    match state
+        .customers
+        .disable_customer_as(Some(current_session.user.id), customer_id)
+        .await
+    {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => customer_error_response(error),
     }
@@ -113,6 +123,7 @@ pub async fn disable_customer(
 
 pub async fn delete_customer(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let customer_id = match path {
@@ -122,7 +133,11 @@ pub async fn delete_customer(
         }
     };
 
-    match state.customers.delete_customer(customer_id).await {
+    match state
+        .customers
+        .delete_customer_as(Some(current_session.user.id), customer_id)
+        .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => customer_error_response(error),
     }

@@ -1,4 +1,5 @@
 use chrono::Utc;
+use serde_json::{Value, json};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -8,10 +9,12 @@ use crate::{
         ListUsersQuery, ListUsersResponse, UpdateUserStatusRequest, UserProfileResponse,
         UserResponse, UserStatus, UserStatusParseError,
     },
+    entities::users,
     repositories::{
         RepositoryError, sessions::SessionRepository, user_profiles::UserProfileRepository,
         users::UserRepository,
     },
+    services::audit::AuditService,
 };
 
 const DEFAULT_PAGE_NUMBER: u64 = 1;
@@ -23,6 +26,7 @@ pub struct UserService {
     users: UserRepository,
     profiles: UserProfileRepository,
     sessions: SessionRepository,
+    audit: Option<AuditService>,
 }
 
 impl UserService {
@@ -35,6 +39,21 @@ impl UserService {
             users,
             profiles,
             sessions,
+            audit: None,
+        }
+    }
+
+    pub fn with_audit(
+        users: UserRepository,
+        profiles: UserProfileRepository,
+        sessions: SessionRepository,
+        audit: AuditService,
+    ) -> Self {
+        Self {
+            users,
+            profiles,
+            sessions,
+            audit: Some(audit),
         }
     }
 
@@ -105,6 +124,16 @@ impl UserService {
         user_id: Uuid,
         request: UpdateUserStatusRequest,
     ) -> Result<UserResponse, UserError> {
+        self.update_status_as(None, user_id, request).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, request))]
+    pub async fn update_status_as(
+        &self,
+        actor_user_id: Option<Uuid>,
+        user_id: Uuid,
+        request: UpdateUserStatusRequest,
+    ) -> Result<UserResponse, UserError> {
         let target_status = UserStatus::parse("target_status", &request.target_status)?;
         let now = Utc::now();
         let user = self
@@ -113,36 +142,129 @@ impl UserService {
             .await?
             .ok_or(UserError::UserNotFound)?;
 
-        let user = self
-            .users
-            .update_status(&user, target_status.as_str(), now)
-            .await?;
-
-        if target_status == UserStatus::Disabled {
-            let revoked_count = self
-                .sessions
-                .revoke_active_sessions_for_user(user_id, now)
+        let old_value = user_audit_value(&user);
+        let user = if let Some(audit) = &self.audit {
+            let tx = audit.begin().await?;
+            let user = self
+                .users
+                .update_status_in(&tx, &user, target_status.as_str(), now)
                 .await?;
-            info!(
-                %user_id,
-                revoked_count,
-                "disabled user and revoked active sessions"
-            );
+            audit
+                .record_update(
+                    &tx,
+                    "users",
+                    user.id,
+                    actor_user_id,
+                    old_value,
+                    user_audit_value(&user),
+                    now,
+                )
+                .await?;
+
+            if target_status == UserStatus::Disabled {
+                let revoked_count = self
+                    .sessions
+                    .revoke_active_sessions_for_user_in(&tx, user_id, now)
+                    .await?;
+                if revoked_count > 0 {
+                    audit
+                        .record_update(
+                            &tx,
+                            "auth_sessions",
+                            user_id,
+                            actor_user_id,
+                            session_batch_audit_value(user_id, "active", revoked_count),
+                            session_batch_audit_value(user_id, "revoked", revoked_count),
+                            now,
+                        )
+                        .await?;
+                }
+                info!(
+                    %user_id,
+                    revoked_count,
+                    "disabled user and revoked active sessions"
+                );
+            } else {
+                info!(%user_id, "activated user without creating sessions");
+            }
+
+            tx.commit().await.map_err(RepositoryError::from)?;
+            user
         } else {
-            info!(%user_id, "activated user without creating sessions");
-        }
+            let user = self
+                .users
+                .update_status(&user, target_status.as_str(), now)
+                .await?;
+
+            if target_status == UserStatus::Disabled {
+                let revoked_count = self
+                    .sessions
+                    .revoke_active_sessions_for_user(user_id, now)
+                    .await?;
+                info!(
+                    %user_id,
+                    revoked_count,
+                    "disabled user and revoked active sessions"
+                );
+            } else {
+                info!(%user_id, "activated user without creating sessions");
+            }
+            user
+        };
 
         Ok(UserResponse::from(user))
     }
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn delete_user(&self, user_id: Uuid) -> Result<(), UserError> {
-        if self.users.find_by_id(user_id).await?.is_none() {
-            return Err(UserError::UserNotFound);
-        }
+        self.delete_user_as(None, user_id).await
+    }
 
-        let deleted_session_count = self.sessions.delete_sessions_for_user(user_id).await?;
-        let deleted = self.users.delete_by_id(user_id).await?;
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn delete_user_as(
+        &self,
+        actor_user_id: Option<Uuid>,
+        user_id: Uuid,
+    ) -> Result<(), UserError> {
+        let user = self
+            .users
+            .find_by_id(user_id)
+            .await?
+            .ok_or(UserError::UserNotFound)?;
+        let old_value = user_audit_value(&user);
+
+        let (deleted_session_count, deleted) = if let Some(audit) = &self.audit {
+            let now = Utc::now();
+            let tx = audit.begin().await?;
+            let deleted_session_count = self
+                .sessions
+                .delete_sessions_for_user_in(&tx, user_id)
+                .await?;
+            let deleted = self.users.delete_by_id_in(&tx, user_id).await?;
+            if deleted_session_count > 0 {
+                audit
+                    .record_delete(
+                        &tx,
+                        "auth_sessions",
+                        user_id,
+                        actor_user_id,
+                        session_batch_audit_value(user_id, "deleted", deleted_session_count),
+                        now,
+                    )
+                    .await?;
+            }
+            if deleted {
+                audit
+                    .record_delete(&tx, "users", user_id, actor_user_id, old_value, now)
+                    .await?;
+            }
+            tx.commit().await.map_err(RepositoryError::from)?;
+            (deleted_session_count, deleted)
+        } else {
+            let deleted_session_count = self.sessions.delete_sessions_for_user(user_id).await?;
+            let deleted = self.users.delete_by_id(user_id).await?;
+            (deleted_session_count, deleted)
+        };
         if !deleted {
             warn!(%user_id, "user disappeared before delete completed");
             return Err(UserError::UserNotFound);
@@ -155,6 +277,25 @@ impl UserService {
         );
         Ok(())
     }
+}
+
+fn user_audit_value(user: &users::Model) -> Value {
+    json!({
+        "id": user.id,
+        "dingtalk_user_id_present": !user.dingtalk_user_id.is_empty(),
+        "status": user.status,
+        "created_at": user.created_at,
+        "updated_at": user.updated_at,
+        "last_login_at": user.last_login_at,
+    })
+}
+
+fn session_batch_audit_value(user_id: Uuid, status: &'static str, count: u64) -> Value {
+    json!({
+        "user_id": user_id,
+        "status": status,
+        "count": count,
+    })
 }
 
 #[derive(Debug, Error)]
@@ -239,9 +380,13 @@ mod tests {
     use crate::{
         config::{DatabaseConfig, DatabaseKind},
         db,
-        repositories::sessions::hash_secret,
+        entities::events,
+        repositories::{events::EventRepository, sessions::hash_secret},
+        services::audit::AuditService,
     };
     use chrono::{Duration, TimeZone};
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    use serde_json::json;
     use std::path::PathBuf;
 
     fn sqlite_memory_config() -> DatabaseConfig {
@@ -261,6 +406,28 @@ mod tests {
         let sessions = SessionRepository::new(db);
         let service = UserService::new(users.clone(), profiles, sessions.clone());
         (users, sessions, service)
+    }
+
+    async fn audited_services() -> (
+        UserRepository,
+        SessionRepository,
+        UserService,
+        EventRepository,
+    ) {
+        let db = db::connect_and_migrate(&sqlite_memory_config())
+            .await
+            .expect("sqlite memory database should initialize");
+        let users = UserRepository::new(db.clone());
+        let profiles = UserProfileRepository::new(db.clone());
+        let sessions = SessionRepository::new(db.clone());
+        let events = EventRepository::new(db.clone());
+        let service = UserService::with_audit(
+            users.clone(),
+            profiles,
+            sessions.clone(),
+            AuditService::new(EventRepository::new(db)),
+        );
+        (users, sessions, service, events)
     }
 
     #[tokio::test]
@@ -490,5 +657,79 @@ mod tests {
             service.delete_user(Uuid::new_v4()).await,
             Err(UserError::UserNotFound)
         ));
+    }
+
+    #[tokio::test]
+    async fn disabling_user_audits_status_and_session_revocation() {
+        let (users, sessions, service, events_repo) = audited_services().await;
+        let now = Utc::now();
+        let actor = users
+            .find_or_create_for_login("actor", now)
+            .await
+            .expect("actor should be created");
+        let user = users
+            .find_or_create_for_login("target", now)
+            .await
+            .expect("target should be created");
+        sessions
+            .create_session(
+                user.id,
+                &hash_secret("raw-session-token"),
+                now,
+                now + Duration::hours(1),
+            )
+            .await
+            .expect("session should be created");
+
+        service
+            .update_status_as(
+                Some(actor.id),
+                user.id,
+                UpdateUserStatusRequest {
+                    target_status: "disabled".to_string(),
+                },
+            )
+            .await
+            .expect("user should disable");
+
+        let user_event = events::Entity::find()
+            .filter(events::Column::ResourceType.eq("users"))
+            .filter(events::Column::ResourceId.eq(user.id))
+            .one(&events_repo.db)
+            .await
+            .expect("user event should load")
+            .expect("user event should exist");
+        let session_event = events::Entity::find()
+            .filter(events::Column::ResourceType.eq("auth_sessions"))
+            .filter(events::Column::ResourceId.eq(user.id))
+            .one(&events_repo.db)
+            .await
+            .expect("session event should load")
+            .expect("session event should exist");
+        let session_payload = serde_json::to_string(&json!({
+            "old": session_event.old_value,
+            "new": session_event.new_value,
+        }))
+        .expect("session event payload should serialize");
+
+        assert_eq!(user_event.actor_user_id, Some(actor.id));
+        assert_eq!(
+            user_event
+                .new_value
+                .as_ref()
+                .and_then(|value| value.pointer("/status"))
+                .and_then(serde_json::Value::as_str),
+            Some("disabled")
+        );
+        assert_eq!(
+            session_event
+                .new_value
+                .as_ref()
+                .and_then(|value| value.pointer("/count"))
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert!(!session_payload.contains("raw-session-token"));
+        assert!(!session_payload.contains("session_token_hash"));
     }
 }

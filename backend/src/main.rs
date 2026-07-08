@@ -9,8 +9,8 @@ use backend::{
         user_profiles::UserProfileRepository, users::UserRepository,
     },
     services::{
-        auth::AuthService, authz::AuthzService, customers::CustomerService, events::EventService,
-        product_categories::ProductCategoryService, products::ProductService,
+        audit::AuditService, auth::AuthService, authz::AuthzService, customers::CustomerService,
+        events::EventService, product_categories::ProductCategoryService, products::ProductService,
         review::ApplierRegistry, sales_records::SalesRecordService, stores::StoreService,
         systems::SystemService, users::UserService,
     },
@@ -44,6 +44,7 @@ async fn main() -> Result<()> {
     let stores = StoreRepository::new(db.clone());
     let customers = CustomerRepository::new(db.clone());
     let sales_records = SalesRecordRepository::new(db.clone());
+    let audit = AuditService::new(EventRepository::new(db.clone()));
     let auth = AuthService::new(
         config.dingtalk.clone(),
         users.clone(),
@@ -52,22 +53,31 @@ async fn main() -> Result<()> {
         sessions.clone(),
         config.session.ttl_seconds,
     );
-    let authz = AuthzService::new(AuthzRepository::new(db.clone()))
+    let authz = AuthzService::with_audit(AuthzRepository::new(db.clone()), audit.clone())
         .await
         .context("failed to initialize authorization service")?;
-    let users_service = UserService::new(users.clone(), profiles, sessions);
-    let product_categories_service =
-        ProductCategoryService::new(product_categories.clone(), products.clone());
-    let products = ProductService::new(products, product_categories.clone());
-    let stores_service = StoreService::new(stores.clone(), systems.clone());
-    let systems_service = SystemService::new(systems.clone(), departments.clone(), stores.clone());
-    let customers_service = CustomerService::new(
+    let users_service = UserService::with_audit(users.clone(), profiles, sessions, audit.clone());
+    let product_categories_service = ProductCategoryService::with_audit(
+        product_categories.clone(),
+        products.clone(),
+        audit.clone(),
+    );
+    let products = ProductService::with_audit(products, product_categories.clone(), audit.clone());
+    let stores_service = StoreService::with_audit(stores.clone(), systems.clone(), audit.clone());
+    let systems_service = SystemService::with_audit(
+        systems.clone(),
+        departments.clone(),
+        stores.clone(),
+        audit.clone(),
+    );
+    let customers_service = CustomerService::with_audit(
         customers.clone(),
         departments.clone(),
         systems.clone(),
         stores.clone(),
+        audit.clone(),
     );
-    let sales_records_service = SalesRecordService::new(
+    let sales_records_service = SalesRecordService::with_audit(
         sales_records,
         customers,
         departments,
@@ -75,6 +85,7 @@ async fn main() -> Result<()> {
         stores,
         product_categories,
         users.clone(),
+        audit,
     );
 
     // Business tables opt into the review flow here as they adopt it, e.g.:

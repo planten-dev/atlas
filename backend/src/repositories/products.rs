@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::Decimal;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait,
+    PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use tracing::{debug, info};
 use uuid::Uuid;
@@ -62,6 +62,16 @@ impl ProductRepository {
         product: NewProduct,
         now: DateTime<Utc>,
     ) -> Result<products::Model, RepositoryError> {
+        self.create_product_in(&self.db, product, now).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn, product), fields(name = %product.name, status = %product.status))]
+    pub async fn create_product_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        product: NewProduct,
+        now: DateTime<Utc>,
+    ) -> Result<products::Model, RepositoryError> {
         validate_required("name", &product.name)?;
         validate_required("status", &product.status)?;
 
@@ -78,7 +88,7 @@ impl ProductRepository {
             created_at: Set(now),
             updated_at: Set(now),
         }
-        .insert(&self.db)
+        .insert(conn)
         .await?;
 
         info!(product_id = %product.id, "created product");
@@ -136,6 +146,18 @@ impl ProductRepository {
         changes: ProductChanges,
         now: DateTime<Utc>,
     ) -> Result<products::Model, RepositoryError> {
+        self.update_product_in(&self.db, product, changes, now)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn, product, changes), fields(product_id = %product.id))]
+    pub async fn update_product_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        product: &products::Model,
+        changes: ProductChanges,
+        now: DateTime<Utc>,
+    ) -> Result<products::Model, RepositoryError> {
         let mut active: products::ActiveModel = product.clone().into();
 
         if let Some(name) = changes.name {
@@ -166,7 +188,7 @@ impl ProductRepository {
         }
         active.updated_at = Set(now);
 
-        let product = active.update(&self.db).await?;
+        let product = active.update(conn).await?;
         info!(product_id = %product.id, "updated product");
         Ok(product)
     }
@@ -178,12 +200,23 @@ impl ProductRepository {
         status: &str,
         now: DateTime<Utc>,
     ) -> Result<products::Model, RepositoryError> {
+        self.update_status_in(&self.db, product, status, now).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn), fields(product_id = %product.id, status = %status))]
+    pub async fn update_status_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        product: &products::Model,
+        status: &str,
+        now: DateTime<Utc>,
+    ) -> Result<products::Model, RepositoryError> {
         validate_required("status", status)?;
 
         let mut active: products::ActiveModel = product.clone().into();
         active.status = Set(status.trim().to_string());
         active.updated_at = Set(now);
-        let product = active.update(&self.db).await?;
+        let product = active.update(conn).await?;
 
         info!(product_id = %product.id, status = %product.status, "updated product status");
         Ok(product)
@@ -191,8 +224,17 @@ impl ProductRepository {
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn delete_by_id(&self, product_id: Uuid) -> Result<bool, RepositoryError> {
+        self.delete_by_id_in(&self.db, product_id).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn))]
+    pub async fn delete_by_id_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        product_id: Uuid,
+    ) -> Result<bool, RepositoryError> {
         let result = products::Entity::delete_by_id(product_id)
-            .exec(&self.db)
+            .exec(conn)
             .await?;
         let deleted = result.rows_affected > 0;
 

@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait,
+    PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use tracing::{debug, info};
 use uuid::Uuid;
@@ -44,6 +44,16 @@ impl StoreRepository {
         store: NewStore,
         now: DateTime<Utc>,
     ) -> Result<stores::Model, RepositoryError> {
+        self.create_store_in(&self.db, store, now).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn, store), fields(name = %store.name, system_id = %store.system_id, status = %store.status))]
+    pub async fn create_store_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        store: NewStore,
+        now: DateTime<Utc>,
+    ) -> Result<stores::Model, RepositoryError> {
         validate_required("name", &store.name)?;
         validate_required("status", &store.status)?;
 
@@ -55,7 +65,7 @@ impl StoreRepository {
             created_at: Set(now),
             updated_at: Set(now),
         }
-        .insert(&self.db)
+        .insert(conn)
         .await?;
 
         info!(store_id = %store.id, "created store");
@@ -122,6 +132,17 @@ impl StoreRepository {
         changes: StoreChanges,
         now: DateTime<Utc>,
     ) -> Result<stores::Model, RepositoryError> {
+        self.update_store_in(&self.db, store, changes, now).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn, store, changes), fields(store_id = %store.id))]
+    pub async fn update_store_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        store: &stores::Model,
+        changes: StoreChanges,
+        now: DateTime<Utc>,
+    ) -> Result<stores::Model, RepositoryError> {
         let mut active: stores::ActiveModel = store.clone().into();
 
         if let Some(name) = changes.name {
@@ -137,7 +158,7 @@ impl StoreRepository {
         }
         active.updated_at = Set(now);
 
-        let store = active.update(&self.db).await?;
+        let store = active.update(conn).await?;
         info!(store_id = %store.id, "updated store");
         Ok(store)
     }
@@ -149,12 +170,23 @@ impl StoreRepository {
         status: &str,
         now: DateTime<Utc>,
     ) -> Result<stores::Model, RepositoryError> {
+        self.update_status_in(&self.db, store, status, now).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn), fields(store_id = %store.id, status = %status))]
+    pub async fn update_status_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        store: &stores::Model,
+        status: &str,
+        now: DateTime<Utc>,
+    ) -> Result<stores::Model, RepositoryError> {
         validate_required("status", status)?;
 
         let mut active: stores::ActiveModel = store.clone().into();
         active.status = Set(status.trim().to_string());
         active.updated_at = Set(now);
-        let store = active.update(&self.db).await?;
+        let store = active.update(conn).await?;
 
         info!(store_id = %store.id, status = %store.status, "updated store status");
         Ok(store)
@@ -162,9 +194,16 @@ impl StoreRepository {
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn delete_by_id(&self, store_id: Uuid) -> Result<bool, RepositoryError> {
-        let result = stores::Entity::delete_by_id(store_id)
-            .exec(&self.db)
-            .await?;
+        self.delete_by_id_in(&self.db, store_id).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn))]
+    pub async fn delete_by_id_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        store_id: Uuid,
+    ) -> Result<bool, RepositoryError> {
+        let result = stores::Entity::delete_by_id(store_id).exec(conn).await?;
         let deleted = result.rows_affected > 0;
 
         info!(%store_id, deleted, "deleted store by id");

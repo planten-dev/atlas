@@ -7,6 +7,7 @@ use casbin::{
     function_map::{OperatorFunction, dynamic_to_str},
 };
 use chrono::Utc;
+use serde_json::{Value, json};
 use thiserror::Error;
 use tracing::{debug, info};
 use uuid::Uuid;
@@ -15,8 +16,12 @@ use crate::{
     entities::{permission_policies, roles},
     repositories::{
         RepositoryError,
-        authz::{AuthzRepository, EFFECT_ALLOW, EFFECT_DENY, SUBJECT_KIND_ROLE, SUBJECT_KIND_USER},
+        authz::{
+            AuthzRepository, DeletedRoleRows, EFFECT_ALLOW, EFFECT_DENY, SUBJECT_KIND_ROLE,
+            SUBJECT_KIND_USER,
+        },
     },
+    services::audit::AuditService,
 };
 
 /// Casbin model: implicit priority — the first policy row whose matcher
@@ -60,6 +65,7 @@ pub struct AuthzService {
     repo: AuthzRepository,
     enforcer: Arc<tokio::sync::RwLock<Enforcer>>,
     reload_lock: Arc<tokio::sync::Mutex<()>>,
+    audit: Option<AuditService>,
 }
 
 impl AuthzService {
@@ -69,6 +75,20 @@ impl AuthzService {
             repo,
             enforcer: Arc::new(tokio::sync::RwLock::new(enforcer)),
             reload_lock: Arc::new(tokio::sync::Mutex::new(())),
+            audit: None,
+        })
+    }
+
+    pub async fn with_audit(
+        repo: AuthzRepository,
+        audit: AuditService,
+    ) -> Result<Self, AuthzError> {
+        let enforcer = build_enforcer(&repo).await?;
+        Ok(Self {
+            repo,
+            enforcer: Arc::new(tokio::sync::RwLock::new(enforcer)),
+            reload_lock: Arc::new(tokio::sync::Mutex::new(())),
+            audit: Some(audit),
         })
     }
 
@@ -108,6 +128,17 @@ impl AuthzService {
         kind: String,
         priority: Option<i32>,
     ) -> Result<roles::Model, AuthzError> {
+        self.create_role_as(None, code, name, kind, priority).await
+    }
+
+    pub async fn create_role_as(
+        &self,
+        actor_user_id: Option<Uuid>,
+        code: String,
+        name: String,
+        kind: String,
+        priority: Option<i32>,
+    ) -> Result<roles::Model, AuthzError> {
         let code = code.trim().to_string();
         let name = name.trim().to_string();
         if code.is_empty() {
@@ -132,16 +163,46 @@ impl AuthzService {
             return Err(AuthzError::DuplicateRoleCode);
         }
 
-        let role = self
-            .repo
-            .create_role(&code, &name, &kind, priority, Utc::now())
-            .await?;
+        let now = Utc::now();
+        let role = if let Some(audit) = &self.audit {
+            let tx = audit.begin().await?;
+            let role = self
+                .repo
+                .create_role_in(&tx, &code, &name, &kind, priority, now)
+                .await?;
+            audit
+                .record_create(
+                    &tx,
+                    "roles",
+                    role.id,
+                    actor_user_id,
+                    role_audit_value(&role),
+                    now,
+                )
+                .await?;
+            tx.commit().await.map_err(RepositoryError::from)?;
+            role
+        } else {
+            self.repo
+                .create_role(&code, &name, &kind, priority, now)
+                .await?
+        };
         // A new role has no policies or members yet, so no reload is needed.
         Ok(role)
     }
 
     pub async fn update_role(
         &self,
+        id: Uuid,
+        name: Option<String>,
+        priority: Option<i32>,
+    ) -> Result<roles::Model, AuthzError> {
+        self.update_role_as(None, id, name, priority).await
+    }
+
+    pub async fn update_role_as(
+        &self,
+        actor_user_id: Option<Uuid>,
         id: Uuid,
         name: Option<String>,
         priority: Option<i32>,
@@ -159,17 +220,70 @@ impl AuthzService {
             ));
         }
 
-        let role = self
+        let old_role = self
             .repo
-            .update_role(id, name.map(|n| n.trim().to_string()), priority, Utc::now())
+            .find_role(id)
             .await?
             .ok_or(AuthzError::RoleNotFound)?;
+        let name = name.map(|n| n.trim().to_string());
+        if name.as_deref() == Some(old_role.name.as_str())
+            && priority.is_none_or(|priority| priority == old_role.priority)
+        {
+            return Ok(old_role);
+        }
+
+        let old_value = role_audit_value(&old_role);
+        let now = Utc::now();
+        let role = if let Some(audit) = &self.audit {
+            let tx = audit.begin().await?;
+            let role = self
+                .repo
+                .update_role_in(&tx, id, name, priority, now)
+                .await?
+                .ok_or(AuthzError::RoleNotFound)?;
+            audit
+                .record_update(
+                    &tx,
+                    "roles",
+                    role.id,
+                    actor_user_id,
+                    old_value,
+                    role_audit_value(&role),
+                    now,
+                )
+                .await?;
+            tx.commit().await.map_err(RepositoryError::from)?;
+            role
+        } else {
+            self.repo
+                .update_role(id, name, priority, now)
+                .await?
+                .ok_or(AuthzError::RoleNotFound)?
+        };
         self.reload().await?;
         Ok(role)
     }
 
     pub async fn delete_role(&self, id: Uuid) -> Result<(), AuthzError> {
-        if !self.repo.delete_role(id).await? {
+        self.delete_role_as(None, id).await
+    }
+
+    pub async fn delete_role_as(
+        &self,
+        actor_user_id: Option<Uuid>,
+        id: Uuid,
+    ) -> Result<(), AuthzError> {
+        if let Some(audit) = &self.audit {
+            let now = Utc::now();
+            let tx = audit.begin().await?;
+            let deleted = self
+                .repo
+                .delete_role_in(&tx, id)
+                .await?
+                .ok_or(AuthzError::RoleNotFound)?;
+            audit_deleted_role(&tx, audit, actor_user_id, &deleted, now).await?;
+            tx.commit().await.map_err(RepositoryError::from)?;
+        } else if !self.repo.delete_role(id).await? {
             return Err(AuthzError::RoleNotFound);
         }
         self.reload().await?;
@@ -197,6 +311,15 @@ impl AuthzService {
     /// `MAX_INHERITANCE_DEPTH`.
     pub async fn set_role_parents(
         &self,
+        child: Uuid,
+        parents: Vec<Uuid>,
+    ) -> Result<(), AuthzError> {
+        self.set_role_parents_as(None, child, parents).await
+    }
+
+    pub async fn set_role_parents_as(
+        &self,
+        actor_user_id: Option<Uuid>,
         child: Uuid,
         parents: Vec<Uuid>,
     ) -> Result<(), AuthzError> {
@@ -243,9 +366,33 @@ impl AuthzService {
             return Err(AuthzError::InheritanceTooDeep);
         }
 
-        self.repo
-            .set_role_parents(child, &parents, Utc::now())
-            .await?;
+        let current = self.repo.list_role_parents(child).await?;
+        if same_uuid_set(&current, &parents) {
+            return Ok(());
+        }
+
+        let now = Utc::now();
+        if let Some(audit) = &self.audit {
+            let tx = audit.begin().await?;
+            let old_parents = self
+                .repo
+                .set_role_parents_in(&tx, child, &parents, now)
+                .await?;
+            audit
+                .record_update(
+                    &tx,
+                    "role_inheritances",
+                    child,
+                    actor_user_id,
+                    id_list_audit_value("parent_role_ids", &old_parents),
+                    id_list_audit_value("parent_role_ids", &parents),
+                    now,
+                )
+                .await?;
+            tx.commit().await.map_err(RepositoryError::from)?;
+        } else {
+            self.repo.set_role_parents(child, &parents, now).await?;
+        }
         self.reload().await?;
         Ok(())
     }
@@ -264,6 +411,15 @@ impl AuthzService {
         user_id: Uuid,
         role_ids: Vec<Uuid>,
     ) -> Result<Vec<roles::Model>, AuthzError> {
+        self.set_user_roles_as(None, user_id, role_ids).await
+    }
+
+    pub async fn set_user_roles_as(
+        &self,
+        actor_user_id: Option<Uuid>,
+        user_id: Uuid,
+        role_ids: Vec<Uuid>,
+    ) -> Result<Vec<roles::Model>, AuthzError> {
         if !self.repo.user_exists(user_id).await? {
             return Err(AuthzError::UserNotFound);
         }
@@ -276,10 +432,33 @@ impl AuthzService {
             return Err(AuthzError::RoleNotFound);
         }
 
-        self.repo
-            .set_user_roles(user_id, &role_ids, Utc::now())
-            .await?;
-        self.reload().await?;
+        let current_roles = self.repo.list_user_roles(user_id).await?;
+        let current_role_ids: Vec<Uuid> = current_roles.iter().map(|role| role.id).collect();
+        if !same_uuid_set(&current_role_ids, &role_ids) {
+            let now = Utc::now();
+            if let Some(audit) = &self.audit {
+                let tx = audit.begin().await?;
+                let old_role_ids = self
+                    .repo
+                    .set_user_roles_in(&tx, user_id, &role_ids, now)
+                    .await?;
+                audit
+                    .record_update(
+                        &tx,
+                        "user_roles",
+                        user_id,
+                        actor_user_id,
+                        id_list_audit_value("role_ids", &old_role_ids),
+                        id_list_audit_value("role_ids", &role_ids),
+                        now,
+                    )
+                    .await?;
+                tx.commit().await.map_err(RepositoryError::from)?;
+            } else {
+                self.repo.set_user_roles(user_id, &role_ids, now).await?;
+            }
+            self.reload().await?;
+        }
         self.repo.list_user_roles(user_id).await.map_err(Into::into)
     }
 
@@ -287,6 +466,19 @@ impl AuthzService {
 
     pub async fn create_policy(
         &self,
+        subject_kind: String,
+        subject_id: Uuid,
+        object: String,
+        action: String,
+        effect: String,
+    ) -> Result<permission_policies::Model, AuthzError> {
+        self.create_policy_as(None, subject_kind, subject_id, object, action, effect)
+            .await
+    }
+
+    pub async fn create_policy_as(
+        &self,
+        actor_user_id: Option<Uuid>,
         subject_kind: String,
         subject_id: Uuid,
         object: String,
@@ -324,23 +516,71 @@ impl AuthzService {
             return Err(AuthzError::DuplicatePolicy);
         }
 
-        let policy = self
-            .repo
-            .create_policy(
-                &subject_kind,
-                subject_id,
-                &object,
-                &action,
-                &effect,
-                Utc::now(),
-            )
-            .await?;
+        let now = Utc::now();
+        let policy = if let Some(audit) = &self.audit {
+            let tx = audit.begin().await?;
+            let policy = self
+                .repo
+                .create_policy_in(
+                    &tx,
+                    &subject_kind,
+                    subject_id,
+                    &object,
+                    &action,
+                    &effect,
+                    now,
+                )
+                .await?;
+            audit
+                .record_create(
+                    &tx,
+                    "permission_policies",
+                    policy.id,
+                    actor_user_id,
+                    policy_audit_value(&policy),
+                    now,
+                )
+                .await?;
+            tx.commit().await.map_err(RepositoryError::from)?;
+            policy
+        } else {
+            self.repo
+                .create_policy(&subject_kind, subject_id, &object, &action, &effect, now)
+                .await?
+        };
         self.reload().await?;
         Ok(policy)
     }
 
     pub async fn delete_policy(&self, id: Uuid) -> Result<(), AuthzError> {
-        if !self.repo.delete_policy(id).await? {
+        self.delete_policy_as(None, id).await
+    }
+
+    pub async fn delete_policy_as(
+        &self,
+        actor_user_id: Option<Uuid>,
+        id: Uuid,
+    ) -> Result<(), AuthzError> {
+        if let Some(audit) = &self.audit {
+            let now = Utc::now();
+            let tx = audit.begin().await?;
+            let policy = self
+                .repo
+                .delete_policy_in(&tx, id)
+                .await?
+                .ok_or(AuthzError::PolicyNotFound)?;
+            audit
+                .record_delete(
+                    &tx,
+                    "permission_policies",
+                    id,
+                    actor_user_id,
+                    policy_audit_value(&policy),
+                    now,
+                )
+                .await?;
+            tx.commit().await.map_err(RepositoryError::from)?;
+        } else if !self.repo.delete_policy(id).await? {
             return Err(AuthzError::PolicyNotFound);
         }
         self.reload().await?;
@@ -363,6 +603,116 @@ impl AuthzService {
             .list_policies(subject_kind.as_deref(), subject_id)
             .await?)
     }
+}
+
+async fn audit_deleted_role(
+    tx: &sea_orm::DatabaseTransaction,
+    audit: &AuditService,
+    actor_user_id: Option<Uuid>,
+    deleted: &DeletedRoleRows,
+    now: chrono::DateTime<Utc>,
+) -> Result<(), RepositoryError> {
+    audit
+        .record_delete(
+            tx,
+            "roles",
+            deleted.role.id,
+            actor_user_id,
+            role_audit_value(&deleted.role),
+            now,
+        )
+        .await?;
+
+    if !deleted.policy_ids.is_empty() {
+        audit
+            .record_delete(
+                tx,
+                "permission_policies",
+                deleted.role.id,
+                actor_user_id,
+                id_list_audit_value("policy_ids", &deleted.policy_ids),
+                now,
+            )
+            .await?;
+    }
+    if !deleted.inheritances.is_empty() {
+        audit
+            .record_delete(
+                tx,
+                "role_inheritances",
+                deleted.role.id,
+                actor_user_id,
+                json!({
+                    "count": deleted.inheritances.len(),
+                    "links": deleted.inheritances.iter().map(|(child, parent)| {
+                        json!({
+                            "child_role_id": child,
+                            "parent_role_id": parent,
+                        })
+                    }).collect::<Vec<_>>(),
+                }),
+                now,
+            )
+            .await?;
+    }
+    if !deleted.user_ids.is_empty() {
+        audit
+            .record_delete(
+                tx,
+                "user_roles",
+                deleted.role.id,
+                actor_user_id,
+                id_list_audit_value("user_ids", &deleted.user_ids),
+                now,
+            )
+            .await?;
+    }
+
+    Ok(())
+}
+
+fn role_audit_value(role: &roles::Model) -> Value {
+    json!({
+        "id": role.id,
+        "code": role.code,
+        "name": role.name,
+        "kind": role.kind,
+        "priority": role.priority,
+        "created_at": role.created_at,
+        "updated_at": role.updated_at,
+    })
+}
+
+fn policy_audit_value(policy: &permission_policies::Model) -> Value {
+    json!({
+        "id": policy.id,
+        "subject_kind": policy.subject_kind,
+        "subject_id": policy.subject_id,
+        "object": policy.object,
+        "action": policy.action,
+        "effect": policy.effect,
+        "created_at": policy.created_at,
+    })
+}
+
+fn id_list_audit_value(field: &'static str, ids: &[Uuid]) -> Value {
+    let mut ids = ids.to_vec();
+    ids.sort();
+    json!({
+        "count": ids.len(),
+        field: ids,
+    })
+}
+
+fn same_uuid_set(left: &[Uuid], right: &[Uuid]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut left = left.to_vec();
+    let mut right = right.to_vec();
+    left.sort();
+    right.sort();
+    left == right
 }
 
 async fn build_enforcer(repo: &AuthzRepository) -> Result<Enforcer, AuthzError> {
@@ -664,8 +1014,11 @@ mod tests {
         use crate::{
             config::{DatabaseConfig, DatabaseKind},
             db,
-            repositories::users::UserRepository,
+            entities::events,
+            repositories::{events::EventRepository, users::UserRepository},
+            services::audit::AuditService,
         };
+        use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
         use std::path::PathBuf;
 
         fn sqlite_memory_config() -> DatabaseConfig {
@@ -899,6 +1252,94 @@ mod tests {
 
             h.authz.delete_role(role).await.expect("role should delete");
             assert!(!h.check(user, "finance:invoices", "read").await);
+        }
+
+        #[tokio::test]
+        async fn audited_role_delete_records_cascade_summaries() {
+            let db = db::connect_and_migrate(&sqlite_memory_config())
+                .await
+                .expect("sqlite memory database should initialize");
+            let users = UserRepository::new(db.clone());
+            let events_repo = EventRepository::new(db.clone());
+            let authz = AuthzService::with_audit(
+                AuthzRepository::new(db.clone()),
+                AuditService::new(EventRepository::new(db)),
+            )
+            .await
+            .expect("authz service should initialize");
+            let actor = users
+                .find_or_create_for_login("actor", Utc::now())
+                .await
+                .expect("actor should be created")
+                .id;
+            let parent = authz
+                .create_role_as(
+                    Some(actor),
+                    "parent".to_string(),
+                    "parent".to_string(),
+                    KIND_CUSTOM.to_string(),
+                    None,
+                )
+                .await
+                .expect("parent role should be created")
+                .id;
+            let child = authz
+                .create_role_as(
+                    Some(actor),
+                    "child".to_string(),
+                    "child".to_string(),
+                    KIND_CUSTOM.to_string(),
+                    None,
+                )
+                .await
+                .expect("child role should be created")
+                .id;
+            authz
+                .set_role_parents_as(Some(actor), child, vec![parent])
+                .await
+                .expect("inheritance should be set");
+            authz
+                .set_user_roles_as(Some(actor), actor, vec![child])
+                .await
+                .expect("user role should be set");
+            authz
+                .create_policy_as(
+                    Some(actor),
+                    "role".to_string(),
+                    child,
+                    "finance:invoices".to_string(),
+                    "read".to_string(),
+                    "allow".to_string(),
+                )
+                .await
+                .expect("policy should be created");
+
+            authz
+                .delete_role_as(Some(actor), child)
+                .await
+                .expect("role should delete");
+
+            let rows = events::Entity::find()
+                .filter(events::Column::ResourceId.eq(child))
+                .all(&events_repo.db)
+                .await
+                .expect("events should load");
+
+            assert!(rows.iter().any(|row| {
+                row.resource_type == "roles" && row.event_type == events::EventType::Delete
+            }));
+            assert!(rows.iter().any(|row| {
+                row.resource_type == "permission_policies"
+                    && row.event_type == events::EventType::Delete
+            }));
+            assert!(rows.iter().any(|row| {
+                row.resource_type == "role_inheritances"
+                    && row.event_type == events::EventType::Delete
+            }));
+            assert!(rows.iter().any(|row| {
+                row.resource_type == "user_roles" && row.event_type == events::EventType::Delete
+            }));
+            assert!(rows.iter().all(|row| row.actor_user_id == Some(actor)));
         }
 
         #[tokio::test]

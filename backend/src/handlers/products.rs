@@ -1,5 +1,5 @@
 use axum::{
-    Json,
+    Extension, Json,
     extract::{
         Path, Query, State,
         rejection::{JsonRejection, PathRejection, QueryRejection},
@@ -16,7 +16,7 @@ use crate::{
         products::{CreateProductRequest, ListProductsQuery, UpdateProductRequest},
     },
     repositories::RepositoryError,
-    services::products::ProductError,
+    services::{auth::CurrentSession, products::ProductError},
     state::AppState,
 };
 
@@ -52,6 +52,7 @@ pub async fn product_detail(
 
 pub async fn create_product(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     request: Result<Json<CreateProductRequest>, JsonRejection>,
 ) -> Response {
     let request = match request {
@@ -59,7 +60,11 @@ pub async fn create_product(
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
-    match state.products.create_product(request).await {
+    match state
+        .products
+        .create_product_as(Some(current_session.user.id), request)
+        .await
+    {
         Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
         Err(error) => product_error_response(error),
     }
@@ -67,6 +72,7 @@ pub async fn create_product(
 
 pub async fn update_product(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
     request: Result<Json<UpdateProductRequest>, JsonRejection>,
 ) -> Response {
@@ -79,7 +85,11 @@ pub async fn update_product(
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
-    match state.products.update_product(product_id, request).await {
+    match state
+        .products
+        .update_product_as(Some(current_session.user.id), product_id, request)
+        .await
+    {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => product_error_response(error),
     }
@@ -87,6 +97,7 @@ pub async fn update_product(
 
 pub async fn disable_product(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let product_id = match path {
@@ -94,7 +105,11 @@ pub async fn disable_product(
         Err(error) => return validation_error_response("invalid product_id path parameter", error),
     };
 
-    match state.products.disable_product(product_id).await {
+    match state
+        .products
+        .disable_product_as(Some(current_session.user.id), product_id)
+        .await
+    {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => product_error_response(error),
     }
@@ -102,6 +117,7 @@ pub async fn disable_product(
 
 pub async fn delete_product(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let product_id = match path {
@@ -109,7 +125,11 @@ pub async fn delete_product(
         Err(error) => return validation_error_response("invalid product_id path parameter", error),
     };
 
-    match state.products.delete_product(product_id).await {
+    match state
+        .products
+        .delete_product_as(Some(current_session.user.id), product_id)
+        .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => product_error_response(error),
     }

@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait,
+    PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use tracing::{debug, info};
 use uuid::Uuid;
@@ -46,6 +46,16 @@ impl ProductCategoryRepository {
         category: NewProductCategory,
         now: DateTime<Utc>,
     ) -> Result<product_category::Model, RepositoryError> {
+        self.create_category_in(&self.db, category, now).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn, category), fields(category_name = %category.category_name, status = %category.status))]
+    pub async fn create_category_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        category: NewProductCategory,
+        now: DateTime<Utc>,
+    ) -> Result<product_category::Model, RepositoryError> {
         validate_required("category_name", &category.category_name)?;
         validate_required("status", &category.status)?;
 
@@ -57,7 +67,7 @@ impl ProductCategoryRepository {
             created_at: Set(now),
             updated_at: Set(now),
         }
-        .insert(&self.db)
+        .insert(conn)
         .await?;
 
         info!(category_id = %category.id, "created product category");
@@ -158,6 +168,18 @@ impl ProductCategoryRepository {
         changes: ProductCategoryChanges,
         now: DateTime<Utc>,
     ) -> Result<product_category::Model, RepositoryError> {
+        self.update_category_in(&self.db, category, changes, now)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn, category, changes), fields(category_id = %category.id))]
+    pub async fn update_category_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        category: &product_category::Model,
+        changes: ProductCategoryChanges,
+        now: DateTime<Utc>,
+    ) -> Result<product_category::Model, RepositoryError> {
         let mut active: product_category::ActiveModel = category.clone().into();
 
         if let Some(category_name) = changes.category_name {
@@ -173,7 +195,7 @@ impl ProductCategoryRepository {
         }
         active.updated_at = Set(now);
 
-        let category = active.update(&self.db).await?;
+        let category = active.update(conn).await?;
         info!(category_id = %category.id, "updated product category");
         Ok(category)
     }
@@ -185,12 +207,23 @@ impl ProductCategoryRepository {
         status: &str,
         now: DateTime<Utc>,
     ) -> Result<product_category::Model, RepositoryError> {
+        self.update_status_in(&self.db, category, status, now).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn), fields(category_id = %category.id, status = %status))]
+    pub async fn update_status_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        category: &product_category::Model,
+        status: &str,
+        now: DateTime<Utc>,
+    ) -> Result<product_category::Model, RepositoryError> {
         validate_required("status", status)?;
 
         let mut active: product_category::ActiveModel = category.clone().into();
         active.status = Set(status.trim().to_string());
         active.updated_at = Set(now);
-        let category = active.update(&self.db).await?;
+        let category = active.update(conn).await?;
 
         info!(category_id = %category.id, status = %category.status, "updated product category status");
         Ok(category)
@@ -198,8 +231,17 @@ impl ProductCategoryRepository {
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn delete_by_id(&self, category_id: Uuid) -> Result<bool, RepositoryError> {
+        self.delete_by_id_in(&self.db, category_id).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn))]
+    pub async fn delete_by_id_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        category_id: Uuid,
+    ) -> Result<bool, RepositoryError> {
         let result = product_category::Entity::delete_by_id(category_id)
-            .exec(&self.db)
+            .exec(conn)
             .await?;
         let deleted = result.rows_affected > 0;
 
