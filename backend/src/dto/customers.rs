@@ -21,7 +21,6 @@ pub struct CustomerResponse {
     pub id: Uuid,
     pub name: String,
     pub creator_user_id: Uuid,
-    pub department_id: Uuid,
     pub system_id: Uuid,
     pub store_id: Uuid,
     pub remark: Option<String>,
@@ -45,7 +44,6 @@ impl From<customers::Model> for CustomerResponse {
             id: customer.id,
             name: customer.name,
             creator_user_id: customer.creator_user_id,
-            department_id: customer.department_id,
             system_id: customer.system_id,
             store_id: customer.store_id,
             remark: customer.remark,
@@ -60,7 +58,6 @@ impl From<customers::Model> for CustomerResponse {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ListCustomersQuery {
     pub status_filter: Option<String>,
-    pub department_id: Option<Uuid>,
     pub system_id: Option<Uuid>,
     pub store_id: Option<Uuid>,
     pub creator_user_id: Option<Uuid>,
@@ -73,8 +70,6 @@ pub struct ListCustomersQuery {
 #[serde(deny_unknown_fields)]
 pub struct CreateCustomerRequest {
     pub name: String,
-    #[serde(default)]
-    pub department_id: Option<Uuid>,
     #[serde(default)]
     pub system_id: Option<Uuid>,
     pub store_id: Uuid,
@@ -91,8 +86,6 @@ pub struct CreateCustomerRequest {
 pub struct UpdateCustomerRequest {
     #[serde(default)]
     pub name: PatchField<String>,
-    #[serde(default)]
-    pub department_id: PatchField<Uuid>,
     #[serde(default)]
     pub system_id: PatchField<Uuid>,
     #[serde(default)]

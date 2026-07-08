@@ -164,7 +164,7 @@ fn status_code(error: &SystemError) -> StatusCode {
             RepositoryError::MissingRequiredField { .. } => StatusCode::BAD_REQUEST,
             RepositoryError::DisabledUser => StatusCode::FORBIDDEN,
         },
-        SystemError::SystemNotFound | SystemError::DepartmentNotFound => StatusCode::NOT_FOUND,
+        SystemError::SystemNotFound => StatusCode::NOT_FOUND,
         SystemError::SystemHasStores => StatusCode::CONFLICT,
         SystemError::MissingRequiredField { .. }
         | SystemError::FieldTooLong { .. }
@@ -184,7 +184,6 @@ mod tests {
         repositories::{
             authz::AuthzRepository,
             customers::CustomerRepository,
-            departments::DepartmentRepository,
             events::EventRepository,
             product_categories::ProductCategoryRepository,
             products::ProductRepository,
@@ -217,7 +216,6 @@ mod tests {
         app: Router,
         users: UserRepository,
         authz: AuthzService,
-        departments: DepartmentRepository,
         stores: StoreRepository,
     }
 
@@ -278,7 +276,6 @@ mod tests {
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        let department_id = create_department(&context, "dept-a").await;
         grant(&context, user_id, "systems", "read").await;
 
         let read_response = context
@@ -300,7 +297,7 @@ mod tests {
                 Method::POST,
                 "/api/v1/systems/create",
                 Some(&cookie),
-                Some(json!({"name": "system-a", "department_id": department_id})),
+                Some(json!({"name": "system-a"})),
             ))
             .await
             .expect("system create request should be handled");
@@ -313,8 +310,6 @@ mod tests {
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        let department_a = create_department(&context, "dept-a").await;
-        let department_b = create_department(&context, "dept-b").await;
         grant(&context, user_id, "systems", "read").await;
         grant(&context, user_id, "systems", "write").await;
 
@@ -326,8 +321,7 @@ mod tests {
                 "/api/v1/systems/create",
                 Some(&cookie),
                 Some(json!({
-                    "name": "system-a",
-                    "department_id": department_a
+                    "name": "system-a"
                 })),
             ))
             .await
@@ -338,10 +332,7 @@ mod tests {
             created.pointer("/name").and_then(Value::as_str),
             Some("system-a")
         );
-        assert_eq!(
-            created.pointer("/department_id").and_then(Value::as_str),
-            Some(department_a.to_string().as_str())
-        );
+        assert!(created.pointer("/department_id").is_none());
         assert_eq!(
             created.pointer("/status").and_then(Value::as_str),
             Some("active")
@@ -357,9 +348,7 @@ mod tests {
             .clone()
             .oneshot(request(
                 Method::GET,
-                &format!(
-                    "/api/v1/systems/list?status_filter=active&department_id={department_a}&page_number=1&page_size=20"
-                ),
+                "/api/v1/systems/list?status_filter=active&page_number=1&page_size=20",
                 Some(&cookie),
                 None,
             ))
@@ -384,8 +373,7 @@ mod tests {
                 &format!("/api/v1/systems/update/{system_id}"),
                 Some(&cookie),
                 Some(json!({
-                    "name": "system-b",
-                    "department_id": department_b
+                    "name": "system-b"
                 })),
             ))
             .await
@@ -396,10 +384,7 @@ mod tests {
             updated.pointer("/name").and_then(Value::as_str),
             Some("system-b")
         );
-        assert_eq!(
-            updated.pointer("/department_id").and_then(Value::as_str),
-            Some(department_b.to_string().as_str())
-        );
+        assert!(updated.pointer("/department_id").is_none());
 
         let disable_response = context
             .app
@@ -451,7 +436,6 @@ mod tests {
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        let department_id = create_department(&context, "dept-a").await;
         grant(&context, user_id, "systems", "write").await;
 
         let system = context
@@ -462,8 +446,7 @@ mod tests {
                 "/api/v1/systems/create",
                 Some(&cookie),
                 Some(json!({
-                    "name": "system-a",
-                    "department_id": department_id
+                    "name": "system-a"
                 })),
             ))
             .await
@@ -512,13 +495,13 @@ mod tests {
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        let department_id = create_department(&context, "dept-a").await;
         grant(&context, user_id, "systems", "read").await;
         grant(&context, user_id, "systems", "write").await;
 
         for body in [
-            json!({"name": "", "department_id": department_id}),
-            json!({"name": "system-a", "department_id": department_id, "status": "deleted"}),
+            json!({"name": ""}),
+            json!({"name": "system-a", "status": "deleted"}),
+            json!({"name": "system-a", "department_id": Uuid::new_v4()}),
         ] {
             let response = context
                 .app
@@ -534,19 +517,6 @@ mod tests {
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         }
 
-        let missing_department = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::POST,
-                "/api/v1/systems/create",
-                Some(&cookie),
-                Some(json!({"name": "system-a", "department_id": Uuid::new_v4()})),
-            ))
-            .await
-            .expect("system create request should be handled");
-        assert_eq!(missing_department.status(), StatusCode::NOT_FOUND);
-
         let invalid_status_query = context
             .app
             .clone()
@@ -559,19 +529,6 @@ mod tests {
             .await
             .expect("systems list request should be handled");
         assert_eq!(invalid_status_query.status(), StatusCode::BAD_REQUEST);
-
-        let invalid_department_query = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::GET,
-                "/api/v1/systems/list?department_id=not-a-uuid",
-                Some(&cookie),
-                None,
-            ))
-            .await
-            .expect("systems list request should be handled");
-        assert_eq!(invalid_department_query.status(), StatusCode::BAD_REQUEST);
 
         let invalid_id = context
             .app
@@ -613,7 +570,6 @@ mod tests {
         let sessions = SessionRepository::new(db.clone());
         let product_categories = ProductCategoryRepository::new(db.clone());
         let products = ProductRepository::new(db.clone());
-        let departments = DepartmentRepository::new(db.clone());
         let systems = SystemRepository::new(db.clone());
         let stores = StoreRepository::new(db.clone());
         let customers = CustomerRepository::new(db.clone());
@@ -648,18 +604,12 @@ mod tests {
             ProductCategoryService::new(product_categories.clone(), products.clone());
         let products_service = ProductService::new(products, product_categories.clone());
         let stores_service = StoreService::new(stores.clone(), systems.clone());
-        let systems_service =
-            SystemService::new(systems.clone(), departments.clone(), stores.clone());
-        let customers_service = CustomerService::new(
-            customers.clone(),
-            departments.clone(),
-            systems.clone(),
-            stores.clone(),
-        );
+        let systems_service = SystemService::new(systems.clone(), stores.clone());
+        let customers_service =
+            CustomerService::new(customers.clone(), systems.clone(), stores.clone());
         let sales_records_service = SalesRecordService::new(
             sales_records,
             customers.clone(),
-            departments.clone(),
             systems.clone(),
             stores.clone(),
             product_categories.clone(),
@@ -694,7 +644,6 @@ mod tests {
             app: app::router(state),
             users,
             authz,
-            departments,
             stores,
         }
     }
@@ -776,22 +725,6 @@ mod tests {
             .await
             .expect("user lookup should work")
             .expect("logged in user should exist")
-            .id
-    }
-
-    async fn create_department(context: &TestContext, name: &str) -> Uuid {
-        context
-            .departments
-            .insert_department(
-                Uuid::new_v4(),
-                "manual",
-                name,
-                name,
-                None,
-                chrono::Utc::now(),
-            )
-            .await
-            .expect("department should be created")
             .id
     }
 

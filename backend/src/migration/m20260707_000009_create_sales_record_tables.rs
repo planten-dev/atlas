@@ -19,7 +19,6 @@ impl MigrationTrait for Migration {
                     )
                     .col(ColumnDef::new(SalesRecords::RecordGroupId).uuid())
                     .col(ColumnDef::new(SalesRecords::CustomerId).uuid().not_null())
-                    .col(ColumnDef::new(SalesRecords::DepartmentId).uuid().not_null())
                     .col(ColumnDef::new(SalesRecords::SaleDate).date().not_null())
                     .col(
                         ColumnDef::new(SalesRecords::DealStatus)
@@ -66,9 +65,7 @@ impl MigrationTrait for Migration {
                             .not_null(),
                     )
                     .col(ColumnDef::new(SalesRecords::ExpertUserId).uuid())
-                    .col(ColumnDef::new(SalesRecords::ExpertDepartmentId).uuid())
                     .col(ColumnDef::new(SalesRecords::ConsultantUserId).uuid())
-                    .col(ColumnDef::new(SalesRecords::ConsultantDepartmentId).uuid())
                     .col(ColumnDef::new(SalesRecords::DoctorUserId).uuid())
                     .col(
                         ColumnDef::new(SalesRecords::Status)
@@ -91,12 +88,6 @@ impl MigrationTrait for Migration {
                             .name("fk_sales_records_customer_id")
                             .from(SalesRecords::Table, SalesRecords::CustomerId)
                             .to(Customers::Table, Customers::Id),
-                    )
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk_sales_records_department_id")
-                            .from(SalesRecords::Table, SalesRecords::DepartmentId)
-                            .to(Departments::Table, Departments::Id),
                     )
                     .foreign_key(
                         ForeignKey::create()
@@ -130,21 +121,9 @@ impl MigrationTrait for Migration {
                     )
                     .foreign_key(
                         ForeignKey::create()
-                            .name("fk_sales_records_expert_department_id")
-                            .from(SalesRecords::Table, SalesRecords::ExpertDepartmentId)
-                            .to(Departments::Table, Departments::Id),
-                    )
-                    .foreign_key(
-                        ForeignKey::create()
                             .name("fk_sales_records_consultant_user_id")
                             .from(SalesRecords::Table, SalesRecords::ConsultantUserId)
                             .to(Users::Table, Users::Id),
-                    )
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk_sales_records_consultant_department_id")
-                            .from(SalesRecords::Table, SalesRecords::ConsultantDepartmentId)
-                            .to(Departments::Table, Departments::Id),
                     )
                     .foreign_key(
                         ForeignKey::create()
@@ -325,11 +304,6 @@ impl MigrationTrait for Migration {
                 SalesRecords::CustomerId.into_iden(),
             ),
             (
-                "idx_sales_records_department_id",
-                SalesRecords::Table.into_iden(),
-                SalesRecords::DepartmentId.into_iden(),
-            ),
-            (
                 "idx_sales_records_system_id",
                 SalesRecords::Table.into_iden(),
                 SalesRecords::SystemId.into_iden(),
@@ -426,7 +400,6 @@ enum SalesRecords {
     Id,
     RecordGroupId,
     CustomerId,
-    DepartmentId,
     SaleDate,
     DealStatus,
     CustomerType,
@@ -439,9 +412,7 @@ enum SalesRecords {
     StoreId,
     CollaborationType,
     ExpertUserId,
-    ExpertDepartmentId,
     ConsultantUserId,
-    ConsultantDepartmentId,
     DoctorUserId,
     Status,
     CreatedAt,
@@ -476,12 +447,6 @@ enum SalesRecordOperationUsages {
 
 #[derive(DeriveIden)]
 enum Customers {
-    Table,
-    Id,
-}
-
-#[derive(DeriveIden)]
-enum Departments {
     Table,
     Id,
 }

@@ -17,7 +17,6 @@ pub struct CustomerRepository {
 pub struct NewCustomer {
     pub name: String,
     pub creator_user_id: Uuid,
-    pub department_id: Uuid,
     pub system_id: Uuid,
     pub store_id: Uuid,
     pub remark: Option<String>,
@@ -28,7 +27,6 @@ pub struct NewCustomer {
 #[derive(Debug, Clone, Default)]
 pub struct CustomerChanges {
     pub name: Option<String>,
-    pub department_id: Option<Uuid>,
     pub system_id: Option<Uuid>,
     pub store_id: Option<Uuid>,
     pub remark: Option<Option<String>>,
@@ -39,7 +37,6 @@ pub struct CustomerChanges {
 impl CustomerChanges {
     pub fn is_empty(&self) -> bool {
         self.name.is_none()
-            && self.department_id.is_none()
             && self.system_id.is_none()
             && self.store_id.is_none()
             && self.remark.is_none()
@@ -51,7 +48,6 @@ impl CustomerChanges {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CustomerFilters<'a> {
     pub status_filter: Option<&'a str>,
-    pub department_id: Option<Uuid>,
     pub system_id: Option<Uuid>,
     pub store_id: Option<Uuid>,
     pub creator_user_id: Option<Uuid>,
@@ -69,7 +65,6 @@ impl CustomerRepository {
         fields(
             name = %customer.name,
             creator_user_id = %customer.creator_user_id,
-            department_id = %customer.department_id,
             system_id = %customer.system_id,
             store_id = %customer.store_id,
             status = %customer.status
@@ -87,7 +82,6 @@ impl CustomerRepository {
             id: Set(Uuid::new_v4()),
             name: Set(customer.name),
             creator_user_id: Set(customer.creator_user_id),
-            department_id: Set(customer.department_id),
             system_id: Set(customer.system_id),
             store_id: Set(customer.store_id),
             remark: Set(customer.remark),
@@ -131,9 +125,6 @@ impl CustomerRepository {
             validate_required("status_filter", status_filter)?;
             query = query.filter(customers::Column::Status.eq(status_filter.trim()));
         }
-        if let Some(department_id) = filters.department_id {
-            query = query.filter(customers::Column::DepartmentId.eq(department_id));
-        }
         if let Some(system_id) = filters.system_id {
             query = query.filter(customers::Column::SystemId.eq(system_id));
         }
@@ -171,9 +162,6 @@ impl CustomerRepository {
         if let Some(name) = changes.name {
             validate_required("name", &name)?;
             active.name = Set(name);
-        }
-        if let Some(department_id) = changes.department_id {
-            active.department_id = Set(department_id);
         }
         if let Some(system_id) = changes.system_id {
             active.system_id = Set(system_id);
@@ -243,7 +231,6 @@ mod tests {
         config::{DatabaseConfig, DatabaseKind},
         db,
         repositories::{
-            departments::DepartmentRepository,
             stores::{NewStore, StoreRepository},
             systems::{NewSystem, SystemRepository},
             users::UserRepository,
@@ -262,7 +249,6 @@ mod tests {
 
     async fn test_repositories() -> (
         UserRepository,
-        DepartmentRepository,
         SystemRepository,
         StoreRepository,
         CustomerRepository,
@@ -272,7 +258,6 @@ mod tests {
             .expect("sqlite memory database should initialize");
         (
             UserRepository::new(db.clone()),
-            DepartmentRepository::new(db.clone()),
             SystemRepository::new(db.clone()),
             StoreRepository::new(db.clone()),
             CustomerRepository::new(db),
@@ -281,25 +266,19 @@ mod tests {
 
     async fn scope(
         users: &UserRepository,
-        departments: &DepartmentRepository,
         systems: &SystemRepository,
         stores: &StoreRepository,
         name: &str,
-    ) -> (Uuid, Uuid, Uuid, Uuid) {
+    ) -> (Uuid, Uuid, Uuid) {
         let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
         let user = users
             .find_or_create_for_login(&format!("{name}-user"), now)
             .await
             .expect("user should be created");
-        let department = departments
-            .insert_department(Uuid::new_v4(), "manual", name, name, None, now)
-            .await
-            .expect("department should be created");
         let system = systems
             .create_system(
                 NewSystem {
                     name: name.to_string(),
-                    department_id: department.id,
                     status: "active".to_string(),
                 },
                 now,
@@ -318,20 +297,18 @@ mod tests {
             .await
             .expect("store should be created");
 
-        (user.id, department.id, system.id, store.id)
+        (user.id, system.id, store.id)
     }
 
     fn new_customer(
         name: &str,
         creator_user_id: Uuid,
-        department_id: Uuid,
         system_id: Uuid,
         store_id: Uuid,
     ) -> NewCustomer {
         NewCustomer {
             name: name.to_string(),
             creator_user_id,
-            department_id,
             system_id,
             store_id,
             remark: Some("remark".to_string()),
@@ -342,25 +319,20 @@ mod tests {
 
     #[tokio::test]
     async fn creates_finds_and_lists_customers() {
-        let (users, departments, systems, stores, customers) = test_repositories().await;
-        let (user_a, department_a, system_a, store_a) =
-            scope(&users, &departments, &systems, &stores, "scope-a").await;
-        let (user_b, department_b, system_b, store_b) =
-            scope(&users, &departments, &systems, &stores, "scope-b").await;
+        let (users, systems, stores, customers) = test_repositories().await;
+        let (user_a, system_a, store_a) = scope(&users, &systems, &stores, "scope-a").await;
+        let (user_b, system_b, store_b) = scope(&users, &systems, &stores, "scope-b").await;
         let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
 
         let active = customers
-            .create_customer(
-                new_customer("Alice", user_a, department_a, system_a, store_a),
-                now,
-            )
+            .create_customer(new_customer("Alice", user_a, system_a, store_a), now)
             .await
             .expect("active customer should be created");
         customers
             .create_customer(
                 NewCustomer {
                     status: "disabled".to_string(),
-                    ..new_customer("Bob", user_b, department_b, system_b, store_b)
+                    ..new_customer("Bob", user_b, system_b, store_b)
                 },
                 now,
             )
@@ -379,7 +351,6 @@ mod tests {
             .list_customers(
                 CustomerFilters {
                     status_filter: Some("active"),
-                    department_id: Some(department_a),
                     system_id: Some(system_a),
                     store_id: Some(store_a),
                     creator_user_id: Some(user_a),
@@ -410,18 +381,13 @@ mod tests {
 
     #[tokio::test]
     async fn updates_clears_disables_and_deletes_customer() {
-        let (users, departments, systems, stores, customers) = test_repositories().await;
-        let (user_a, department_a, system_a, store_a) =
-            scope(&users, &departments, &systems, &stores, "scope-a").await;
-        let (_, department_b, system_b, store_b) =
-            scope(&users, &departments, &systems, &stores, "scope-b").await;
+        let (users, systems, stores, customers) = test_repositories().await;
+        let (user_a, system_a, store_a) = scope(&users, &systems, &stores, "scope-a").await;
+        let (_, system_b, store_b) = scope(&users, &systems, &stores, "scope-b").await;
         let created_at = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
         let updated_at = Utc.with_ymd_and_hms(2026, 7, 7, 1, 0, 0).unwrap();
         let customer = customers
-            .create_customer(
-                new_customer("Alice", user_a, department_a, system_a, store_a),
-                created_at,
-            )
+            .create_customer(new_customer("Alice", user_a, system_a, store_a), created_at)
             .await
             .expect("customer should be created");
 
@@ -430,7 +396,6 @@ mod tests {
                 &customer,
                 CustomerChanges {
                     name: Some("Alice Updated".to_string()),
-                    department_id: Some(department_b),
                     system_id: Some(system_b),
                     store_id: Some(store_b),
                     remark: Some(None),
@@ -443,7 +408,6 @@ mod tests {
             .expect("customer should update");
 
         assert_eq!(updated.name, "Alice Updated");
-        assert_eq!(updated.department_id, department_b);
         assert_eq!(updated.system_id, system_b);
         assert_eq!(updated.store_id, store_b);
         assert_eq!(updated.remark, None);
@@ -473,17 +437,13 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_required_fields_and_missing_foreign_keys() {
-        let (users, departments, systems, stores, customers) = test_repositories().await;
-        let (user_id, department_id, system_id, store_id) =
-            scope(&users, &departments, &systems, &stores, "scope-a").await;
+        let (users, systems, stores, customers) = test_repositories().await;
+        let (user_id, system_id, store_id) = scope(&users, &systems, &stores, "scope-a").await;
         let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
 
         assert!(matches!(
             customers
-                .create_customer(
-                    new_customer(" ", user_id, department_id, system_id, store_id),
-                    now
-                )
+                .create_customer(new_customer(" ", user_id, system_id, store_id), now)
                 .await,
             Err(RepositoryError::MissingRequiredField { field: "name" })
         ));
@@ -491,13 +451,7 @@ mod tests {
         assert!(
             customers
                 .create_customer(
-                    new_customer(
-                        "Missing User",
-                        Uuid::new_v4(),
-                        department_id,
-                        system_id,
-                        store_id
-                    ),
+                    new_customer("Missing User", Uuid::new_v4(), system_id, store_id),
                     now,
                 )
                 .await

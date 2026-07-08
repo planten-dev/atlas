@@ -13,7 +13,6 @@ impl MigrationTrait for Migration {
                     .if_not_exists()
                     .col(ColumnDef::new(Systems::Id).uuid().not_null().primary_key())
                     .col(ColumnDef::new(Systems::Name).string_len(128).not_null())
-                    .col(ColumnDef::new(Systems::DepartmentId).uuid().not_null())
                     .col(
                         ColumnDef::new(Systems::Status)
                             .string_len(32)
@@ -30,12 +29,6 @@ impl MigrationTrait for Migration {
                             .timestamp_with_time_zone()
                             .not_null(),
                     )
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk_systems_department_id")
-                            .from(Systems::Table, Systems::DepartmentId)
-                            .to(Departments::Table, Departments::Id),
-                    )
                     .check(Expr::col(Systems::Status).is_in(["active", "disabled"]))
                     .to_owned(),
             )
@@ -47,17 +40,6 @@ impl MigrationTrait for Migration {
                     .name("idx_systems_status")
                     .table(Systems::Table)
                     .col(Systems::Status)
-                    .if_not_exists()
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .create_index(
-                Index::create()
-                    .name("idx_systems_department_id")
-                    .table(Systems::Table)
-                    .col(Systems::DepartmentId)
                     .if_not_exists()
                     .to_owned(),
             )
@@ -91,14 +73,7 @@ enum Systems {
     Table,
     Id,
     Name,
-    DepartmentId,
     Status,
     CreatedAt,
     UpdatedAt,
-}
-
-#[derive(DeriveIden)]
-enum Departments {
-    Table,
-    Id,
 }

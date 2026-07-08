@@ -186,10 +186,7 @@ mod tests {
     use crate::{
         config::{DatabaseConfig, DatabaseKind},
         db,
-        repositories::{
-            departments::DepartmentRepository,
-            systems::{NewSystem, SystemRepository},
-        },
+        repositories::systems::{NewSystem, SystemRepository},
     };
     use chrono::TimeZone;
     use std::path::PathBuf;
@@ -202,32 +199,19 @@ mod tests {
         }
     }
 
-    async fn test_repositories() -> (DepartmentRepository, SystemRepository, StoreRepository) {
+    async fn test_repositories() -> (SystemRepository, StoreRepository) {
         let db = db::connect_and_migrate(&sqlite_memory_config())
             .await
             .expect("sqlite memory database should initialize");
-        (
-            DepartmentRepository::new(db.clone()),
-            SystemRepository::new(db.clone()),
-            StoreRepository::new(db),
-        )
+        (SystemRepository::new(db.clone()), StoreRepository::new(db))
     }
 
-    async fn system(
-        departments: &DepartmentRepository,
-        systems: &SystemRepository,
-        name: &str,
-    ) -> Uuid {
+    async fn system(systems: &SystemRepository, name: &str) -> Uuid {
         let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
-        let department = departments
-            .insert_department(Uuid::new_v4(), "manual", name, name, None, now)
-            .await
-            .expect("department should be created");
         systems
             .create_system(
                 NewSystem {
                     name: name.to_string(),
-                    department_id: department.id,
                     status: "active".to_string(),
                 },
                 now,
@@ -247,9 +231,9 @@ mod tests {
 
     #[tokio::test]
     async fn creates_finds_counts_and_lists_stores() {
-        let (departments, systems, stores) = test_repositories().await;
-        let system_a = system(&departments, &systems, "system-a").await;
-        let system_b = system(&departments, &systems, "system-b").await;
+        let (systems, stores) = test_repositories().await;
+        let system_a = system(&systems, "system-a").await;
+        let system_b = system(&systems, "system-b").await;
         let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
         let active = stores
             .create_store(new_store("active store", system_a, "active"), now)
@@ -293,9 +277,9 @@ mod tests {
 
     #[tokio::test]
     async fn updates_and_disables_store() {
-        let (departments, systems, stores) = test_repositories().await;
-        let system_a = system(&departments, &systems, "system-a").await;
-        let system_b = system(&departments, &systems, "system-b").await;
+        let (systems, stores) = test_repositories().await;
+        let system_a = system(&systems, "system-a").await;
+        let system_b = system(&systems, "system-b").await;
         let created_at = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
         let updated_at = Utc.with_ymd_and_hms(2026, 7, 7, 1, 0, 0).unwrap();
         let store = stores
@@ -331,8 +315,8 @@ mod tests {
 
     #[tokio::test]
     async fn deletes_store_by_id() {
-        let (departments, systems, stores) = test_repositories().await;
-        let system_id = system(&departments, &systems, "system-a").await;
+        let (systems, stores) = test_repositories().await;
+        let system_id = system(&systems, "system-a").await;
         let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
         let store = stores
             .create_store(new_store("delete me", system_id, "active"), now)
@@ -362,8 +346,8 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_required_fields_and_missing_system_fk() {
-        let (departments, systems, stores) = test_repositories().await;
-        let system_id = system(&departments, &systems, "system-a").await;
+        let (systems, stores) = test_repositories().await;
+        let system_id = system(&systems, "system-a").await;
         let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
 
         assert!(matches!(

@@ -7,7 +7,6 @@ pub struct Model {
     pub id: Uuid,
     pub name: String,
     pub creator_user_id: Uuid,
-    pub department_id: Uuid,
     pub system_id: Uuid,
     pub store_id: Uuid,
     pub remark: Option<String>,

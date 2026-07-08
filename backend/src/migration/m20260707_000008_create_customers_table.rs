@@ -19,7 +19,6 @@ impl MigrationTrait for Migration {
                     )
                     .col(ColumnDef::new(Customers::Name).string_len(128).not_null())
                     .col(ColumnDef::new(Customers::CreatorUserId).uuid().not_null())
-                    .col(ColumnDef::new(Customers::DepartmentId).uuid().not_null())
                     .col(ColumnDef::new(Customers::SystemId).uuid().not_null())
                     .col(ColumnDef::new(Customers::StoreId).uuid().not_null())
                     .col(ColumnDef::new(Customers::Remark).text())
@@ -48,12 +47,6 @@ impl MigrationTrait for Migration {
                     )
                     .foreign_key(
                         ForeignKey::create()
-                            .name("fk_customers_department_id")
-                            .from(Customers::Table, Customers::DepartmentId)
-                            .to(Departments::Table, Departments::Id),
-                    )
-                    .foreign_key(
-                        ForeignKey::create()
                             .name("fk_customers_system_id")
                             .from(Customers::Table, Customers::SystemId)
                             .to(Systems::Table, Systems::Id),
@@ -72,7 +65,6 @@ impl MigrationTrait for Migration {
         for (name, column) in [
             ("idx_customers_status", Customers::Status),
             ("idx_customers_creator_user_id", Customers::CreatorUserId),
-            ("idx_customers_department_id", Customers::DepartmentId),
             ("idx_customers_system_id", Customers::SystemId),
             ("idx_customers_store_id", Customers::StoreId),
             ("idx_customers_created_at", Customers::CreatedAt),
@@ -108,7 +100,6 @@ enum Customers {
     Id,
     Name,
     CreatorUserId,
-    DepartmentId,
     SystemId,
     StoreId,
     Remark,
@@ -120,12 +111,6 @@ enum Customers {
 
 #[derive(DeriveIden)]
 enum Users {
-    Table,
-    Id,
-}
-
-#[derive(DeriveIden)]
-enum Departments {
     Table,
     Id,
 }

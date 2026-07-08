@@ -2,11 +2,10 @@ use anyhow::{Context, Result};
 use backend::{
     app, config, db,
     repositories::{
-        authz::AuthzRepository, customers::CustomerRepository, departments::DepartmentRepository,
-        events::EventRepository, product_categories::ProductCategoryRepository,
-        products::ProductRepository, sales_records::SalesRecordRepository,
-        sessions::SessionRepository, stores::StoreRepository, systems::SystemRepository,
-        user_profiles::UserProfileRepository, users::UserRepository,
+        authz::AuthzRepository, customers::CustomerRepository, events::EventRepository,
+        product_categories::ProductCategoryRepository, products::ProductRepository,
+        sales_records::SalesRecordRepository, sessions::SessionRepository, stores::StoreRepository,
+        systems::SystemRepository, user_profiles::UserProfileRepository, users::UserRepository,
     },
     services::{
         auth::AuthService, authz::AuthzService, authz_catalog::PermissionCatalog,
@@ -43,7 +42,6 @@ async fn main() -> Result<()> {
     let sessions = SessionRepository::new(db.clone());
     let product_categories = ProductCategoryRepository::new(db.clone());
     let products = ProductRepository::new(db.clone());
-    let departments = DepartmentRepository::new(db.clone());
     let systems = SystemRepository::new(db.clone());
     let stores = StoreRepository::new(db.clone());
     let customers = CustomerRepository::new(db.clone());
@@ -78,17 +76,12 @@ async fn main() -> Result<()> {
         ProductCategoryService::new(product_categories.clone(), products.clone());
     let products = ProductService::new(products, product_categories.clone());
     let stores_service = StoreService::new(stores.clone(), systems.clone());
-    let systems_service = SystemService::new(systems.clone(), departments.clone(), stores.clone());
-    let customers_service = CustomerService::new(
-        customers.clone(),
-        departments.clone(),
-        systems.clone(),
-        stores.clone(),
-    );
+    let systems_service = SystemService::new(systems.clone(), stores.clone());
+    let customers_service =
+        CustomerService::new(customers.clone(), systems.clone(), stores.clone());
     let sales_records_service = SalesRecordService::new(
         sales_records,
         customers,
-        departments,
         systems,
         stores,
         product_categories,

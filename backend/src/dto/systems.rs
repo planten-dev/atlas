@@ -8,7 +8,6 @@ use crate::entities::systems;
 pub struct SystemResponse {
     pub id: Uuid,
     pub name: String,
-    pub department_id: Uuid,
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -27,7 +26,6 @@ impl From<systems::Model> for SystemResponse {
         Self {
             id: system.id,
             name: system.name,
-            department_id: system.department_id,
             status: system.status,
             created_at: system.created_at,
             updated_at: system.updated_at,
@@ -38,7 +36,6 @@ impl From<systems::Model> for SystemResponse {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ListSystemsQuery {
     pub status_filter: Option<String>,
-    pub department_id: Option<Uuid>,
     pub page_number: Option<u64>,
     pub page_size: Option<u64>,
 }
@@ -47,7 +44,6 @@ pub struct ListSystemsQuery {
 #[serde(deny_unknown_fields)]
 pub struct CreateSystemRequest {
     pub name: String,
-    pub department_id: Uuid,
     #[serde(default)]
     pub status: Option<String>,
 }
@@ -57,8 +53,6 @@ pub struct CreateSystemRequest {
 pub struct UpdateSystemRequest {
     #[serde(default)]
     pub name: PatchField<String>,
-    #[serde(default)]
-    pub department_id: PatchField<Uuid>,
     #[serde(default)]
     pub status: PatchField<String>,
 }
