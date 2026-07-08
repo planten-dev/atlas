@@ -163,7 +163,7 @@ fn load_from_sources(config_dir: &Path, cli: CliArgs) -> Result<AppConfig, Confi
 }
 
 fn default_config_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config")
+    PathBuf::from("config")
 }
 
 #[cfg(test)]
@@ -225,6 +225,11 @@ frontend_callback_url = ""
 ttl_seconds = 86400
 cookie_secure = false
 "#
+    }
+
+    #[test]
+    fn default_config_dir_uses_runtime_working_directory() {
+        assert_eq!(default_config_dir(), PathBuf::from("config"));
     }
 
     #[test]
