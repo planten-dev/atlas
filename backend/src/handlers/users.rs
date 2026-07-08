@@ -216,6 +216,7 @@ mod tests {
             events::{EventFilter, EventRepository},
             product_categories::ProductCategoryRepository,
             products::ProductRepository,
+            sales_records::SalesRecordRepository,
             sessions::{SessionRepository, hash_secret},
             stores::StoreRepository,
             systems::SystemRepository,
@@ -225,8 +226,8 @@ mod tests {
         services::{
             auth::AuthService, authz::AuthzService, customers::CustomerService,
             events::EventService, product_categories::ProductCategoryService,
-            products::ProductService, review::ApplierRegistry, stores::StoreService,
-            systems::SystemService, users::UserService,
+            products::ProductService, review::ApplierRegistry, sales_records::SalesRecordService,
+            stores::StoreService, systems::SystemService, users::UserService,
         },
     };
     use axum::{
@@ -1132,6 +1133,7 @@ mod tests {
         let systems = SystemRepository::new(db.clone());
         let stores = StoreRepository::new(db.clone());
         let customers = CustomerRepository::new(db.clone());
+        let sales_records = SalesRecordRepository::new(db.clone());
         let events = EventRepository::new(db.clone());
         let auth = AuthService::new(
             DingTalkConfig {
@@ -1161,11 +1163,25 @@ mod tests {
         let users_service = UserService::new(users.clone(), profiles.clone(), sessions.clone());
         let product_categories_service =
             ProductCategoryService::new(product_categories.clone(), products.clone());
-        let products_service = ProductService::new(products, product_categories);
+        let products_service = ProductService::new(products, product_categories.clone());
         let stores_service = StoreService::new(stores.clone(), systems.clone());
         let systems_service =
             SystemService::new(systems.clone(), departments.clone(), stores.clone());
-        let customers_service = CustomerService::new(customers, departments, systems, stores);
+        let customers_service = CustomerService::new(
+            customers.clone(),
+            departments.clone(),
+            systems.clone(),
+            stores.clone(),
+        );
+        let sales_records_service = SalesRecordService::new(
+            sales_records,
+            customers.clone(),
+            departments.clone(),
+            systems.clone(),
+            stores.clone(),
+            product_categories.clone(),
+            users.clone(),
+        );
         let events_service = EventService::new(
             events.clone(),
             authz.clone(),
@@ -1181,6 +1197,7 @@ mod tests {
             systems_service,
             stores_service,
             customers_service,
+            sales_records_service,
             events_service,
             AuthConfig {
                 frontend_callback_url: "".to_string(),

@@ -229,6 +229,99 @@ pub fn router(state: AppState) -> Router {
             ),
         )
         .route(
+            "/api/v1/sales-records/list",
+            get(handlers::sales_records::list_sales_records
+                .layer(require_permission(&state, "sales:records:read"))),
+        )
+        .route(
+            "/api/v1/sales-records/detail/{sales_record_id}",
+            get(handlers::sales_records::sales_record_detail
+                .layer(require_permission(&state, "sales:records:read"))),
+        )
+        .route(
+            "/api/v1/sales-records/create-batch",
+            post(
+                handlers::sales_records::create_sales_record_batch
+                    .layer(require_permission(&state, "sales:records:write")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-records/update/{sales_record_id}",
+            post(
+                handlers::sales_records::update_sales_record
+                    .layer(require_permission(&state, "sales:records:write")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-records/void/{sales_record_id}",
+            post(
+                handlers::sales_records::void_sales_record
+                    .layer(require_permission(&state, "sales:records:write")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-records/delete/{sales_record_id}",
+            post(
+                handlers::sales_records::delete_sales_record
+                    .layer(require_permission(&state, "sales:records:write")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-record-operation-counts/list",
+            get(handlers::sales_records::list_operation_counts
+                .layer(require_permission(&state, "sales:operation-counts:read"))),
+        )
+        .route(
+            "/api/v1/sales-record-operation-counts/detail/{sales_record_id}",
+            get(handlers::sales_records::operation_count_detail
+                .layer(require_permission(&state, "sales:operation-counts:read"))),
+        )
+        .route(
+            "/api/v1/sales-record-operation-counts/update/{sales_record_id}",
+            post(
+                handlers::sales_records::update_operation_count
+                    .layer(require_permission(&state, "sales:operation-counts:write")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-record-operation-usages/list",
+            get(handlers::sales_records::list_operation_usages
+                .layer(require_permission(&state, "sales:operation-usages:read"))),
+        )
+        .route(
+            "/api/v1/sales-record-operation-usages/detail/{usage_id}",
+            get(handlers::sales_records::operation_usage_detail
+                .layer(require_permission(&state, "sales:operation-usages:read"))),
+        )
+        .route(
+            "/api/v1/sales-record-operation-usages/create",
+            post(
+                handlers::sales_records::create_operation_usage
+                    .layer(require_permission(&state, "sales:operation-usages:write")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-record-operation-usages/update/{usage_id}",
+            post(
+                handlers::sales_records::update_operation_usage
+                    .layer(require_permission(&state, "sales:operation-usages:write")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-record-operation-usages/void/{usage_id}",
+            post(
+                handlers::sales_records::void_operation_usage
+                    .layer(require_permission(&state, "sales:operation-usages:write")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-record-operation-usages/delete/{usage_id}",
+            post(
+                handlers::sales_records::delete_operation_usage
+                    .layer(require_permission(&state, "sales:operation-usages:write")),
+            ),
+        )
+        .route(
             "/api/v1/permissions/roles",
             get(handlers::permissions::list_roles
                 .layer(require_permission(&state, "system:permissions:read")))

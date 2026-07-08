@@ -4,13 +4,15 @@ use backend::{
     repositories::{
         authz::AuthzRepository, customers::CustomerRepository, departments::DepartmentRepository,
         events::EventRepository, product_categories::ProductCategoryRepository,
-        products::ProductRepository, sessions::SessionRepository, stores::StoreRepository,
-        systems::SystemRepository, user_profiles::UserProfileRepository, users::UserRepository,
+        products::ProductRepository, sales_records::SalesRecordRepository,
+        sessions::SessionRepository, stores::StoreRepository, systems::SystemRepository,
+        user_profiles::UserProfileRepository, users::UserRepository,
     },
     services::{
         auth::AuthService, authz::AuthzService, customers::CustomerService, events::EventService,
         product_categories::ProductCategoryService, products::ProductService,
-        review::ApplierRegistry, stores::StoreService, systems::SystemService, users::UserService,
+        review::ApplierRegistry, sales_records::SalesRecordService, stores::StoreService,
+        systems::SystemService, users::UserService,
     },
     state::AppState,
 };
@@ -41,6 +43,7 @@ async fn main() -> Result<()> {
     let systems = SystemRepository::new(db.clone());
     let stores = StoreRepository::new(db.clone());
     let customers = CustomerRepository::new(db.clone());
+    let sales_records = SalesRecordRepository::new(db.clone());
     let auth = AuthService::new(
         config.dingtalk.clone(),
         users.clone(),
@@ -52,13 +55,27 @@ async fn main() -> Result<()> {
     let authz = AuthzService::new(AuthzRepository::new(db.clone()))
         .await
         .context("failed to initialize authorization service")?;
-    let users = UserService::new(users, profiles, sessions);
+    let users_service = UserService::new(users.clone(), profiles, sessions);
     let product_categories_service =
         ProductCategoryService::new(product_categories.clone(), products.clone());
-    let products = ProductService::new(products, product_categories);
+    let products = ProductService::new(products, product_categories.clone());
     let stores_service = StoreService::new(stores.clone(), systems.clone());
     let systems_service = SystemService::new(systems.clone(), departments.clone(), stores.clone());
-    let customers_service = CustomerService::new(customers, departments, systems, stores);
+    let customers_service = CustomerService::new(
+        customers.clone(),
+        departments.clone(),
+        systems.clone(),
+        stores.clone(),
+    );
+    let sales_records_service = SalesRecordService::new(
+        sales_records,
+        customers,
+        departments,
+        systems,
+        stores,
+        product_categories,
+        users.clone(),
+    );
 
     // Business tables opt into the review flow here as they adopt it, e.g.:
     // registry.register::<ProductDoc>();
@@ -77,12 +94,13 @@ async fn main() -> Result<()> {
     let app = app::router(AppState::new(
         auth,
         authz,
-        users,
+        users_service,
         product_categories_service,
         products,
         systems_service,
         stores_service,
         customers_service,
+        sales_records_service,
         events,
         config.auth.clone(),
         config.session.clone(),
