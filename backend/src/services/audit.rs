@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use sea_orm::{ConnectionTrait, DatabaseTransaction};
 use serde_json::Value;
+use tracing::debug;
 use uuid::Uuid;
 
 use crate::{
@@ -107,6 +108,11 @@ impl AuditService {
         event: AuditEvent,
         now: DateTime<Utc>,
     ) -> Result<(), RepositoryError> {
+        let resource_type = event.resource_type;
+        let resource_id = event.resource_id;
+        let actor_user_id = event.actor_user_id;
+        let event_type = event.event_type;
+
         self.events
             .insert_event(
                 conn,
@@ -125,6 +131,13 @@ impl AuditService {
                 now,
             )
             .await?;
+        debug!(
+            resource_type,
+            resource_id = ?resource_id,
+            actor_user_id = ?actor_user_id,
+            event_type = ?event_type,
+            "recorded audit event"
+        );
         Ok(())
     }
 }

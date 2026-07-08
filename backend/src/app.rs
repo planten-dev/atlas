@@ -1,13 +1,13 @@
 use axum::{
     Router,
     handler::Handler,
-    middleware::from_fn_with_state,
+    middleware::{from_fn, from_fn_with_state},
     routing::{delete, get, post, put},
 };
 
 use crate::{
     handlers,
-    middleware::{auth::require_auth, authz::require_permission},
+    middleware::{auth::require_auth, authz::require_permission, request_log::log_request},
     state::AppState,
 };
 
@@ -393,4 +393,5 @@ pub fn router(state: AppState) -> Router {
         )
         .merge(authenticated_routes)
         .with_state(state)
+        .layer(from_fn(log_request))
 }

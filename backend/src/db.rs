@@ -5,7 +5,7 @@ use sea_orm::{
     Statement,
 };
 use sea_orm_migration::MigratorTrait;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use crate::{
     config::{DatabaseConfig, DatabaseKind},
@@ -18,17 +18,48 @@ pub async fn connect_and_migrate(config: &DatabaseConfig) -> Result<DatabaseConn
         "initializing database connection"
     );
     let db = connect(config).await?;
-    Migrator::up(&db, None).await?;
+    if let Err(error) = Migrator::up(&db, None).await {
+        error!(
+            database_kind = %config.kind.as_config_value(),
+            %error,
+            "database migration failed"
+        );
+        return Err(error);
+    }
     info!("database migrations are up to date");
     Ok(db)
 }
 
 pub async fn connect(config: &DatabaseConfig) -> Result<DatabaseConnection, DbErr> {
-    ensure_sqlite_file_parent(config)?;
+    if let Err(error) = ensure_sqlite_file_parent(config) {
+        error!(
+            database_kind = %config.kind.as_config_value(),
+            %error,
+            "failed to prepare database storage"
+        );
+        return Err(error);
+    }
     let mut options = ConnectOptions::new(database_url(config));
     options.sqlx_logging(false);
-    let db = Database::connect(options).await?;
-    enable_sqlite_foreign_keys(config, &db).await?;
+    let db = match Database::connect(options).await {
+        Ok(db) => db,
+        Err(error) => {
+            error!(
+                database_kind = %config.kind.as_config_value(),
+                %error,
+                "database connection failed"
+            );
+            return Err(error);
+        }
+    };
+    if let Err(error) = enable_sqlite_foreign_keys(config, &db).await {
+        error!(
+            database_kind = %config.kind.as_config_value(),
+            %error,
+            "failed to enable sqlite foreign keys"
+        );
+        return Err(error);
+    }
     debug!("database connection established");
     Ok(db)
 }
