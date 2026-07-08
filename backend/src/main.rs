@@ -18,17 +18,20 @@ use backend::{
     state::AppState,
 };
 use chrono::Utc;
-use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
+use std::{future::Future, net::SocketAddr, path::Path, sync::Arc, time::Duration};
 use tracing::{debug, error, info, warn};
-use tracing_subscriber::EnvFilter;
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    init_tracing();
     let config = config::load().context("failed to load application config")?;
+    let _log_guard = init_tracing(&config.logging).context("failed to initialize logging")?;
     info!(
         bind_addr = %config.server.bind_addr,
         database_kind = %config.database.kind.as_config_value(),
+        log_directory = %config.logging.directory.display(),
+        log_file_prefix = %config.logging.file_prefix,
         "loaded application config"
     );
 
@@ -242,21 +245,42 @@ where
     }
 }
 
-fn init_tracing() {
+fn init_tracing(logging: &config::LoggingConfig) -> Result<WorkerGuard> {
+    ensure_log_directory(&logging.directory)?;
+
     let filter = EnvFilter::try_from_env("ATLAS_LOG")
         .or_else(|_| EnvFilter::try_from_default_env())
         .unwrap_or_else(|_| EnvFilter::new("backend=info,tower_http=warn,sea_orm=warn"));
-
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
+    let file_appender = tracing_appender::rolling::daily(&logging.directory, &logging.file_prefix);
+    let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
+    let stdout_layer = tracing_subscriber::fmt::layer().compact();
+    let file_layer = tracing_subscriber::fmt::layer()
         .compact()
+        .with_ansi(false)
+        .with_writer(file_writer);
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(stdout_layer)
+        .with(file_layer)
         .init();
+
+    Ok(guard)
+}
+
+fn ensure_log_directory(directory: &Path) -> Result<()> {
+    std::fs::create_dir_all(directory)
+        .with_context(|| format!("failed to create log directory `{}`", directory.display()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::future::{pending, ready};
+    use std::{
+        fs,
+        future::{pending, ready},
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[tokio::test]
     async fn selects_ctrl_c_when_ctrl_c_completes_first() {
@@ -270,5 +294,37 @@ mod tests {
         let signal = select_shutdown_signal(pending::<()>(), Some(ready(()))).await;
 
         assert_eq!(signal, ShutdownSignal::Sigterm);
+    }
+
+    #[test]
+    fn creates_missing_log_directory() {
+        let dir = temp_path("log-dir");
+
+        ensure_log_directory(&dir).expect("log directory should be created");
+
+        assert!(dir.is_dir());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn reports_log_directory_creation_error() {
+        let root = temp_path("log-parent-file");
+        fs::create_dir_all(&root).expect("test root should be created");
+        let file_parent = root.join("not-a-directory");
+        fs::write(&file_parent, "not a directory").expect("test file should be written");
+
+        let error = ensure_log_directory(&file_parent.join("child"))
+            .expect_err("file parent should prevent directory creation");
+
+        assert!(error.to_string().contains("failed to create log directory"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn temp_path(prefix: &str) -> std::path::PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be available")
+            .as_nanos();
+        std::env::temp_dir().join(format!("atlas-{prefix}-{}-{unique}", std::process::id()))
     }
 }
