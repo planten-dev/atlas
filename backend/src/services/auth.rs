@@ -267,6 +267,7 @@ impl AuthService {
                     event_type: EventType::Update,
                     approval_status: ApprovalStatus::None,
                     required_approval_count: None,
+                    custom_type: None,
                     target_event_id: None,
                     old_value: Some(profile_audit_value(
                         user_id,
@@ -281,6 +282,9 @@ impl AuthService {
                         Some(updated_fields),
                     )),
                     remark: Some("dingtalk_profile_sync".to_string()),
+                    // Audit-only events are final from creation; setting
+                    // updated_at makes the retention sweeper clean them up.
+                    updated_at: Some(now),
                 },
                 now,
             )

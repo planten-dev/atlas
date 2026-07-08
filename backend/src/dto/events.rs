@@ -11,11 +11,13 @@ pub struct EventResponse {
     pub resource_type: String,
     pub resource_id: Option<Uuid>,
     pub actor_user_id: Option<Uuid>,
-    /// 0 create, 1 update, 2 delete, 3 approve, 4 reject
+    /// 0 create, 1 update, 2 delete, 3 approve, 4 reject, 5 custom
     pub event_type: i16,
     /// 0 none, 1 pending, 2 approved, 3 rejected
     pub approval_status: i16,
     pub required_approval_count: Option<i16>,
+    /// Caller-defined kind name; only present when event_type is 5.
+    pub custom_type: Option<String>,
     pub target_event_id: Option<Uuid>,
     pub old_value: Option<serde_json::Value>,
     pub new_value: Option<serde_json::Value>,
@@ -34,6 +36,7 @@ impl From<events::Model> for EventResponse {
             event_type: event.event_type.into_value(),
             approval_status: event.approval_status.into_value(),
             required_approval_count: event.required_approval_count,
+            custom_type: event.custom_type,
             target_event_id: event.target_event_id,
             old_value: event.old_value,
             new_value: event.new_value,
@@ -55,6 +58,8 @@ pub struct ListEventsQuery {
     pub event_type: Option<i16>,
     #[serde(default)]
     pub approval_status: Option<i16>,
+    #[serde(default)]
+    pub custom_type: Option<String>,
     #[serde(default)]
     pub target_event_id: Option<Uuid>,
     #[serde(default)]

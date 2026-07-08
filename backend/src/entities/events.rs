@@ -13,6 +13,11 @@ pub enum EventType {
     Approve,
     #[sea_orm(num_value = 4)]
     Reject,
+    /// A caller-defined audit event; the kind is named by the row's
+    /// `custom_type` column (the DB enum stores plain SMALLINT, so the
+    /// variant itself cannot carry the string).
+    #[sea_orm(num_value = 5)]
+    Custom,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter, DeriveActiveEnum)]
@@ -39,6 +44,7 @@ pub struct Model {
     pub event_type: EventType,
     pub approval_status: ApprovalStatus,
     pub required_approval_count: Option<i16>,
+    pub custom_type: Option<String>,
     pub target_event_id: Option<Uuid>,
     #[sea_orm(column_type = "JsonBinary", nullable)]
     pub old_value: Option<Json>,

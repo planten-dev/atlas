@@ -10,6 +10,7 @@ mod m20260707_000007_create_events_table;
 mod m20260707_000007_create_user_profiles_table;
 mod m20260707_000008_create_customers_table;
 mod m20260707_000009_create_sales_record_tables;
+mod m20260708_000010_events_add_custom_type;
 
 pub struct Migrator;
 
@@ -27,6 +28,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260707_000007_create_user_profiles_table::Migration),
             Box::new(m20260707_000008_create_customers_table::Migration),
             Box::new(m20260707_000009_create_sales_record_tables::Migration),
+            Box::new(m20260708_000010_events_add_custom_type::Migration),
         ]
     }
 }
