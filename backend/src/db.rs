@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use sea_orm::{ConnectOptions, Database, DatabaseConnection, DbErr};
+use sea_orm::{
+    ConnectOptions, ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, DbErr,
+    Statement,
+};
 use sea_orm_migration::MigratorTrait;
 use tracing::{debug, info};
 
@@ -25,6 +28,7 @@ pub async fn connect(config: &DatabaseConfig) -> Result<DatabaseConnection, DbEr
     let mut options = ConnectOptions::new(database_url(config));
     options.sqlx_logging(false);
     let db = Database::connect(options).await?;
+    enable_sqlite_foreign_keys(config, &db).await?;
     debug!("database connection established");
     Ok(db)
 }
@@ -63,6 +67,24 @@ fn ensure_sqlite_file_parent(config: &DatabaseConfig) -> Result<(), DbErr> {
 
 fn normalize_sqlite_path(path: &Path) -> String {
     path.display().to_string().replace('\\', "/")
+}
+
+async fn enable_sqlite_foreign_keys(
+    config: &DatabaseConfig,
+    db: &DatabaseConnection,
+) -> Result<(), DbErr> {
+    if matches!(
+        config.kind,
+        DatabaseKind::SqliteMemory | DatabaseKind::SqliteFile
+    ) {
+        db.execute(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "PRAGMA foreign_keys = ON".to_string(),
+        ))
+        .await?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -125,12 +147,12 @@ mod tests {
         let rows = db
             .query_all(Statement::from_string(
                 DatabaseBackend::Sqlite,
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users', 'auth_sessions', 'oauth_login_states') ORDER BY name".to_string(),
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users', 'auth_sessions', 'oauth_login_states', 'user_profiles') ORDER BY name".to_string(),
             ))
             .await
             .expect("sqlite schema should be queryable");
 
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 4);
     }
 
     #[tokio::test]

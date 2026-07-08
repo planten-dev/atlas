@@ -177,7 +177,7 @@ mod tests {
             authz::AuthzRepository, departments::DepartmentRepository,
             product_categories::ProductCategoryRepository, products::ProductRepository,
             sessions::SessionRepository, stores::StoreRepository, systems::SystemRepository,
-            users::UserRepository,
+            user_profiles::UserProfileRepository, users::UserRepository,
         },
         services::{
             auth::AuthService, authz::AuthzService, product_categories::ProductCategoryService,
@@ -186,7 +186,7 @@ mod tests {
         },
     };
     use axum::{
-        Router,
+        Form, Router,
         body::{Body, to_bytes},
         http::{Method, Request},
         routing::{get, post},
@@ -200,6 +200,7 @@ mod tests {
     struct TestContext {
         app: Router,
         users: UserRepository,
+        profiles: UserProfileRepository,
     }
 
     #[tokio::test]
@@ -353,6 +354,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn callback_syncs_dingtalk_profile_without_returning_profile_in_login_body() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+
+        let cookie = login_and_cookie(context.app.clone()).await;
+        assert!(cookie.starts_with("atlas_session="));
+
+        let user = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("user should exist");
+        let profile = context
+            .profiles
+            .find_by_user_id(user.id)
+            .await
+            .expect("profile lookup should succeed")
+            .expect("profile should be synced");
+
+        assert_eq!(profile.user_id, user.id);
+        assert_eq!(profile.name.as_deref(), Some("张三"));
+        assert_eq!(profile.department_external_ids.as_deref(), Some("[10,20]"));
+        assert_eq!(profile.is_active, Some(true));
+    }
+
+    #[tokio::test]
     async fn missing_session_cookie_returns_unauthorized() {
         let mock_base_url = start_mock_dingtalk().await;
         let app = test_app(&mock_base_url).await;
@@ -475,6 +503,7 @@ mod tests {
             .await
             .expect("test database should initialize");
         let users = UserRepository::new(db.clone());
+        let profiles = UserProfileRepository::new(db.clone());
         let sessions = SessionRepository::new(db.clone());
         let product_categories = ProductCategoryRepository::new(db.clone());
         let products = ProductRepository::new(db.clone());
@@ -491,18 +520,20 @@ mod tests {
                 user_info_url: format!("{mock_base_url}/me"),
                 corp_token_url: format!("{mock_base_url}/gettoken"),
                 department_listsub_url: format!("{mock_base_url}/listsub"),
+                user_detail_url: format!("{mock_base_url}/user_detail"),
                 scope: "openid".to_string(),
                 corp_id: "".to_string(),
                 external_id_fields: vec!["userId".to_string()],
             },
             users.clone(),
+            profiles.clone(),
             sessions.clone(),
             86_400,
         );
         let authz = AuthzService::new(AuthzRepository::new(db))
             .await
             .expect("test authz service should initialize");
-        let users_service = UserService::new(users.clone(), sessions);
+        let users_service = UserService::new(users.clone(), profiles.clone(), sessions);
         let product_categories_service =
             ProductCategoryService::new(product_categories.clone(), products.clone());
         let products_service = ProductService::new(products, product_categories);
@@ -527,6 +558,7 @@ mod tests {
         TestContext {
             app: app::router(state),
             users,
+            profiles,
         }
     }
 
@@ -546,9 +578,40 @@ mod tests {
             }))
         }
 
+        #[derive(serde::Deserialize)]
+        struct UserDetailForm {
+            userid: String,
+            language: String,
+        }
+
+        async fn gettoken() -> Json<Value> {
+            Json(json!({
+                "errcode": 0,
+                "errmsg": "ok",
+                "access_token": "corp-token",
+                "expires_in": 7200
+            }))
+        }
+
+        let user_detail = |Form(form): Form<UserDetailForm>| async move {
+            assert_eq!(form.userid, "ding-user-1");
+            assert_eq!(form.language, "zh_CN");
+            Json(json!({
+                "errcode": 0,
+                "errmsg": "ok",
+                "result": {
+                    "name": "张三",
+                    "dept_id_list": [10, 20],
+                    "active": true
+                }
+            }))
+        };
+
         let app = Router::new()
             .route("/token", post(token))
-            .route("/me", get(me));
+            .route("/me", get(me))
+            .route("/gettoken", get(gettoken))
+            .route("/user_detail", post(user_detail));
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("mock DingTalk listener should bind");

@@ -5,7 +5,7 @@ use backend::{
         authz::AuthzRepository, departments::DepartmentRepository,
         product_categories::ProductCategoryRepository, products::ProductRepository,
         sessions::SessionRepository, stores::StoreRepository, systems::SystemRepository,
-        users::UserRepository,
+        user_profiles::UserProfileRepository, users::UserRepository,
     },
     services::{
         auth::AuthService, authz::AuthzService, product_categories::ProductCategoryService,
@@ -31,6 +31,7 @@ async fn main() -> Result<()> {
         .await
         .context("failed to initialize database")?;
     let users = UserRepository::new(db.clone());
+    let profiles = UserProfileRepository::new(db.clone());
     let sessions = SessionRepository::new(db.clone());
     let product_categories = ProductCategoryRepository::new(db.clone());
     let products = ProductRepository::new(db.clone());
@@ -40,13 +41,14 @@ async fn main() -> Result<()> {
     let auth = AuthService::new(
         config.dingtalk.clone(),
         users.clone(),
+        profiles.clone(),
         sessions.clone(),
         config.session.ttl_seconds,
     );
     let authz = AuthzService::new(AuthzRepository::new(db))
         .await
         .context("failed to initialize authorization service")?;
-    let users = UserService::new(users, sessions);
+    let users = UserService::new(users, profiles, sessions);
     let product_categories_service =
         ProductCategoryService::new(product_categories.clone(), products.clone());
     let products = ProductService::new(products, product_categories);

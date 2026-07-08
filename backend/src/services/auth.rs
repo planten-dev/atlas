@@ -7,10 +7,13 @@ use uuid::Uuid;
 use crate::{
     config::DingTalkConfig,
     dto::users::UserResponse,
-    integrations::dingtalk::{DingTalkClient, DingTalkError},
+    integrations::dingtalk::{
+        DingTalkClient, DingTalkError, DingTalkIdentity, DingTalkUserProfile,
+    },
     repositories::{
         RepositoryError,
         sessions::{SessionRepository, hash_secret},
+        user_profiles::{UserProfileRepository, UserProfileUpsert},
         users::UserRepository,
     },
 };
@@ -22,6 +25,7 @@ const OAUTH_STATE_TTL_MINUTES: i64 = 10;
 pub struct AuthService {
     dingtalk_config: DingTalkConfig,
     users: UserRepository,
+    profiles: UserProfileRepository,
     sessions: SessionRepository,
     session_ttl_seconds: u64,
 }
@@ -30,12 +34,14 @@ impl AuthService {
     pub fn new(
         dingtalk_config: DingTalkConfig,
         users: UserRepository,
+        profiles: UserProfileRepository,
         sessions: SessionRepository,
         session_ttl_seconds: u64,
     ) -> Self {
         Self {
             dingtalk_config,
             users,
+            profiles,
             sessions,
             session_ttl_seconds,
         }
@@ -110,6 +116,18 @@ impl AuthService {
             .users
             .find_or_create_for_login(&identity.dingtalk_user_id, now)
             .await?;
+
+        if let Err(error) = self
+            .sync_dingtalk_profile(&client, &identity, user.id, now)
+            .await
+        {
+            warn!(
+                user_id = %user.id,
+                error_code = error.code(),
+                "DingTalk profile sync failed; continuing login"
+            );
+        }
+
         let session_token = generate_secret();
         let expires_at = now + session_ttl(self.session_ttl_seconds)?;
         let session = self
@@ -128,6 +146,26 @@ impl AuthService {
             session_token,
             expires_at,
         })
+    }
+
+    async fn sync_dingtalk_profile(
+        &self,
+        client: &DingTalkClient,
+        identity: &DingTalkIdentity,
+        user_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<(), ProfileSyncError> {
+        let provider_user_id = identity
+            .provider_user_id
+            .as_deref()
+            .unwrap_or(identity.dingtalk_user_id.as_str());
+        let profile = client.fetch_user_profile(provider_user_id).await?;
+        self.profiles
+            .upsert_profile(user_id, profile_upsert_from_dingtalk(profile), now)
+            .await?;
+
+        info!(%user_id, "synced DingTalk user profile");
+        Ok(())
     }
 
     #[tracing::instrument(level = "debug", skip(self, session_token))]
@@ -175,6 +213,57 @@ impl AuthService {
 
         info!(session_id = %session_id, "logged out current session");
         Ok(())
+    }
+}
+
+#[derive(Debug, Error)]
+enum ProfileSyncError {
+    #[error(transparent)]
+    DingTalk(#[from] DingTalkError),
+    #[error(transparent)]
+    Repository(#[from] RepositoryError),
+}
+
+impl ProfileSyncError {
+    fn code(&self) -> &'static str {
+        match self {
+            Self::DingTalk(error) => match error {
+                DingTalkError::MissingConfig(_) => "dingtalk_configuration_error",
+                DingTalkError::MissingRequiredField { .. }
+                | DingTalkError::MissingIdentityField(_) => "dingtalk_validation_error",
+                DingTalkError::ProviderHttp { .. }
+                | DingTalkError::ProviderApi { .. }
+                | DingTalkError::MissingResponseField { .. }
+                | DingTalkError::Http(_) => "dingtalk_error",
+            },
+            Self::Repository(error) => match error {
+                RepositoryError::DisabledUser => "user_disabled",
+                RepositoryError::MissingRequiredField { .. } => "validation_error",
+                RepositoryError::Database(_) => "database_error",
+            },
+        }
+    }
+}
+
+fn profile_upsert_from_dingtalk(profile: DingTalkUserProfile) -> UserProfileUpsert {
+    UserProfileUpsert {
+        name: profile.name,
+        avatar_url: profile.avatar_url,
+        mobile: profile.mobile,
+        hide_mobile: profile.hide_mobile,
+        telephone: profile.telephone,
+        job_number: profile.job_number,
+        title: profile.title,
+        email: profile.email,
+        org_email: profile.org_email,
+        work_place: profile.work_place,
+        remark: profile.remark,
+        department_external_ids: profile.department_external_ids,
+        is_admin: profile.is_admin,
+        is_boss: profile.is_boss,
+        is_active: profile.is_active,
+        is_senior: profile.is_senior,
+        hired_at: profile.hired_at,
     }
 }
 

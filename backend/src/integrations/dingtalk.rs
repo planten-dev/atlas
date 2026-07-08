@@ -1,5 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 
+use chrono::{DateTime, TimeZone, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -32,6 +33,7 @@ impl DingTalkClient {
             auth_url = %client.config.auth_url,
             token_url = %client.config.token_url,
             user_info_url = %client.config.user_info_url,
+            user_detail_url = %client.config.user_detail_url,
             redirect_uri = %client.config.redirect_uri,
             scope = %client.config.scope,
             external_id_field_count = client.config.external_id_fields.len(),
@@ -311,6 +313,69 @@ impl DingTalkClient {
             .collect())
     }
 
+    #[tracing::instrument(level = "info", skip(self, user_id), fields(provider = PROVIDER))]
+    pub async fn fetch_user_profile(
+        &self,
+        user_id: &str,
+    ) -> Result<DingTalkUserProfile, DingTalkError> {
+        validate_required("userid", user_id)?;
+        let access_token = self.fetch_corp_access_token().await?;
+        self.fetch_user_profile_with_access_token(&access_token, user_id)
+            .await
+    }
+
+    #[tracing::instrument(
+        level = "debug",
+        skip(self, access_token, user_id),
+        fields(provider = PROVIDER, user_detail_url = %self.config.user_detail_url)
+    )]
+    async fn fetch_user_profile_with_access_token(
+        &self,
+        access_token: &str,
+        user_id: &str,
+    ) -> Result<DingTalkUserProfile, DingTalkError> {
+        validate_required("access_token", access_token)?;
+        validate_required("userid", user_id)?;
+
+        debug!(provider = PROVIDER, "fetching DingTalk user detail");
+        let response = self
+            .http
+            .post(&self.config.user_detail_url)
+            .form(&[
+                ("access_token", access_token),
+                ("userid", user_id.trim()),
+                ("language", "zh_CN"),
+            ])
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body = response.text().await?;
+        let parsed = parse_json_or_raw(body);
+
+        if !status.is_success() {
+            warn!(
+                provider = PROVIDER,
+                status = status.as_u16(),
+                "DingTalk user detail request returned non-success status"
+            );
+            return Err(DingTalkError::ProviderHttp {
+                operation: "user_detail",
+                status: status.as_u16(),
+                body: parsed,
+            });
+        }
+
+        check_oapi_errcode("user_detail", &parsed)?;
+        let profile = parse_user_profile_result(&parsed)?;
+        debug!(
+            provider = PROVIDER,
+            status = status.as_u16(),
+            "received DingTalk user detail response"
+        );
+        Ok(profile)
+    }
+
     #[tracing::instrument(level = "info", skip(self), fields(provider = PROVIDER))]
     pub async fn fetch_all_departments(&self) -> Result<Vec<DingTalkDepartment>, DingTalkError> {
         let access_token = self.fetch_corp_access_token().await?;
@@ -348,6 +413,27 @@ pub struct DingTalkDepartment {
     pub dept_id: i64,
     pub name: String,
     pub parent_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DingTalkUserProfile {
+    pub name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub mobile: Option<String>,
+    pub hide_mobile: Option<bool>,
+    pub telephone: Option<String>,
+    pub job_number: Option<String>,
+    pub title: Option<String>,
+    pub email: Option<String>,
+    pub org_email: Option<String>,
+    pub work_place: Option<String>,
+    pub remark: Option<String>,
+    pub department_external_ids: Option<String>,
+    pub is_admin: Option<bool>,
+    pub is_boss: Option<bool>,
+    pub is_active: Option<bool>,
+    pub is_senior: Option<bool>,
+    pub hired_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -516,6 +602,7 @@ fn validate_config(config: &DingTalkConfig) -> Result<(), DingTalkError> {
     validate_config_value("user_info_url", &config.user_info_url)?;
     validate_config_value("corp_token_url", &config.corp_token_url)?;
     validate_config_value("department_listsub_url", &config.department_listsub_url)?;
+    validate_config_value("user_detail_url", &config.user_detail_url)?;
     validate_config_value("scope", &config.scope)?;
 
     if config.external_id_fields.is_empty() {
@@ -571,6 +658,99 @@ fn check_oapi_errcode(operation: &'static str, value: &Value) -> Result<(), Ding
     }
 
     Ok(())
+}
+
+fn parse_user_profile_result(value: &Value) -> Result<DingTalkUserProfile, DingTalkError> {
+    let result = value
+        .get("result")
+        .ok_or(DingTalkError::MissingResponseField {
+            operation: "user_detail",
+            field: "result",
+        })?;
+
+    Ok(DingTalkUserProfile {
+        name: clean_string_field(result, &["name"], 128),
+        avatar_url: clean_string_field(result, &["avatar"], 2048),
+        mobile: clean_string_field(result, &["mobile"], 32),
+        hide_mobile: bool_field(result, &["hide_mobile", "hideMobile"]),
+        telephone: clean_string_field(result, &["telephone"], 32),
+        job_number: clean_string_field(result, &["job_number", "jobNumber"], 64),
+        title: clean_string_field(result, &["title"], 128),
+        email: clean_string_field(result, &["email"], 255),
+        org_email: clean_string_field(result, &["org_email", "orgEmail"], 255),
+        work_place: clean_string_field(result, &["work_place", "workPlace"], 255),
+        remark: clean_string_field(result, &["remark"], 4096),
+        department_external_ids: department_ids_json(result.get("dept_id_list")),
+        is_admin: bool_field(result, &["admin", "is_admin", "isAdmin"]),
+        is_boss: bool_field(result, &["boss", "is_boss", "isBoss"]),
+        is_active: bool_field(result, &["active", "is_active", "isActive"]),
+        is_senior: bool_field(result, &["senior", "is_senior", "isSenior"]),
+        hired_at: timestamp_millis_field(result, &["hired_date", "hiredDate"]),
+    })
+}
+
+fn clean_string_field(value: &Value, keys: &[&str], max_chars: usize) -> Option<String> {
+    keys.iter()
+        .find_map(|key| value.get(key))
+        .and_then(value_to_string)
+        .and_then(|value| clean_string(&value, max_chars))
+}
+
+fn value_to_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn clean_string(value: &str, max_chars: usize) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(trimmed.chars().take(max_chars).collect())
+}
+
+fn department_ids_json(value: Option<&Value>) -> Option<String> {
+    match value {
+        Some(Value::Array(_)) => value.and_then(|value| serde_json::to_string(value).ok()),
+        Some(Value::String(value)) => clean_string(value, 4096),
+        _ => None,
+    }
+}
+
+fn bool_field(value: &Value, keys: &[&str]) -> Option<bool> {
+    keys.iter().find_map(|key| {
+        let value = value.get(key)?;
+        match value {
+            Value::Bool(value) => Some(*value),
+            Value::Number(value) => value.as_i64().and_then(|value| match value {
+                0 => Some(false),
+                1 => Some(true),
+                _ => None,
+            }),
+            Value::String(value) => match value.trim().to_ascii_lowercase().as_str() {
+                "true" | "1" => Some(true),
+                "false" | "0" => Some(false),
+                _ => None,
+            },
+            _ => None,
+        }
+    })
+}
+
+fn timestamp_millis_field(value: &Value, keys: &[&str]) -> Option<DateTime<Utc>> {
+    keys.iter().find_map(|key| {
+        let value = value.get(key)?;
+        let millis = match value {
+            Value::Number(value) => value.as_i64(),
+            Value::String(value) => value.trim().parse::<i64>().ok(),
+            _ => None,
+        }?;
+        Utc.timestamp_millis_opt(millis).single()
+    })
 }
 
 fn first_string(value: &Value, keys: &[&str]) -> Option<String> {
@@ -647,6 +827,7 @@ mod tests {
             corp_token_url: "https://oapi.dingtalk.com/gettoken".to_string(),
             department_listsub_url: "https://oapi.dingtalk.com/topapi/v2/department/listsub"
                 .to_string(),
+            user_detail_url: "https://oapi.dingtalk.com/topapi/v2/user/get".to_string(),
             scope: "openid corpid".to_string(),
             corp_id: "corp-id".to_string(),
             external_id_fields: vec![
@@ -781,6 +962,63 @@ mod tests {
             percent_encode("abc XYZ-_.~/"),
             "abc%20XYZ-_.~%2F".to_string()
         );
+    }
+
+    #[test]
+    fn parses_clean_user_profile_from_dingtalk_result() {
+        let profile = parse_user_profile_result(&json!({
+            "errcode": 0,
+            "errmsg": "ok",
+            "result": {
+                "userid": "must-not-be-stored",
+                "name": " 张三 ",
+                "avatar": "https://example.test/avatar.png",
+                "mobile": "13800000000",
+                "hide_mobile": true,
+                "telephone": " 010-1234 ",
+                "job_number": "A001",
+                "title": "工程师",
+                "email": "user@example.test",
+                "org_email": "user@corp.example.test",
+                "work_place": "上海",
+                "remark": "备注",
+                "dept_id_list": [10, 20],
+                "admin": false,
+                "boss": false,
+                "active": true,
+                "senior": false,
+                "hired_date": 1767225600000i64,
+                "access_token": "must-not-be-stored"
+            }
+        }))
+        .expect("profile should parse");
+
+        assert_eq!(profile.name.as_deref(), Some("张三"));
+        assert_eq!(profile.telephone.as_deref(), Some("010-1234"));
+        assert_eq!(profile.department_external_ids.as_deref(), Some("[10,20]"));
+        assert_eq!(profile.hide_mobile, Some(true));
+        assert_eq!(profile.is_active, Some(true));
+        assert_eq!(
+            profile.hired_at,
+            Some(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap())
+        );
+    }
+
+    #[test]
+    fn parses_user_profile_with_missing_optional_fields() {
+        let profile = parse_user_profile_result(&json!({
+            "errcode": 0,
+            "errmsg": "ok",
+            "result": {
+                "name": "张三"
+            }
+        }))
+        .expect("profile should parse");
+
+        assert_eq!(profile.name.as_deref(), Some("张三"));
+        assert!(profile.mobile.is_none());
+        assert!(profile.email.is_none());
+        assert!(profile.avatar_url.is_none());
     }
 
     mod department_api {

@@ -62,7 +62,7 @@
         ],
         "summary": "Handle DingTalk login callback",
         "operationId": "handleDingTalkCallback",
-        "description": "Validates OAuth state, exchanges the DingTalk authorization code, maps the DingTalk user to users.dingtalk_user_id, creates a server-side session, and sets atlas_session as an HttpOnly cookie. The response body does not include the session id.",
+        "description": "Validates OAuth state, exchanges the DingTalk authorization code, maps the DingTalk user to users.dingtalk_user_id, attempts to sync user_profiles from DingTalk user details, creates a server-side session, and sets atlas_session as an HttpOnly cookie. Profile sync failures do not block login. The response body does not include the session id.",
         "security": [],
         "parameters": [
           {
@@ -347,6 +347,60 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/profile": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Get user profile",
+        "operationId": "getUserProfile",
+        "description": "Returns one user's DingTalk-synced profile. Users may read their own profile without users:read; reading another user's profile requires users:read.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Atlas internal user id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User profile.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProfileResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
@@ -2510,6 +2564,161 @@
               "string",
               "null"
             ],
+            "format": "date-time"
+          }
+        }
+      },
+      "UserProfileResponse": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "name",
+          "avatar_url",
+          "mobile",
+          "hide_mobile",
+          "telephone",
+          "job_number",
+          "title",
+          "email",
+          "org_email",
+          "work_place",
+          "remark",
+          "department_external_ids",
+          "is_admin",
+          "is_boss",
+          "is_active",
+          "is_senior",
+          "hired_at",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Atlas internal user id. This is also user_profiles.user_id."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mobile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 32,
+            "description": "Personal information. Logs must not output this field in plaintext."
+          },
+          "hide_mobile": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "telephone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 32
+          },
+          "job_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 255,
+            "description": "Personal information. Logs must not output this field in plaintext."
+          },
+          "org_email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 255,
+            "description": "Personal information. Logs must not output this field in plaintext."
+          },
+          "work_place": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 255
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "department_external_ids": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "JSON string containing DingTalk dept_id_list. DingTalk userid is not stored here."
+          },
+          "is_admin": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "is_boss": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "is_active": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "is_senior": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "hired_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
             "format": "date-time"
           }
         }

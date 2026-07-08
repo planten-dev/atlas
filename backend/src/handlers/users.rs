@@ -1,5 +1,5 @@
 use axum::{
-    Json,
+    Extension, Json,
     extract::{
         Path, Query, State,
         rejection::{JsonRejection, PathRejection, QueryRejection},
@@ -15,8 +15,9 @@ use crate::{
         auth::ErrorResponse,
         users::{ListUsersQuery, UpdateUserStatusRequest},
     },
+    handlers::error::{authz_error_response, permission_denied_response},
     repositories::RepositoryError,
-    services::users::UserError,
+    services::{auth::CurrentSession, users::UserError},
     state::AppState,
 };
 
@@ -45,6 +46,34 @@ pub async fn user_detail(
     };
 
     match state.users.user_detail(user_id).await {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => user_error_response(error),
+    }
+}
+
+pub async fn user_profile(
+    State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
+    path: Result<Path<Uuid>, PathRejection>,
+) -> Response {
+    let user_id = match path {
+        Ok(Path(user_id)) => user_id,
+        Err(error) => return validation_error_response("invalid user_id path parameter", error),
+    };
+
+    if user_id != current_session.user.id {
+        match state
+            .authz
+            .check(current_session.user.id, "users", "read")
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => return permission_denied_response("users", "read"),
+            Err(error) => return authz_error_response(error),
+        }
+    }
+
+    match state.users.user_profile(user_id).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => user_error_response(error),
     }
@@ -134,7 +163,7 @@ fn status_code(error: &UserError) -> StatusCode {
             RepositoryError::MissingRequiredField { .. } => StatusCode::BAD_REQUEST,
             RepositoryError::DisabledUser => StatusCode::FORBIDDEN,
         },
-        UserError::UserNotFound => StatusCode::NOT_FOUND,
+        UserError::UserNotFound | UserError::UserProfileNotFound => StatusCode::NOT_FOUND,
         UserError::InvalidStatus { .. }
         | UserError::InvalidPaginationMinimum { .. }
         | UserError::InvalidPaginationMaximum { .. } => StatusCode::BAD_REQUEST,
@@ -156,6 +185,7 @@ mod tests {
             sessions::{SessionRepository, hash_secret},
             stores::StoreRepository,
             systems::SystemRepository,
+            user_profiles::{UserProfileRepository, UserProfileUpsert},
             users::UserRepository,
         },
         services::{
@@ -179,7 +209,9 @@ mod tests {
     struct TestContext {
         app: Router,
         users: UserRepository,
+        profiles: UserProfileRepository,
         sessions: SessionRepository,
+        authz: AuthzService,
     }
 
     #[tokio::test]
@@ -198,6 +230,20 @@ mod tests {
             )
             .await
             .expect("users list request should be handled");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = context
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/users/{}/profile", Uuid::new_v4()))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("user profile request should be handled");
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
@@ -268,6 +314,167 @@ mod tests {
             body.pointer("/dingtalk_user_id").and_then(Value::as_str),
             Some("ding-user-1")
         );
+    }
+
+    #[tokio::test]
+    async fn authenticated_user_can_read_own_profile_without_users_read_permission() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let current = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("current user should exist");
+
+        let response = context
+            .app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/users/{}/profile", current.id))
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("profile request should be handled");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(
+            body.pointer("/user_id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            Some(current.id.to_string())
+        );
+        assert_eq!(body.pointer("/name").and_then(Value::as_str), Some("张三"));
+        assert_eq!(
+            body.pointer("/department_external_ids")
+                .and_then(Value::as_str),
+            Some("[10,20]")
+        );
+    }
+
+    #[tokio::test]
+    async fn reading_another_users_profile_requires_users_read_permission() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let now = Utc::now();
+        let current = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("current user should exist");
+        let target = context
+            .users
+            .find_or_create_for_login("target-user", now)
+            .await
+            .expect("target user should be created");
+        context
+            .profiles
+            .upsert_profile(target.id, profile_input("李四"), now)
+            .await
+            .expect("target profile should be created");
+
+        let forbidden = context
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/users/{}/profile", target.id))
+                    .header(header::COOKIE, cookie.clone())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("profile request should be handled");
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+
+        context
+            .authz
+            .create_policy(
+                "user".to_string(),
+                current.id,
+                "users".to_string(),
+                "read".to_string(),
+                "allow".to_string(),
+            )
+            .await
+            .expect("users:read policy should be created");
+
+        let allowed = context
+            .app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/users/{}/profile", target.id))
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("profile request should be handled");
+        assert_eq!(allowed.status(), StatusCode::OK);
+        let body = response_json(allowed).await;
+        assert_eq!(body.pointer("/name").and_then(Value::as_str), Some("李四"));
+    }
+
+    #[tokio::test]
+    async fn user_profile_reports_missing_user_or_profile() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let current = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("current user should exist");
+        context
+            .authz
+            .create_policy(
+                "user".to_string(),
+                current.id,
+                "users".to_string(),
+                "read".to_string(),
+                "allow".to_string(),
+            )
+            .await
+            .expect("users:read policy should be created");
+
+        let missing_user = context
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/users/{}/profile", Uuid::new_v4()))
+                    .header(header::COOKIE, cookie.clone())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("profile request should be handled");
+        assert_eq!(missing_user.status(), StatusCode::NOT_FOUND);
+
+        let target = context
+            .users
+            .find_or_create_for_login("target-without-profile", Utc::now())
+            .await
+            .expect("target user should be created");
+        let missing_profile = context
+            .app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/users/{}/profile", target.id))
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("profile request should be handled");
+        assert_eq!(missing_profile.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -657,6 +864,7 @@ mod tests {
             .await
             .expect("test database should initialize");
         let users = UserRepository::new(db.clone());
+        let profiles = UserProfileRepository::new(db.clone());
         let sessions = SessionRepository::new(db.clone());
         let product_categories = ProductCategoryRepository::new(db.clone());
         let products = ProductRepository::new(db.clone());
@@ -673,18 +881,20 @@ mod tests {
                 user_info_url: format!("{mock_base_url}/me"),
                 corp_token_url: format!("{mock_base_url}/gettoken"),
                 department_listsub_url: format!("{mock_base_url}/listsub"),
+                user_detail_url: format!("{mock_base_url}/user_detail"),
                 scope: "openid".to_string(),
                 corp_id: "".to_string(),
                 external_id_fields: vec!["userId".to_string()],
             },
             users.clone(),
+            profiles.clone(),
             sessions.clone(),
             86_400,
         );
         let authz = AuthzService::new(AuthzRepository::new(db))
             .await
             .expect("test authz service should initialize");
-        let users_service = UserService::new(users.clone(), sessions.clone());
+        let users_service = UserService::new(users.clone(), profiles.clone(), sessions.clone());
         let product_categories_service =
             ProductCategoryService::new(product_categories.clone(), products.clone());
         let products_service = ProductService::new(products, product_categories);
@@ -692,7 +902,7 @@ mod tests {
         let systems_service = SystemService::new(systems, departments, stores);
         let state = AppState::new(
             auth,
-            authz,
+            authz.clone(),
             users_service,
             product_categories_service,
             products_service,
@@ -709,7 +919,9 @@ mod tests {
         TestContext {
             app: app::router(state),
             users,
+            profiles,
             sessions,
+            authz,
         }
     }
 
@@ -729,9 +941,40 @@ mod tests {
             }))
         }
 
+        async fn gettoken() -> Json<Value> {
+            Json(json!({
+                "errcode": 0,
+                "errmsg": "ok",
+                "access_token": "corp-token",
+                "expires_in": 7200
+            }))
+        }
+
+        #[derive(serde::Deserialize)]
+        struct UserDetailForm {
+            userid: String,
+            language: String,
+        }
+
+        let user_detail = |axum::Form(form): axum::Form<UserDetailForm>| async move {
+            assert_eq!(form.userid, "ding-user-1");
+            assert_eq!(form.language, "zh_CN");
+            Json(json!({
+                "errcode": 0,
+                "errmsg": "ok",
+                "result": {
+                    "name": "张三",
+                    "dept_id_list": [10, 20],
+                    "active": true
+                }
+            }))
+        };
+
         let app = Router::new()
             .route("/token", post(token))
-            .route("/me", get(me));
+            .route("/me", get(me))
+            .route("/gettoken", get(gettoken))
+            .route("/user_detail", post(user_detail));
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("mock DingTalk listener should bind");
@@ -754,5 +997,27 @@ mod tests {
                 None
             }
         })
+    }
+
+    fn profile_input(name: &str) -> UserProfileUpsert {
+        UserProfileUpsert {
+            name: Some(name.to_string()),
+            avatar_url: None,
+            mobile: None,
+            hide_mobile: None,
+            telephone: None,
+            job_number: None,
+            title: None,
+            email: None,
+            org_email: None,
+            work_place: None,
+            remark: None,
+            department_external_ids: None,
+            is_admin: None,
+            is_boss: None,
+            is_active: Some(true),
+            is_senior: None,
+            hired_at: None,
+        }
     }
 }

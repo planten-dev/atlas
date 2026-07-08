@@ -189,6 +189,7 @@ mod tests {
             sessions::SessionRepository,
             stores::{NewStore, StoreRepository},
             systems::SystemRepository,
+            user_profiles::UserProfileRepository,
             users::UserRepository,
         },
         services::{
@@ -604,6 +605,7 @@ mod tests {
             .await
             .expect("test database should initialize");
         let users = UserRepository::new(db.clone());
+        let profiles = UserProfileRepository::new(db.clone());
         let sessions = SessionRepository::new(db.clone());
         let product_categories = ProductCategoryRepository::new(db.clone());
         let products = ProductRepository::new(db.clone());
@@ -620,18 +622,20 @@ mod tests {
                 user_info_url: format!("{mock_base_url}/me"),
                 corp_token_url: format!("{mock_base_url}/gettoken"),
                 department_listsub_url: format!("{mock_base_url}/listsub"),
+                user_detail_url: format!("{mock_base_url}/user_detail"),
                 scope: "openid".to_string(),
                 corp_id: "".to_string(),
                 external_id_fields: vec!["userId".to_string()],
             },
             users.clone(),
+            profiles.clone(),
             sessions.clone(),
             86_400,
         );
         let authz = AuthzService::new(AuthzRepository::new(db))
             .await
             .expect("test authz service should initialize");
-        let users_service = UserService::new(users.clone(), sessions);
+        let users_service = UserService::new(users.clone(), profiles, sessions);
         let product_categories_service =
             ProductCategoryService::new(product_categories.clone(), products.clone());
         let products_service = ProductService::new(products, product_categories);

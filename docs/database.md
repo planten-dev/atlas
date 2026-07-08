@@ -1,6 +1,6 @@
 # 数据库设计
 
-本文档仅描述当前阶段的 `users` 表设计。该表用于保存系统用户的基础身份信息，为钉钉登录提供用户映射能力，并为后续系统鉴权提供统一的用户标识。
+本文档描述当前阶段的数据库表设计。其中 `users` 表用于保存系统用户的登录身份映射，为钉钉登录提供用户映射能力，并为后续系统鉴权提供统一的用户标识。
 
 ## users 表
 
@@ -78,6 +78,91 @@ CREATE TABLE users (
 | `disabled` | 用户记录已被停用，不应作为正常用户继续使用。 |
 
 `status` 默认值为 `active`，用户首次登录自动创建记录时默认进入正常状态。后续如需要停用用户，只更新该字段，不改变用户的 `id` 或 `dingtalk_user_id` 映射关系。
+
+## user_profiles 表
+
+`user_profiles` 表是 `users` 表的一对一扩展表，用于保存用户通过钉钉登录后，从钉钉“查询用户详情”接口获取并清洗后的基础资料。
+
+`users` 表负责保存登录身份映射，例如 `dingtalk_user_id`；`user_profiles` 只保存用户资料，不重复保存钉钉用户标识，也不保存登录凭证、会话信息或未经清洗的原始资料。
+
+### 表结构示例
+
+```sql
+CREATE TABLE user_profiles (
+    user_id UUID PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+    name VARCHAR(128) NULL,
+    avatar_url TEXT NULL,
+    mobile VARCHAR(32) NULL,
+    hide_mobile BOOLEAN NULL,
+    telephone VARCHAR(32) NULL,
+    job_number VARCHAR(64) NULL,
+    title VARCHAR(128) NULL,
+    email VARCHAR(255) NULL,
+    org_email VARCHAR(255) NULL,
+    work_place VARCHAR(255) NULL,
+    remark TEXT NULL,
+    department_external_ids TEXT NULL,
+    is_admin BOOLEAN NULL,
+    is_boss BOOLEAN NULL,
+    is_active BOOLEAN NULL,
+    is_senior BOOLEAN NULL,
+    hired_at TIMESTAMPTZ NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### 字段说明
+
+| 字段 | 类型示例 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `user_id` | `UUID` | 是 | 用户资料所属系统用户 `id`。该字段同时作为 `user_profiles` 表主键和外键，关联 `users(id)`，与 `users.id` 一一对应。 |
+| `name` | `VARCHAR(128)` | 否 | 用户姓名。钉钉接口未返回时允许为空。 |
+| `avatar_url` | `TEXT` | 否 | 用户头像地址。钉钉接口未返回时允许为空。 |
+| `mobile` | `VARCHAR(32)` | 否 | 用户手机号，属于个人信息。钉钉接口未返回或不可见时允许为空。 |
+| `hide_mobile` | `BOOLEAN` | 否 | 钉钉侧是否隐藏手机号。接口未返回时允许为空。 |
+| `telephone` | `VARCHAR(32)` | 否 | 分机号或办公电话。接口未返回时允许为空。 |
+| `job_number` | `VARCHAR(64)` | 否 | 员工工号。接口未返回时允许为空。 |
+| `title` | `VARCHAR(128)` | 否 | 职位或岗位名称。接口未返回时允许为空。 |
+| `email` | `VARCHAR(255)` | 否 | 用户个人邮箱，属于个人信息。接口未返回时允许为空。 |
+| `org_email` | `VARCHAR(255)` | 否 | 用户企业邮箱，属于个人信息。接口未返回时允许为空。 |
+| `work_place` | `VARCHAR(255)` | 否 | 办公地点。接口未返回时允许为空。 |
+| `remark` | `TEXT` | 否 | 钉钉用户备注信息。写入前应只保留业务需要的文本内容。 |
+| `department_external_ids` | `TEXT` | 否 | 钉钉返回的 `dept_id_list`。建议保存为 JSON 字符串，避免为了该字段新增依赖；接口未返回时允许为空。 |
+| `is_admin` | `BOOLEAN` | 否 | 是否为钉钉管理员。接口未返回时允许为空。 |
+| `is_boss` | `BOOLEAN` | 否 | 是否为企业负责人。接口未返回时允许为空。 |
+| `is_active` | `BOOLEAN` | 否 | 钉钉侧用户是否处于激活状态。接口未返回时允许为空。 |
+| `is_senior` | `BOOLEAN` | 否 | 是否为高管模式用户。接口未返回时允许为空。 |
+| `hired_at` | `TIMESTAMPTZ` | 否 | 入职时间。如果钉钉返回 `hired_date` 时间戳，由应用层转换为带时区时间后保存。 |
+| `created_at` | `TIMESTAMPTZ` | 是 | 用户资料记录创建时间。用户首次钉钉登录并创建资料记录时写入。 |
+| `updated_at` | `TIMESTAMPTZ` | 是 | 用户资料记录最后更新时间。每次同步钉钉资料后更新。 |
+
+### 设计原则
+
+- `user_profiles.user_id` 与 `users.id` 一一对应，不再单独生成资料表主键。
+- `user_id` 同时作为主键和外键关联 `users(id)`，建议使用 `ON DELETE CASCADE`，保证用户删除时其资料记录同步删除。
+- `users` 表负责保存登录身份映射，`user_profiles` 表只保存用户基础资料。
+- `dingtalk_user_id` 不应重复保存到 `user_profiles`。钉钉 `userid` 与 `users.dingtalk_user_id` 属于同一类外部身份映射，应只保存在 `users` 表。
+- `user_profiles` 不保存 `access_token`、`refresh_token`、`session id`、`client_secret` 等敏感信息。
+- `user_profiles` 不保存未经清洗的 `raw_profile`，避免把 `userid`、敏感字段或无关字段再次写入资料表。
+- 钉钉接口可能缺少 `mobile`、`email`、`avatar` 等字段，资料字段默认允许为空，避免因资料不完整影响用户登录。
+
+### 钉钉登录资料同步行为
+
+- 用户首次通过钉钉登录时，系统先通过 `users.dingtalk_user_id` 查找或创建 `users` 记录，再使用同一个 `users.id` 创建 `user_profiles` 记录。
+- 用户再次通过钉钉登录时，系统通过 `users.dingtalk_user_id` 找到已有用户，并更新该用户对应的 `user_profiles` 记录。
+- 同步资料时只处理明确允许保存的字段，写入前应完成字段清洗、类型转换和长度控制。
+- 钉钉返回的 `dept_id_list` 保存到 `department_external_ids`，建议由应用层序列化为 JSON 字符串。
+- 钉钉返回的 `hired_date` 如为时间戳，应由应用层转换后保存到 `hired_at`。
+- 如果钉钉接口缺少手机号、邮箱、头像等字段，对应字段允许为空，同步流程不应因此失败。
+
+### 隐私与安全约束
+
+- 手机号、邮箱、办公电话、头像地址、备注等属于用户个人信息，日志中不应输出这些字段的明文内容。
+- 登录凭证、刷新凭证、会话标识、应用密钥等敏感信息不得写入 `user_profiles`。
+- 不保存未经清洗的钉钉原始响应，避免引入额外身份标识、敏感字段或当前业务不需要的字段。
+- 日志只应记录必要的同步结果、用户内部 `id` 和错误类别，不记录完整用户资料。
+- 写入资料表前应按字段白名单提取数据，忽略白名单之外的钉钉返回字段。
 
 ## departments 表
 

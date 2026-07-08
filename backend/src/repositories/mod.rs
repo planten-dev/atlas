@@ -5,6 +5,7 @@ pub mod products;
 pub mod sessions;
 pub mod stores;
 pub mod systems;
+pub mod user_profiles;
 pub mod users;
 
 use thiserror::Error;
