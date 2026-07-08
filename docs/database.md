@@ -270,6 +270,8 @@ CREATE TABLE departments (
 
 `customers` 表用于存储客户基础信息。当前阶段客户资料以门店、体系和部门为归属范围维护，并记录创建人、备注、附件和状态等基础字段。
 
+创建客户时，API 只要求前端传入客户姓名和门店 `store_id`。服务层会先读取门店所属体系，再读取体系所属部门，并把推导出的 `system_id`、`department_id` 与 `store_id` 一起写入客户表；如果兼容旧客户端传入了体系或部门，服务层会校验其与推导结果一致。
+
 客户附件字段只保存附件元数据或访问标识，不直接保存文件二进制内容。实际文件存储位置和访问权限由后续文件服务或对象存储设计承载。
 
 ### 表结构示例
@@ -320,10 +322,10 @@ CREATE INDEX idx_customers_name ON customers (name);
 - `id` 是系统内部唯一客户标识，也是 `customers` 表的主键。
 - `name` 是客户姓名，不允许为空；当前阶段不要求全局唯一，也不要求在同一门店内唯一。
 - 创建人字段统一关联 `users.id`；展示姓名、头像等信息时通过 `user_profiles` 查询。
-- `department_id`、`system_id` 和 `store_id` 用于记录客户归属范围，均不允许为空。
-- `store_id` 必须属于 `system_id`，`system_id` 应与 `department_id` 的业务归属保持一致，该类跨表业务一致性建议由服务层校验。
+- `department_id`、`system_id` 和 `store_id` 用于记录客户归属范围，均不允许为空；创建 API 只要求 `store_id`，`system_id` 和 `department_id` 由服务层根据门店向上推导。
+- `store_id` 必须属于 `system_id`，`system_id` 应与 `department_id` 的业务归属保持一致，该类跨表业务一致性由服务层校验。
 - `attachments` 仅保存外部图片存储返回的附件元数据或访问标识，不保存文件二进制内容、访问密钥或临时签名 URL；如后续需要复杂附件权限、版本或审计能力，再拆分独立附件表。
-- 客户 API 中附件使用结构化数组表达，每个附件至少包含 `file_id`；`file_name`、`mime_type` 和 `size_bytes` 可选，提供 `mime_type` 时必须为 `image/*`。
+- 客户 API 中附件为可选的结构化图片元数据数组，每个附件至少包含 `file_id`；`file_name`、`mime_type` 和 `size_bytes` 可选，提供 `mime_type` 时必须为 `image/*`。
 - `remark` 和 `attachments` 可能包含客户相关敏感信息，日志中不应输出明文内容。
 - 客户记录业务删除以软删除为主，需要停用时通过 `status = 'disabled'` 表示；硬删除接口仅作为管理清理能力保留。
 - `created_at` 创建后不应被应用逻辑主动修改；`updated_at` 在客户记录或状态变更时同步更新。

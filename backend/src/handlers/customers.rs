@@ -291,7 +291,7 @@ mod tests {
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        let (department_id, system_id, store_id) = create_scope(&context, "scope-a").await;
+        let (_, _, store_id) = create_scope(&context, "scope-a").await;
         grant(&context, user_id, "customers", "read").await;
 
         let read_response = context
@@ -315,8 +315,6 @@ mod tests {
                 Some(&cookie),
                 Some(json!({
                     "name": "Alice",
-                    "department_id": department_id,
-                    "system_id": system_id,
                     "store_id": store_id
                 })),
             ))
@@ -345,16 +343,7 @@ mod tests {
                 Some(&cookie),
                 Some(json!({
                     "name": "Alice",
-                    "department_id": department_a,
-                    "system_id": system_a,
-                    "store_id": store_a,
-                    "remark": "first visit",
-                    "attachments": [{
-                        "file_id": "img-1",
-                        "file_name": "photo.png",
-                        "mime_type": "image/png",
-                        "size_bytes": 1234
-                    }]
+                    "store_id": store_a
                 })),
             ))
             .await
@@ -370,10 +359,19 @@ mod tests {
             Some(user_id.to_string().as_str())
         );
         assert_eq!(
+            created.pointer("/department_id").and_then(Value::as_str),
+            Some(department_a.to_string().as_str())
+        );
+        assert_eq!(
+            created.pointer("/system_id").and_then(Value::as_str),
+            Some(system_a.to_string().as_str())
+        );
+        assert_eq!(
             created
-                .pointer("/attachments/0/file_id")
-                .and_then(Value::as_str),
-            Some("img-1")
+                .pointer("/attachments")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0)
         );
         let customer_id = created
             .pointer("/id")
@@ -488,14 +486,14 @@ mod tests {
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        let (department_id, system_id, store_id) = create_scope(&context, "scope-a").await;
+        let (_, _, store_id) = create_scope(&context, "scope-a").await;
         grant(&context, user_id, "customers", "read").await;
         grant(&context, user_id, "customers", "write").await;
 
         for body in [
-            json!({"name": "", "department_id": department_id, "system_id": system_id, "store_id": store_id}),
-            json!({"name": "Alice", "department_id": department_id, "system_id": system_id, "store_id": store_id, "status": "deleted"}),
-            json!({"name": "Alice", "department_id": department_id, "system_id": system_id, "store_id": store_id, "attachments": [{"file_id": "file-1", "mime_type": "application/pdf"}]}),
+            json!({"name": "", "store_id": store_id}),
+            json!({"name": "Alice", "store_id": store_id, "status": "deleted"}),
+            json!({"name": "Alice", "store_id": store_id, "attachments": [{"file_id": "file-1", "mime_type": "application/pdf"}]}),
         ] {
             let response = context
                 .app
@@ -511,7 +509,7 @@ mod tests {
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         }
 
-        let missing_system = context
+        let mismatched_system = context
             .app
             .clone()
             .oneshot(request(
@@ -520,14 +518,29 @@ mod tests {
                 Some(&cookie),
                 Some(json!({
                     "name": "Alice",
-                    "department_id": department_id,
                     "system_id": Uuid::new_v4(),
                     "store_id": store_id
                 })),
             ))
             .await
             .expect("customer create request should be handled");
-        assert_eq!(missing_system.status(), StatusCode::NOT_FOUND);
+        assert_eq!(mismatched_system.status(), StatusCode::BAD_REQUEST);
+
+        let missing_store = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/api/v1/customers/create",
+                Some(&cookie),
+                Some(json!({
+                    "name": "Alice",
+                    "store_id": Uuid::new_v4()
+                })),
+            ))
+            .await
+            .expect("customer create request should be handled");
+        assert_eq!(missing_store.status(), StatusCode::NOT_FOUND);
 
         let invalid_status_query = context
             .app

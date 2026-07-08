@@ -2575,7 +2575,7 @@
         ],
         "summary": "Create customer",
         "operationId": "createCustomer",
-        "description": "Requires permission customers:write. Creates a customer. creator_user_id is always taken from the authenticated session. department_id, system_id and store_id must exist and describe one consistent scope.",
+        "description": "Requires permission customers:write. Creates a customer. creator_user_id is always taken from the authenticated session. Only name and store_id are required; system_id and department_id are derived from the store and checked for consistency when provided.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -5725,8 +5725,6 @@
         "type": "object",
         "required": [
           "name",
-          "department_id",
-          "system_id",
           "store_id"
         ],
         "additionalProperties": false,
@@ -5736,29 +5734,38 @@
             "maxLength": 128
           },
           "department_id": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid",
-            "description": "Must reference an existing department id. The system must belong to this department."
+            "description": "Optional compatibility field. On create, the backend derives the department from store_id through the store's system; when provided, this value must match the derived department."
           },
           "system_id": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid",
-            "description": "Must reference an existing system id. The store must belong to this system."
+            "description": "Optional compatibility field. On create, the backend derives the system from store_id; when provided, this value must match the store's system."
           },
           "store_id": {
             "type": "string",
             "format": "uuid",
-            "description": "Must reference an existing store id owned by system_id."
+            "description": "Required existing store id. The backend derives system_id and department_id from this store."
           },
           "remark": {
             "type": "string"
           },
           "attachments": {
-            "type": "array",
+            "type": [
+              "array",
+              "null"
+            ],
             "items": {
               "$ref": "#/components/schemas/CustomerAttachment"
             },
-            "description": "External image attachment metadata. The backend stores this as JSON text and does not upload or store image bytes."
+            "description": "Optional external image attachment metadata. Omit or pass an empty array when the customer has no attachments. The backend stores this as JSON text and does not upload or store image bytes."
           },
           "status": {
             "type": "string",

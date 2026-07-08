@@ -73,8 +73,10 @@ pub struct ListCustomersQuery {
 #[serde(deny_unknown_fields)]
 pub struct CreateCustomerRequest {
     pub name: String,
-    pub department_id: Uuid,
-    pub system_id: Uuid,
+    #[serde(default)]
+    pub department_id: Option<Uuid>,
+    #[serde(default)]
+    pub system_id: Option<Uuid>,
     pub store_id: Uuid,
     #[serde(default)]
     pub remark: Option<String>,
