@@ -28,6 +28,10 @@ frontend_callback_url = ""
 ttl_seconds = 86400
 cookie_secure = false
 
+[logging]
+directory = "logs"
+file_prefix = "atlas.log"
+
 [events]
 # Days a finalized (approved/rejected) event is kept before the background
 # sweeper deletes it together with its approve/reject events. Pending

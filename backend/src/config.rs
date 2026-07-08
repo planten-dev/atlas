@@ -28,6 +28,8 @@ pub struct AppConfig {
     pub auth: AuthConfig,
     pub session: SessionConfig,
     #[serde(default)]
+    pub logging: LoggingConfig,
+    #[serde(default)]
     pub events: EventsConfig,
 }
 
@@ -69,6 +71,22 @@ pub struct AuthConfig {
 pub struct SessionConfig {
     pub ttl_seconds: u64,
     pub cookie_secure: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct LoggingConfig {
+    pub directory: PathBuf,
+    pub file_prefix: String,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            directory: PathBuf::from("logs"),
+            file_prefix: "atlas.log".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -225,6 +243,8 @@ cookie_secure = false
         );
         assert_eq!(config.session.ttl_seconds, 86_400);
         assert!(!config.session.cookie_secure);
+        assert_eq!(config.logging.directory, PathBuf::from("logs"));
+        assert_eq!(config.logging.file_prefix, "atlas.log");
         assert_eq!(config.events.retention_days, 180);
         assert_eq!(config.events.sweep_interval_seconds, 86_400);
     }
@@ -238,12 +258,16 @@ cookie_secure = false
         set_test_env("ATLAS__DATABASE__KIND", "sqlite-memory");
         set_test_env("ATLAS__SESSION__TTL_SECONDS", "60");
         set_test_env("ATLAS__EVENTS__RETENTION_DAYS", "30");
+        set_test_env("ATLAS__LOGGING__DIRECTORY", "custom-logs");
+        set_test_env("ATLAS__LOGGING__FILE_PREFIX", "custom.log");
         let config = load_from_sources(&dir, CliArgs::default()).expect("config should load");
         clear_test_env();
 
         assert_eq!(config.database.kind, DatabaseKind::SqliteMemory);
         assert_eq!(config.session.ttl_seconds, 60);
         assert_eq!(config.events.retention_days, 30);
+        assert_eq!(config.logging.directory, PathBuf::from("custom-logs"));
+        assert_eq!(config.logging.file_prefix, "custom.log");
     }
 
     #[test]
@@ -285,6 +309,10 @@ cookie_secure = false
 [database]
 kind = "sqlite-file"
 sqlite_file = "custom.sqlite"
+
+[logging]
+directory = "custom-logs"
+file_prefix = "custom.log"
 "#,
         )
         .expect("custom config should be written");
@@ -300,6 +328,8 @@ sqlite_file = "custom.sqlite"
 
         assert_eq!(config.database.kind, DatabaseKind::SqliteFile);
         assert_eq!(config.database.sqlite_file, PathBuf::from("custom.sqlite"));
+        assert_eq!(config.logging.directory, PathBuf::from("custom-logs"));
+        assert_eq!(config.logging.file_prefix, "custom.log");
     }
 
     fn set_test_env(key: &str, value: &str) {
@@ -320,6 +350,8 @@ sqlite_file = "custom.sqlite"
             "ATLAS__DINGTALK__USER_DETAIL_URL",
             "ATLAS__DINGTALK__GETBYUNIONID_URL",
             "ATLAS__EVENTS__RETENTION_DAYS",
+            "ATLAS__LOGGING__DIRECTORY",
+            "ATLAS__LOGGING__FILE_PREFIX",
         ] {
             // SAFETY: Tests that mutate process environment hold a shared mutex
             // so this crate does not read or write the same variables concurrently.
