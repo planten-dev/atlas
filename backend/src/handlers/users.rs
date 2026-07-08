@@ -319,6 +319,13 @@ mod tests {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
+        let current = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("current user should exist");
+        grant(&context, current.id, "users", "read").await;
 
         let list_response = context
             .app
@@ -366,6 +373,81 @@ mod tests {
             body.pointer("/dingtalk_user_id").and_then(Value::as_str),
             Some("ding-user-1")
         );
+    }
+
+    #[tokio::test]
+    async fn user_management_routes_require_permissions() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let target = context
+            .users
+            .find_or_create_for_login("target-user", Utc::now())
+            .await
+            .expect("target user should be created");
+
+        let list_response = context
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/users/list")
+                    .header(header::COOKIE, cookie.clone())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("users list request should be handled");
+        assert_eq!(list_response.status(), StatusCode::FORBIDDEN);
+        let body = response_json(list_response).await;
+        assert_eq!(
+            body.pointer("/error").and_then(Value::as_str),
+            Some("permission_denied")
+        );
+
+        let detail_response = context
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/users/detail/{}", target.id))
+                    .header(header::COOKIE, cookie.clone())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("user detail request should be handled");
+        assert_eq!(detail_response.status(), StatusCode::FORBIDDEN);
+
+        let update_response = context
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/users/update-status/{}", target.id))
+                    .header(header::COOKIE, cookie.clone())
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"target_status":"disabled"}"#))
+                    .unwrap(),
+            )
+            .await
+            .expect("update status request should be handled");
+        assert_eq!(update_response.status(), StatusCode::FORBIDDEN);
+
+        let delete_response = context
+            .app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/users/delete/{}", target.id))
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("delete user request should be handled");
+        assert_eq!(delete_response.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
@@ -743,6 +825,13 @@ mod tests {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
+        let current = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("current user should exist");
+        grant(&context, current.id, "users", "read").await;
 
         for uri in [
             "/api/v1/users/list?status_filter=deleted",
@@ -772,6 +861,13 @@ mod tests {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let admin_cookie = login_and_cookie(context.app.clone()).await;
+        let admin = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("admin user should exist");
+        grant(&context, admin.id, "users", "write").await;
         let now = Utc::now();
         let target = context
             .users
@@ -835,6 +931,13 @@ mod tests {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
+        let current = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("current user should exist");
+        grant(&context, current.id, "users", "write").await;
 
         let invalid_status = context
             .app
@@ -891,6 +994,14 @@ mod tests {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let admin_cookie = login_and_cookie(context.app.clone()).await;
+        let admin = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("admin user should exist");
+        grant(&context, admin.id, "users", "write").await;
+        grant(&context, admin.id, "users", "read").await;
         let now = Utc::now();
         let target = context
             .users
@@ -1003,6 +1114,8 @@ mod tests {
             .pointer("/id")
             .and_then(Value::as_str)
             .expect("me should include user id");
+        let user_id = Uuid::parse_str(user_id).expect("me should return a uuid id");
+        grant(&context, user_id, "users", "write").await;
 
         let delete_response = context
             .app
@@ -1038,6 +1151,13 @@ mod tests {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
+        let current = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("current user should exist");
+        grant(&context, current.id, "users", "write").await;
 
         let invalid_id = context
             .app
@@ -1113,6 +1233,20 @@ mod tests {
             .await
             .expect("response body should be readable");
         serde_json::from_slice(&body).expect("response body should be json")
+    }
+
+    async fn grant(context: &TestContext, user_id: Uuid, object: &str, action: &str) {
+        context
+            .authz
+            .create_policy(
+                "user".to_string(),
+                user_id,
+                object.to_string(),
+                action.to_string(),
+                "allow".to_string(),
+            )
+            .await
+            .expect("seed policy should be created");
     }
 
     async fn test_context(mock_base_url: &str) -> TestContext {

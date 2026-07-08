@@ -235,7 +235,7 @@
         ],
         "summary": "List users",
         "operationId": "listUsers",
-        "description": "Lists Atlas users. User records are created only by the DingTalk external login flow; this API only reads existing users.",
+        "description": "Requires permission users:read. Lists Atlas users. User records are created only by the DingTalk external login flow; this API only reads existing users.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -310,7 +310,7 @@
         ],
         "summary": "Get user detail",
         "operationId": "getUserDetail",
-        "description": "Returns one Atlas user by the internal user id.",
+        "description": "Requires permission users:read. Returns one Atlas user by the internal user id.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -475,7 +475,7 @@
         ],
         "summary": "Update user status",
         "operationId": "updateUserStatus",
-        "description": "Updates only the Atlas user status. dingtalk_user_id cannot be changed through the user management API. Setting target_status to disabled revokes the user's active sessions; setting it to active does not create a session.",
+        "description": "Requires permission users:write. Updates only the Atlas user status. dingtalk_user_id cannot be changed through the user management API. Setting target_status to disabled revokes the user's active sessions; setting it to active does not create a session.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -539,7 +539,7 @@
         ],
         "summary": "Delete user",
         "operationId": "deleteUser",
-        "description": "Hard deletes one Atlas user record by internal user id. The user's auth_sessions records are deleted first to satisfy current foreign key constraints. User records are still created only by DingTalk external login; after deletion, the same dingtalk_user_id can be recreated by a future DingTalk login.",
+        "description": "Requires permission users:write. Hard deletes one Atlas user record by internal user id. The user's auth_sessions records are deleted first to satisfy current foreign key constraints. User records are still created only by DingTalk external login; after deletion, the same dingtalk_user_id can be recreated by a future DingTalk login.",
         "security": [
           {
             "AtlasSessionCookie": []
