@@ -1674,6 +1674,197 @@
         }
       }
     },
+    "/api/v1/departments/list": {
+      "get": {
+        "tags": [
+          "Departments"
+        ],
+        "summary": "List departments",
+        "operationId": "listDepartments",
+        "description": "Requires permission departments:read. Lists departments with optional status, source and parent filtering plus pagination. Departments are read-only over HTTP except for DingTalk sync; rows are created by sync or internal tooling.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "disabled"
+              ]
+            },
+            "description": "Only return departments with this status."
+          },
+          {
+            "name": "source_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "dingtalk",
+                "manual"
+              ]
+            },
+            "description": "Only return departments from this source."
+          },
+          {
+            "name": "parent_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Only return direct children of this department id."
+          },
+          {
+            "name": "page_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Departments page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListDepartmentsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/departments/detail/{department_id}": {
+      "get": {
+        "tags": [
+          "Departments"
+        ],
+        "summary": "Get department detail",
+        "operationId": "getDepartmentDetail",
+        "description": "Requires permission departments:read. Returns one department by id.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "department_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Department id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Department detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DepartmentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/departments/sync/dingtalk": {
+      "post": {
+        "tags": [
+          "Departments"
+        ],
+        "summary": "Sync departments from DingTalk",
+        "operationId": "syncDingTalkDepartments",
+        "description": "Requires permission departments:write. Fetches the DingTalk organization tree and upserts rows with source dingtalk: new departments are inserted, renamed or re-parented departments are updated, deletion is not synced and manual rows are never touched. Returns a summary of the sync.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sync summary.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DepartmentSyncResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          }
+        }
+      }
+    },
     "/api/v1/systems/list": {
       "get": {
         "tags": [
@@ -6767,6 +6958,123 @@
             ],
             "maxLength": 2000,
             "description": "Optional review comment stored on the approve/reject event."
+          }
+        }
+      },
+      "DepartmentResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "external_department_id",
+          "parent_id",
+          "name",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "dingtalk",
+              "manual"
+            ],
+            "description": "Where this department row comes from: DingTalk sync or manual creation."
+          },
+          "external_department_id": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "External department identifier. For dingtalk rows this is the DingTalk dept_id as a string."
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Parent department id from departments.id. Null for top-level departments."
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ListDepartmentsResponse": {
+        "type": "object",
+        "required": [
+          "departments",
+          "page_number",
+          "page_size",
+          "total_count"
+        ],
+        "properties": {
+          "departments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DepartmentResponse"
+            }
+          },
+          "page_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "total_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "DepartmentSyncResponse": {
+        "type": "object",
+        "required": [
+          "total",
+          "created",
+          "updated",
+          "unchanged"
+        ],
+        "properties": {
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Departments fetched from DingTalk."
+          },
+          "created": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updated": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unchanged": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       }

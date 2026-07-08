@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod customers;
+pub mod departments;
 pub mod events;
 pub mod health;
 pub mod permissions;

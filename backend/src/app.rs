@@ -147,6 +147,23 @@ pub fn router(state: AppState) -> Router {
             post(handlers::events::reject_event),
         )
         .route(
+            "/api/v1/departments/list",
+            get(handlers::departments::list_departments
+                .layer(require_permission(&state, "departments:read"))),
+        )
+        .route(
+            "/api/v1/departments/detail/{department_id}",
+            get(handlers::departments::department_detail
+                .layer(require_permission(&state, "departments:read"))),
+        )
+        .route(
+            "/api/v1/departments/sync/dingtalk",
+            post(
+                handlers::departments::sync_dingtalk_departments
+                    .layer(require_permission(&state, "departments:write")),
+            ),
+        )
+        .route(
             "/api/v1/systems/list",
             get(handlers::systems::list_systems.layer(require_permission(&state, "systems:read"))),
         )

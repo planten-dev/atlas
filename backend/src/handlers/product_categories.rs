@@ -197,7 +197,8 @@ mod tests {
         config::{AuthConfig, DatabaseConfig, DatabaseKind, DingTalkConfig, SessionConfig},
         db,
         repositories::{
-            authz::AuthzRepository, customers::CustomerRepository, events::EventRepository,
+            authz::AuthzRepository, customers::CustomerRepository,
+            departments::DepartmentRepository, events::EventRepository,
             product_categories::ProductCategoryRepository, products::ProductRepository,
             sales_records::SalesRecordRepository, sessions::SessionRepository,
             stores::StoreRepository, systems::SystemRepository,
@@ -205,9 +206,10 @@ mod tests {
         },
         services::{
             auth::AuthService, authz::AuthzService, customers::CustomerService,
-            events::EventService, product_categories::ProductCategoryService,
-            products::ProductService, review::ApplierRegistry, sales_records::SalesRecordService,
-            stores::StoreService, systems::SystemService, users::UserService,
+            departments::DepartmentService, events::EventService,
+            product_categories::ProductCategoryService, products::ProductService,
+            review::ApplierRegistry, sales_records::SalesRecordService, stores::StoreService,
+            systems::SystemService, users::UserService,
         },
     };
     use axum::{
@@ -641,32 +643,35 @@ mod tests {
         let sessions = SessionRepository::new(db.clone());
         let product_categories = ProductCategoryRepository::new(db.clone());
         let products = ProductRepository::new(db.clone());
+        let departments = DepartmentRepository::new(db.clone());
         let systems = SystemRepository::new(db.clone());
         let stores = StoreRepository::new(db.clone());
         let customers = CustomerRepository::new(db.clone());
         let sales_records = SalesRecordRepository::new(db.clone());
+        let dingtalk_config = DingTalkConfig {
+            client_id: "test-client-id".to_string(),
+            client_secret: "test-client-secret".to_string(),
+            redirect_uri: "http://127.0.0.1:3000/api/v1/auth/callback/dingtalk".to_string(),
+            auth_url: "https://login.dingtalk.com/oauth2/auth".to_string(),
+            token_url: format!("{mock_base_url}/token"),
+            user_info_url: format!("{mock_base_url}/me"),
+            corp_token_url: format!("{mock_base_url}/gettoken"),
+            department_listsub_url: format!("{mock_base_url}/listsub"),
+            user_detail_url: format!("{mock_base_url}/user_detail"),
+            getbyunionid_url: format!("{mock_base_url}/getbyunionid"),
+            scope: "openid".to_string(),
+            corp_id: "".to_string(),
+            external_id_fields: vec!["userId".to_string()],
+        };
         let auth = AuthService::new(
-            DingTalkConfig {
-                client_id: "test-client-id".to_string(),
-                client_secret: "test-client-secret".to_string(),
-                redirect_uri: "http://127.0.0.1:3000/api/v1/auth/callback/dingtalk".to_string(),
-                auth_url: "https://login.dingtalk.com/oauth2/auth".to_string(),
-                token_url: format!("{mock_base_url}/token"),
-                user_info_url: format!("{mock_base_url}/me"),
-                corp_token_url: format!("{mock_base_url}/gettoken"),
-                department_listsub_url: format!("{mock_base_url}/listsub"),
-                user_detail_url: format!("{mock_base_url}/user_detail"),
-                getbyunionid_url: format!("{mock_base_url}/getbyunionid"),
-                scope: "openid".to_string(),
-                corp_id: "".to_string(),
-                external_id_fields: vec!["userId".to_string()],
-            },
+            dingtalk_config.clone(),
             users.clone(),
             profiles.clone(),
             EventRepository::new(db.clone()),
             sessions.clone(),
             86_400,
         );
+        let departments_service = DepartmentService::new(dingtalk_config, departments.clone());
         let authz = AuthzService::new(AuthzRepository::new(db.clone()))
             .await
             .expect("test authz service should initialize");
@@ -703,6 +708,7 @@ mod tests {
             customers: customers_service,
             sales_records: sales_records_service,
             events: events_service,
+            departments: departments_service,
             auth_config: AuthConfig {
                 frontend_callback_url: "".to_string(),
             },

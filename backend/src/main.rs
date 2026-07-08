@@ -2,14 +2,15 @@ use anyhow::{Context, Result};
 use backend::{
     app, config, db,
     repositories::{
-        authz::AuthzRepository, customers::CustomerRepository, events::EventRepository,
-        product_categories::ProductCategoryRepository, products::ProductRepository,
-        sales_records::SalesRecordRepository, sessions::SessionRepository, stores::StoreRepository,
-        systems::SystemRepository, user_profiles::UserProfileRepository, users::UserRepository,
+        authz::AuthzRepository, customers::CustomerRepository, departments::DepartmentRepository,
+        events::EventRepository, product_categories::ProductCategoryRepository,
+        products::ProductRepository, sales_records::SalesRecordRepository,
+        sessions::SessionRepository, stores::StoreRepository, systems::SystemRepository,
+        user_profiles::UserProfileRepository, users::UserRepository,
     },
     services::{
         auth::AuthService, authz::AuthzService, authz_catalog::PermissionCatalog,
-        customers::CustomerService, events::EventService,
+        customers::CustomerService, departments::DepartmentService, events::EventService,
         product_categories::ProductCategoryService, products::ProductService,
         review::ApplierRegistry, sales_records::SalesRecordService, stores::StoreService,
         systems::SystemService, users::UserService,
@@ -42,6 +43,7 @@ async fn main() -> Result<()> {
     let sessions = SessionRepository::new(db.clone());
     let product_categories = ProductCategoryRepository::new(db.clone());
     let products = ProductRepository::new(db.clone());
+    let departments = DepartmentRepository::new(db.clone());
     let systems = SystemRepository::new(db.clone());
     let stores = StoreRepository::new(db.clone());
     let customers = CustomerRepository::new(db.clone());
@@ -77,6 +79,7 @@ async fn main() -> Result<()> {
     let products = ProductService::new(products, product_categories.clone());
     let stores_service = StoreService::new(stores.clone(), systems.clone());
     let systems_service = SystemService::new(systems.clone(), stores.clone());
+    let departments_service = DepartmentService::new(config.dingtalk.clone(), departments);
     let customers_service =
         CustomerService::new(customers.clone(), systems.clone(), stores.clone());
     let sales_records_service = SalesRecordService::new(
@@ -106,6 +109,7 @@ async fn main() -> Result<()> {
         customers: customers_service,
         sales_records: sales_records_service,
         events,
+        departments: departments_service,
         auth_config: config.auth.clone(),
         session_config: config.session.clone(),
     }));
