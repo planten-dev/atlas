@@ -1,6 +1,5 @@
 use chrono::Utc;
 use sea_orm::entity::prelude::Decimal;
-use serde_json::{Value, json};
 use std::{collections::HashMap, str::FromStr};
 use thiserror::Error;
 use tracing::{debug, info, warn};
@@ -11,13 +10,12 @@ use crate::{
         CreateProductRequest, ListProductsQuery, ListProductsResponse, PatchField, ProductResponse,
         ProductStatus, ProductStatusParseError, UpdateProductRequest,
     },
-    entities::{product_category, products},
+    entities::product_category,
     repositories::{
         RepositoryError,
         product_categories::ProductCategoryRepository,
         products::{NewProduct, ProductChanges, ProductRepository},
     },
-    services::audit::AuditService,
 };
 
 const DEFAULT_PAGE_NUMBER: u64 = 1;
@@ -34,7 +32,6 @@ const MAX_UNIT_LENGTH: usize = 32;
 pub struct ProductService {
     products: ProductRepository,
     categories: ProductCategoryRepository,
-    audit: Option<AuditService>,
 }
 
 impl ProductService {
@@ -42,34 +39,12 @@ impl ProductService {
         Self {
             products,
             categories,
-            audit: None,
-        }
-    }
-
-    pub fn with_audit(
-        products: ProductRepository,
-        categories: ProductCategoryRepository,
-        audit: AuditService,
-    ) -> Self {
-        Self {
-            products,
-            categories,
-            audit: Some(audit),
         }
     }
 
     #[tracing::instrument(level = "info", skip(self, request))]
     pub async fn create_product(
         &self,
-        request: CreateProductRequest,
-    ) -> Result<ProductResponse, ProductError> {
-        self.create_product_as(None, request).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self, request))]
-    pub async fn create_product_as(
-        &self,
-        actor_user_id: Option<Uuid>,
         request: CreateProductRequest,
     ) -> Result<ProductResponse, ProductError> {
         let status = match request.status {
@@ -92,25 +67,7 @@ impl ProductService {
             status: status.as_str().to_string(),
         };
 
-        let now = Utc::now();
-        let product = if let Some(audit) = &self.audit {
-            let tx = audit.begin().await?;
-            let product = self.products.create_product_in(&tx, product, now).await?;
-            audit
-                .record_create(
-                    &tx,
-                    "products",
-                    product.id,
-                    actor_user_id,
-                    product_audit_value(&product),
-                    now,
-                )
-                .await?;
-            tx.commit().await.map_err(RepositoryError::from)?;
-            product
-        } else {
-            self.products.create_product(product, now).await?
-        };
+        let product = self.products.create_product(product, Utc::now()).await?;
         info!(product_id = %product.id, "created product through service");
         Ok(ProductResponse::from_model(product, category))
     }
@@ -176,16 +133,6 @@ impl ProductService {
         product_id: Uuid,
         request: UpdateProductRequest,
     ) -> Result<ProductResponse, ProductError> {
-        self.update_product_as(None, product_id, request).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self, request))]
-    pub async fn update_product_as(
-        &self,
-        actor_user_id: Option<Uuid>,
-        product_id: Uuid,
-        request: UpdateProductRequest,
-    ) -> Result<ProductResponse, ProductError> {
         let product = self
             .products
             .find_by_id(product_id)
@@ -219,76 +166,25 @@ impl ProductService {
             return self.product_response(product).await;
         }
 
-        let old_value = product_audit_value(&product);
-        let now = Utc::now();
-        let product = if let Some(audit) = &self.audit {
-            let tx = audit.begin().await?;
-            let product = self
-                .products
-                .update_product_in(&tx, &product, changes, now)
-                .await?;
-            audit
-                .record_update(
-                    &tx,
-                    "products",
-                    product.id,
-                    actor_user_id,
-                    old_value,
-                    product_audit_value(&product),
-                    now,
-                )
-                .await?;
-            tx.commit().await.map_err(RepositoryError::from)?;
-            product
-        } else {
-            self.products.update_product(&product, changes, now).await?
-        };
+        let product = self
+            .products
+            .update_product(&product, changes, Utc::now())
+            .await?;
         info!(%product_id, "updated product through service");
         self.product_response(product).await
     }
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn disable_product(&self, product_id: Uuid) -> Result<ProductResponse, ProductError> {
-        self.disable_product_as(None, product_id).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self))]
-    pub async fn disable_product_as(
-        &self,
-        actor_user_id: Option<Uuid>,
-        product_id: Uuid,
-    ) -> Result<ProductResponse, ProductError> {
         let product = self
             .products
             .find_by_id(product_id)
             .await?
             .ok_or(ProductError::ProductNotFound)?;
-        let old_value = product_audit_value(&product);
-        let now = Utc::now();
-        let product = if let Some(audit) = &self.audit {
-            let tx = audit.begin().await?;
-            let product = self
-                .products
-                .update_status_in(&tx, &product, ProductStatus::Disabled.as_str(), now)
-                .await?;
-            audit
-                .record_update(
-                    &tx,
-                    "products",
-                    product.id,
-                    actor_user_id,
-                    old_value,
-                    product_audit_value(&product),
-                    now,
-                )
-                .await?;
-            tx.commit().await.map_err(RepositoryError::from)?;
-            product
-        } else {
-            self.products
-                .update_status(&product, ProductStatus::Disabled.as_str(), now)
-                .await?
-        };
+        let product = self
+            .products
+            .update_status(&product, ProductStatus::Disabled.as_str(), Utc::now())
+            .await?;
 
         info!(%product_id, "disabled product through service");
         self.product_response(product).await
@@ -296,36 +192,11 @@ impl ProductService {
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn delete_product(&self, product_id: Uuid) -> Result<(), ProductError> {
-        self.delete_product_as(None, product_id).await
-    }
+        if self.products.find_by_id(product_id).await?.is_none() {
+            return Err(ProductError::ProductNotFound);
+        }
 
-    #[tracing::instrument(level = "info", skip(self))]
-    pub async fn delete_product_as(
-        &self,
-        actor_user_id: Option<Uuid>,
-        product_id: Uuid,
-    ) -> Result<(), ProductError> {
-        let product = self
-            .products
-            .find_by_id(product_id)
-            .await?
-            .ok_or(ProductError::ProductNotFound)?;
-        let old_value = product_audit_value(&product);
-
-        let deleted = if let Some(audit) = &self.audit {
-            let now = Utc::now();
-            let tx = audit.begin().await?;
-            let deleted = self.products.delete_by_id_in(&tx, product_id).await?;
-            if deleted {
-                audit
-                    .record_delete(&tx, "products", product_id, actor_user_id, old_value, now)
-                    .await?;
-            }
-            tx.commit().await.map_err(RepositoryError::from)?;
-            deleted
-        } else {
-            self.products.delete_by_id(product_id).await?
-        };
+        let deleted = self.products.delete_by_id(product_id).await?;
         if !deleted {
             warn!(%product_id, "product disappeared before delete completed");
             return Err(ProductError::ProductNotFound);
@@ -386,22 +257,6 @@ impl ProductService {
             })
             .collect()
     }
-}
-
-fn product_audit_value(product: &products::Model) -> Value {
-    json!({
-        "id": product.id,
-        "name": product.name,
-        "category_id": product.category_id,
-        "series": product.series,
-        "brand_name": product.brand_name,
-        "specification": product.specification,
-        "unit": product.unit,
-        "unit_price": format!("{:.2}", product.unit_price),
-        "status": product.status,
-        "created_at": product.created_at,
-        "updated_at": product.updated_at,
-    })
 }
 
 #[derive(Debug, Error)]
@@ -632,11 +487,7 @@ mod tests {
     use crate::{
         config::{DatabaseConfig, DatabaseKind},
         db,
-        entities::events::{self, ApprovalStatus, EventType},
-        repositories::events::EventRepository,
-        services::audit::AuditService,
     };
-    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -656,21 +507,6 @@ mod tests {
         let products = ProductRepository::new(db);
         let service = ProductService::new(products.clone(), categories.clone());
         (categories, products, service)
-    }
-
-    async fn audited_services() -> (ProductCategoryRepository, ProductService, EventRepository) {
-        let db = db::connect_and_migrate(&sqlite_memory_config())
-            .await
-            .expect("sqlite memory database should initialize");
-        let categories = ProductCategoryRepository::new(db.clone());
-        let products = ProductRepository::new(db.clone());
-        let events = EventRepository::new(db.clone());
-        let service = ProductService::with_audit(
-            products,
-            categories.clone(),
-            AuditService::new(EventRepository::new(db)),
-        );
-        (categories, service, events)
     }
 
     async fn default_category(categories: &ProductCategoryRepository) -> Uuid {
@@ -954,58 +790,5 @@ mod tests {
                 .await,
             Err(ProductError::ProductCategoryDisabled)
         ));
-    }
-
-    #[tokio::test]
-    async fn audited_product_mutations_write_events_and_skip_empty_update() {
-        let (categories, service, events_repo) = audited_services().await;
-        let category_id = default_category(&categories).await;
-        let actor = Uuid::new_v4();
-
-        let created = service
-            .create_product_as(
-                Some(actor),
-                create_request("product-a", category_id, "12.30"),
-            )
-            .await
-            .expect("product should be created");
-        service
-            .update_product_as(
-                Some(actor),
-                created.id,
-                serde_json::from_value(json!({"name": "product-b"}))
-                    .expect("update request should deserialize"),
-            )
-            .await
-            .expect("product should update");
-        service
-            .update_product_as(
-                Some(actor),
-                created.id,
-                serde_json::from_value(json!({})).expect("empty update should deserialize"),
-            )
-            .await
-            .expect("empty update should be accepted");
-        service
-            .disable_product_as(Some(actor), created.id)
-            .await
-            .expect("product should disable");
-
-        let rows = events::Entity::find()
-            .filter(events::Column::ResourceType.eq("products"))
-            .filter(events::Column::ResourceId.eq(created.id))
-            .all(&events_repo.db)
-            .await
-            .expect("audit events should load");
-
-        assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0].event_type, EventType::Create);
-        assert_eq!(rows[1].event_type, EventType::Update);
-        assert_eq!(rows[2].event_type, EventType::Update);
-        assert!(rows.iter().all(|row| row.actor_user_id == Some(actor)));
-        assert!(
-            rows.iter()
-                .all(|row| row.approval_status == ApprovalStatus::None)
-        );
     }
 }

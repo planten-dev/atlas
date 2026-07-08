@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait,
-    PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, Set,
 };
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -102,51 +102,16 @@ impl UserRepository {
         Ok(user)
     }
 
-    #[tracing::instrument(level = "info", skip(self, conn), fields(dingtalk_user_id = %dingtalk_user_id))]
-    pub async fn create_for_login_in<C: ConnectionTrait>(
-        &self,
-        conn: &C,
-        dingtalk_user_id: &str,
-        now: DateTime<Utc>,
-    ) -> Result<users::Model, RepositoryError> {
-        validate_required("dingtalk_user_id", dingtalk_user_id)?;
-        let dingtalk_user_id = dingtalk_user_id.trim();
-
-        let user = users::ActiveModel {
-            id: Set(Uuid::new_v4()),
-            dingtalk_user_id: Set(dingtalk_user_id.to_string()),
-            status: Set("active".to_string()),
-            created_at: Set(now),
-            updated_at: Set(now),
-            last_login_at: Set(Some(now)),
-        }
-        .insert(conn)
-        .await?;
-
-        info!(user_id = %user.id, "created user for first DingTalk login");
-        Ok(user)
-    }
-
     #[tracing::instrument(level = "debug", skip(self, user), fields(user_id = %user.id))]
     pub async fn touch_login(
         &self,
         user: &users::Model,
         now: DateTime<Utc>,
     ) -> Result<users::Model, RepositoryError> {
-        self.touch_login_in(&self.db, user, now).await
-    }
-
-    #[tracing::instrument(level = "debug", skip(self, conn, user), fields(user_id = %user.id))]
-    pub async fn touch_login_in<C: ConnectionTrait>(
-        &self,
-        conn: &C,
-        user: &users::Model,
-        now: DateTime<Utc>,
-    ) -> Result<users::Model, RepositoryError> {
         let mut active: users::ActiveModel = user.clone().into();
         active.updated_at = Set(now);
         active.last_login_at = Set(Some(now));
-        let user = active.update(conn).await?;
+        let user = active.update(&self.db).await?;
         debug!("updated user login timestamp");
         Ok(user)
     }
@@ -158,23 +123,12 @@ impl UserRepository {
         status: &str,
         now: DateTime<Utc>,
     ) -> Result<users::Model, RepositoryError> {
-        self.update_status_in(&self.db, user, status, now).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self, conn), fields(user_id = %user.id, status = %status))]
-    pub async fn update_status_in<C: ConnectionTrait>(
-        &self,
-        conn: &C,
-        user: &users::Model,
-        status: &str,
-        now: DateTime<Utc>,
-    ) -> Result<users::Model, RepositoryError> {
         validate_required("status", status)?;
 
         let mut active: users::ActiveModel = user.clone().into();
         active.status = Set(status.trim().to_string());
         active.updated_at = Set(now);
-        let user = active.update(conn).await?;
+        let user = active.update(&self.db).await?;
 
         info!(user_id = %user.id, status = %user.status, "updated user status");
         Ok(user)
@@ -182,16 +136,7 @@ impl UserRepository {
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn delete_by_id(&self, user_id: Uuid) -> Result<bool, RepositoryError> {
-        self.delete_by_id_in(&self.db, user_id).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self, conn))]
-    pub async fn delete_by_id_in<C: ConnectionTrait>(
-        &self,
-        conn: &C,
-        user_id: Uuid,
-    ) -> Result<bool, RepositoryError> {
-        let result = users::Entity::delete_by_id(user_id).exec(conn).await?;
+        let result = users::Entity::delete_by_id(user_id).exec(&self.db).await?;
         let deleted = result.rows_affected > 0;
 
         info!(%user_id, deleted, "deleted user by id");

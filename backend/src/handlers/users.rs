@@ -113,7 +113,6 @@ pub async fn sync_user_profile(
 
 pub async fn update_user_status(
     State(state): State<AppState>,
-    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
     request: Result<Json<UpdateUserStatusRequest>, JsonRejection>,
 ) -> Response {
@@ -126,11 +125,7 @@ pub async fn update_user_status(
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
-    match state
-        .users
-        .update_status_as(Some(current_session.user.id), user_id, request)
-        .await
-    {
+    match state.users.update_status(user_id, request).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => user_error_response(error),
     }
@@ -138,7 +133,6 @@ pub async fn update_user_status(
 
 pub async fn delete_user(
     State(state): State<AppState>,
-    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let user_id = match path {
@@ -146,11 +140,7 @@ pub async fn delete_user(
         Err(error) => return validation_error_response("invalid user_id path parameter", error),
     };
 
-    match state
-        .users
-        .delete_user_as(Some(current_session.user.id), user_id)
-        .await
-    {
+    match state.users.delete_user(user_id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => user_error_response(error),
     }

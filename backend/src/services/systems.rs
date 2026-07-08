@@ -1,5 +1,4 @@
 use chrono::Utc;
-use serde_json::{Value, json};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -9,14 +8,12 @@ use crate::{
         CreateSystemRequest, ListSystemsQuery, ListSystemsResponse, PatchField, SystemResponse,
         SystemStatus, SystemStatusParseError, UpdateSystemRequest,
     },
-    entities::systems,
     repositories::{
         RepositoryError,
         departments::DepartmentRepository,
         stores::StoreRepository,
         systems::{NewSystem, SystemChanges, SystemRepository},
     },
-    services::audit::AuditService,
 };
 
 const DEFAULT_PAGE_NUMBER: u64 = 1;
@@ -30,7 +27,6 @@ pub struct SystemService {
     systems: SystemRepository,
     departments: DepartmentRepository,
     stores: StoreRepository,
-    audit: Option<AuditService>,
 }
 
 impl SystemService {
@@ -43,36 +39,12 @@ impl SystemService {
             systems,
             departments,
             stores,
-            audit: None,
-        }
-    }
-
-    pub fn with_audit(
-        systems: SystemRepository,
-        departments: DepartmentRepository,
-        stores: StoreRepository,
-        audit: AuditService,
-    ) -> Self {
-        Self {
-            systems,
-            departments,
-            stores,
-            audit: Some(audit),
         }
     }
 
     #[tracing::instrument(level = "info", skip(self, request))]
     pub async fn create_system(
         &self,
-        request: CreateSystemRequest,
-    ) -> Result<SystemResponse, SystemError> {
-        self.create_system_as(None, request).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self, request))]
-    pub async fn create_system_as(
-        &self,
-        actor_user_id: Option<Uuid>,
         request: CreateSystemRequest,
     ) -> Result<SystemResponse, SystemError> {
         let status = match request.status {
@@ -89,25 +61,7 @@ impl SystemService {
             status: status.as_str().to_string(),
         };
 
-        let now = Utc::now();
-        let system = if let Some(audit) = &self.audit {
-            let tx = audit.begin().await?;
-            let system = self.systems.create_system_in(&tx, system, now).await?;
-            audit
-                .record_create(
-                    &tx,
-                    "systems",
-                    system.id,
-                    actor_user_id,
-                    system_audit_value(&system),
-                    now,
-                )
-                .await?;
-            tx.commit().await.map_err(RepositoryError::from)?;
-            system
-        } else {
-            self.systems.create_system(system, now).await?
-        };
+        let system = self.systems.create_system(system, Utc::now()).await?;
         info!(system_id = %system.id, "created system through service");
         Ok(SystemResponse::from(system))
     }
@@ -167,16 +121,6 @@ impl SystemService {
         system_id: Uuid,
         request: UpdateSystemRequest,
     ) -> Result<SystemResponse, SystemError> {
-        self.update_system_as(None, system_id, request).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self, request))]
-    pub async fn update_system_as(
-        &self,
-        actor_user_id: Option<Uuid>,
-        system_id: Uuid,
-        request: UpdateSystemRequest,
-    ) -> Result<SystemResponse, SystemError> {
         let system = self
             .systems
             .find_by_id(system_id)
@@ -198,76 +142,25 @@ impl SystemService {
             return Ok(SystemResponse::from(system));
         }
 
-        let old_value = system_audit_value(&system);
-        let now = Utc::now();
-        let system = if let Some(audit) = &self.audit {
-            let tx = audit.begin().await?;
-            let system = self
-                .systems
-                .update_system_in(&tx, &system, changes, now)
-                .await?;
-            audit
-                .record_update(
-                    &tx,
-                    "systems",
-                    system.id,
-                    actor_user_id,
-                    old_value,
-                    system_audit_value(&system),
-                    now,
-                )
-                .await?;
-            tx.commit().await.map_err(RepositoryError::from)?;
-            system
-        } else {
-            self.systems.update_system(&system, changes, now).await?
-        };
+        let system = self
+            .systems
+            .update_system(&system, changes, Utc::now())
+            .await?;
         info!(%system_id, "updated system through service");
         Ok(SystemResponse::from(system))
     }
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn disable_system(&self, system_id: Uuid) -> Result<SystemResponse, SystemError> {
-        self.disable_system_as(None, system_id).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self))]
-    pub async fn disable_system_as(
-        &self,
-        actor_user_id: Option<Uuid>,
-        system_id: Uuid,
-    ) -> Result<SystemResponse, SystemError> {
         let system = self
             .systems
             .find_by_id(system_id)
             .await?
             .ok_or(SystemError::SystemNotFound)?;
-        let old_value = system_audit_value(&system);
-        let now = Utc::now();
-        let system = if let Some(audit) = &self.audit {
-            let tx = audit.begin().await?;
-            let system = self
-                .systems
-                .update_status_in(&tx, &system, SystemStatus::Disabled.as_str(), now)
-                .await?;
-            audit
-                .record_update(
-                    &tx,
-                    "systems",
-                    system.id,
-                    actor_user_id,
-                    old_value,
-                    system_audit_value(&system),
-                    now,
-                )
-                .await?;
-            tx.commit().await.map_err(RepositoryError::from)?;
-            system
-        } else {
-            self.systems
-                .update_status(&system, SystemStatus::Disabled.as_str(), now)
-                .await?
-        };
+        let system = self
+            .systems
+            .update_status(&system, SystemStatus::Disabled.as_str(), Utc::now())
+            .await?;
 
         info!(%system_id, "disabled system through service");
         Ok(SystemResponse::from(system))
@@ -275,40 +168,15 @@ impl SystemService {
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn delete_system(&self, system_id: Uuid) -> Result<(), SystemError> {
-        self.delete_system_as(None, system_id).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self))]
-    pub async fn delete_system_as(
-        &self,
-        actor_user_id: Option<Uuid>,
-        system_id: Uuid,
-    ) -> Result<(), SystemError> {
-        let system = self
-            .systems
-            .find_by_id(system_id)
-            .await?
-            .ok_or(SystemError::SystemNotFound)?;
+        if self.systems.find_by_id(system_id).await?.is_none() {
+            return Err(SystemError::SystemNotFound);
+        }
         if self.stores.count_by_system_id(system_id).await? > 0 {
             warn!(%system_id, "rejected system delete because stores still reference it");
             return Err(SystemError::SystemHasStores);
         }
 
-        let old_value = system_audit_value(&system);
-        let deleted = if let Some(audit) = &self.audit {
-            let now = Utc::now();
-            let tx = audit.begin().await?;
-            let deleted = self.systems.delete_by_id_in(&tx, system_id).await?;
-            if deleted {
-                audit
-                    .record_delete(&tx, "systems", system_id, actor_user_id, old_value, now)
-                    .await?;
-            }
-            tx.commit().await.map_err(RepositoryError::from)?;
-            deleted
-        } else {
-            self.systems.delete_by_id(system_id).await?
-        };
+        let deleted = self.systems.delete_by_id(system_id).await?;
         if !deleted {
             warn!(%system_id, "system disappeared before delete completed");
             return Err(SystemError::SystemNotFound);
@@ -325,17 +193,6 @@ impl SystemService {
 
         Ok(())
     }
-}
-
-fn system_audit_value(system: &systems::Model) -> Value {
-    json!({
-        "id": system.id,
-        "name": system.name,
-        "department_id": system.department_id,
-        "status": system.status,
-        "created_at": system.created_at,
-        "updated_at": system.updated_at,
-    })
 }
 
 #[derive(Debug, Error)]

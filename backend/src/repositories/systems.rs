@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait,
-    PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, Set,
 };
 use tracing::{debug, info};
 use uuid::Uuid;
@@ -44,16 +44,6 @@ impl SystemRepository {
         system: NewSystem,
         now: DateTime<Utc>,
     ) -> Result<systems::Model, RepositoryError> {
-        self.create_system_in(&self.db, system, now).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self, conn, system), fields(name = %system.name, department_id = %system.department_id, status = %system.status))]
-    pub async fn create_system_in<C: ConnectionTrait>(
-        &self,
-        conn: &C,
-        system: NewSystem,
-        now: DateTime<Utc>,
-    ) -> Result<systems::Model, RepositoryError> {
         validate_required("name", &system.name)?;
         validate_required("status", &system.status)?;
 
@@ -65,7 +55,7 @@ impl SystemRepository {
             created_at: Set(now),
             updated_at: Set(now),
         }
-        .insert(conn)
+        .insert(&self.db)
         .await?;
 
         info!(system_id = %system.id, "created system");
@@ -121,17 +111,6 @@ impl SystemRepository {
         changes: SystemChanges,
         now: DateTime<Utc>,
     ) -> Result<systems::Model, RepositoryError> {
-        self.update_system_in(&self.db, system, changes, now).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self, conn, system, changes), fields(system_id = %system.id))]
-    pub async fn update_system_in<C: ConnectionTrait>(
-        &self,
-        conn: &C,
-        system: &systems::Model,
-        changes: SystemChanges,
-        now: DateTime<Utc>,
-    ) -> Result<systems::Model, RepositoryError> {
         let mut active: systems::ActiveModel = system.clone().into();
 
         if let Some(name) = changes.name {
@@ -147,7 +126,7 @@ impl SystemRepository {
         }
         active.updated_at = Set(now);
 
-        let system = active.update(conn).await?;
+        let system = active.update(&self.db).await?;
         info!(system_id = %system.id, "updated system");
         Ok(system)
     }
@@ -159,23 +138,12 @@ impl SystemRepository {
         status: &str,
         now: DateTime<Utc>,
     ) -> Result<systems::Model, RepositoryError> {
-        self.update_status_in(&self.db, system, status, now).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self, conn), fields(system_id = %system.id, status = %status))]
-    pub async fn update_status_in<C: ConnectionTrait>(
-        &self,
-        conn: &C,
-        system: &systems::Model,
-        status: &str,
-        now: DateTime<Utc>,
-    ) -> Result<systems::Model, RepositoryError> {
         validate_required("status", status)?;
 
         let mut active: systems::ActiveModel = system.clone().into();
         active.status = Set(status.trim().to_string());
         active.updated_at = Set(now);
-        let system = active.update(conn).await?;
+        let system = active.update(&self.db).await?;
 
         info!(system_id = %system.id, status = %system.status, "updated system status");
         Ok(system)
@@ -183,16 +151,9 @@ impl SystemRepository {
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn delete_by_id(&self, system_id: Uuid) -> Result<bool, RepositoryError> {
-        self.delete_by_id_in(&self.db, system_id).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self, conn))]
-    pub async fn delete_by_id_in<C: ConnectionTrait>(
-        &self,
-        conn: &C,
-        system_id: Uuid,
-    ) -> Result<bool, RepositoryError> {
-        let result = systems::Entity::delete_by_id(system_id).exec(conn).await?;
+        let result = systems::Entity::delete_by_id(system_id)
+            .exec(&self.db)
+            .await?;
         let deleted = result.rows_affected > 0;
 
         info!(%system_id, deleted, "deleted system by id");

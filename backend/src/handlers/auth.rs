@@ -83,11 +83,7 @@ pub async fn logout(
 ) -> Response {
     let clear_cookie = clear_session_cookie(state.session_config.cookie_secure);
 
-    match state
-        .auth
-        .logout_as(Some(current_session.user.id), current_session.session_id)
-        .await
-    {
+    match state.auth.logout(current_session.session_id).await {
         Ok(()) => {
             let mut response = StatusCode::NO_CONTENT.into_response();
             response
@@ -188,7 +184,7 @@ mod tests {
             product_categories::ProductCategoryRepository,
             products::ProductRepository,
             sales_records::SalesRecordRepository,
-            sessions::{SessionRepository, hash_secret},
+            sessions::SessionRepository,
             stores::StoreRepository,
             systems::SystemRepository,
             user_profiles::UserProfileRepository,
@@ -276,106 +272,6 @@ mod tests {
                 .and_then(Value::as_str),
             Some("ding-user-1")
         );
-    }
-
-    #[tokio::test]
-    async fn login_oauth_state_lifecycle_writes_sanitized_audit_events() {
-        let mock_base_url = start_mock_dingtalk().await;
-        let context = test_context(&mock_base_url).await;
-
-        let login_response = context
-            .app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v1/auth/login/dingtalk")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .expect("login request should be handled");
-        assert_eq!(login_response.status(), StatusCode::TEMPORARY_REDIRECT);
-        let location = login_response
-            .headers()
-            .get(header::LOCATION)
-            .and_then(|value| value.to_str().ok())
-            .expect("login should include location");
-        let state = query_param(location, "state").expect("state should be present");
-
-        let (created_events, created_count) = context
-            .events
-            .list_events(
-                EventFilter {
-                    resource_type: Some("oauth_login_states".to_string()),
-                    ..EventFilter::default()
-                },
-                1,
-                20,
-            )
-            .await
-            .expect("oauth state create event should be listed");
-        assert_eq!(created_count, 1);
-        assert_eq!(created_events[0].event_type, EventType::Create);
-        assert_eq!(created_events[0].approval_status, ApprovalStatus::None);
-        assert_eq!(created_events[0].actor_user_id, None);
-        assert!(created_events[0].old_value.is_none());
-        assert!(created_events[0].new_value.is_some());
-
-        let callback_response = context
-            .app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!(
-                        "/api/v1/auth/callback/dingtalk?code=test-code&state={state}"
-                    ))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .expect("callback request should be handled");
-        assert_eq!(callback_response.status(), StatusCode::OK);
-
-        let (events, total_count) = context
-            .events
-            .list_events(
-                EventFilter {
-                    resource_type: Some("oauth_login_states".to_string()),
-                    ..EventFilter::default()
-                },
-                1,
-                20,
-            )
-            .await
-            .expect("oauth state events should be listed");
-        assert_eq!(total_count, 2);
-        assert_eq!(events.len(), 2);
-        assert!(events.iter().all(|event| {
-            event.approval_status == ApprovalStatus::None && event.actor_user_id.is_none()
-        }));
-        assert!(events.iter().any(|event| {
-            event.event_type == EventType::Update
-                && event
-                    .new_value
-                    .as_ref()
-                    .and_then(|value| value.get("consumed_at"))
-                    .is_some_and(|value| !value.is_null())
-        }));
-        let resource_ids = events
-            .iter()
-            .filter_map(|event| event.resource_id)
-            .collect::<std::collections::HashSet<_>>();
-        assert_eq!(resource_ids.len(), 1);
-
-        let audit_values = events
-            .iter()
-            .flat_map(|event| [event.old_value.clone(), event.new_value.clone()])
-            .flatten()
-            .collect::<Vec<_>>();
-        let audit_json = serde_json::to_string(&audit_values).expect("audit should serialize");
-        assert!(!audit_json.contains(&state));
-        assert!(!audit_json.contains(&hash_secret(&state)));
-        assert!(!audit_json.contains("state_hash"));
     }
 
     #[tokio::test]
