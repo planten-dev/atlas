@@ -1,5 +1,6 @@
 pub mod auth_sessions;
 pub mod departments;
+pub mod events;
 pub mod oauth_login_states;
 pub mod permission_policies;
 pub mod product_category;

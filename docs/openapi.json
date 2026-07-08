@@ -1239,6 +1239,351 @@
         }
       }
     },
+    "/api/v1/events/list": {
+      "get": {
+        "tags": [
+          "Events"
+        ],
+        "summary": "List audit events",
+        "operationId": "listEvents",
+        "description": "Requires permission events:read. Lists audit/approval events with optional filters and pagination, newest first.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "resource_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "description": "Only return events for this resource type (table name)."
+          },
+          {
+            "name": "resource_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Only return events pointing at this resource row."
+          },
+          {
+            "name": "event_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "enum": [
+                0,
+                1,
+                2,
+                3,
+                4
+              ]
+            },
+            "description": "Event type: 0 create, 1 update, 2 delete, 3 approve, 4 reject."
+          },
+          {
+            "name": "approval_status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "enum": [
+                0,
+                1,
+                2,
+                3
+              ]
+            },
+            "description": "Approval status: 0 none, 1 pending, 2 approved, 3 rejected."
+          },
+          {
+            "name": "target_event_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Only return approve/reject events targeting this event."
+          },
+          {
+            "name": "page_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Events page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListEventsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/events/detail/{event_id}": {
+      "get": {
+        "tags": [
+          "Events"
+        ],
+        "summary": "Get event detail",
+        "operationId": "getEventDetail",
+        "description": "Requires permission events:read. Returns one audit/approval event by id.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Event id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/events/approve/{event_id}": {
+      "post": {
+        "tags": [
+          "Events"
+        ],
+        "summary": "Approve an event",
+        "operationId": "approveEvent",
+        "description": "Records an approve event targeting the given pending create/update/delete event. The reviewer must hold the object:action permission declared statically for the target's resource type (each reviewable type declares its approval permission in code at registration, e.g. products:approve); there is no static route permission. Once distinct approvers reach required_approval_count, the stored change is applied to the business table in the same transaction and the target becomes approved (2). Each user may review a given event only once. Returns the refreshed target event.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id of the event to approve."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewEventRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Review recorded; the refreshed target event is returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "The event is no longer pending (event_not_pending) or this user already reviewed it (duplicate_review).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The target is itself an approve/reject event (event_not_reviewable) or its resource type is not registered (unknown_resource_type).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/events/reject/{event_id}": {
+      "post": {
+        "tags": [
+          "Events"
+        ],
+        "summary": "Reject an event",
+        "operationId": "rejectEvent",
+        "description": "Records a reject event targeting the given pending create/update/delete event. A single reject vetoes the target: it immediately becomes rejected (3) and is never applied. Permission rules match the approve endpoint. Returns the refreshed target event.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id of the event to reject."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewEventRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Review recorded; the refreshed target event is returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "The event is no longer pending (event_not_pending) or this user already reviewed it (duplicate_review).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The target is itself an approve/reject event (event_not_reviewable).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/v1/systems/list": {
       "get": {
         "tags": [
@@ -3635,6 +3980,150 @@
           }
         },
         "description": "Partial update request. Omitted fields are unchanged; null is rejected for required fields."
+      },
+      "EventResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "resource_type",
+          "event_type",
+          "approval_status",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "resource_type": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Name of the business table this event targets."
+          },
+          "resource_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Id of the targeted row. Null for create events until they are approved and applied, at which point it is backfilled with the new row id."
+          },
+          "actor_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "User who created this event (submitter for create/update/delete, reviewer for approve/reject)."
+          },
+          "event_type": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "description": "0 create, 1 update, 2 delete, 3 approve, 4 reject."
+          },
+          "approval_status": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "description": "0 none (approve/reject events are never themselves reviewed), 1 pending, 2 approved, 3 rejected."
+          },
+          "required_approval_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "description": "Distinct approvers needed before the change is applied. Null for approve/reject events."
+          },
+          "target_event_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "For approve/reject events, the event being reviewed. Null otherwise."
+          },
+          "old_value": {
+            "description": "JSON snapshot of the row before the change. Null for create and approve/reject events."
+          },
+          "new_value": {
+            "description": "JSON payload of the row after the change. Null for delete and approve/reject events."
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000,
+            "description": "Reviewer comment; only present on approve/reject events."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the event was finalized (approved/rejected). Null while pending and always null for approve/reject events."
+          }
+        }
+      },
+      "ListEventsResponse": {
+        "type": "object",
+        "required": [
+          "events",
+          "page_number",
+          "page_size",
+          "total_count"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventResponse"
+            }
+          },
+          "page_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "total_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ReviewEventRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000,
+            "description": "Optional review comment stored on the approve/reject event."
+          }
+        }
       }
     },
     "responses": {

@@ -109,6 +109,27 @@ pub fn router(state: AppState) -> Router {
             ),
         )
         .route(
+            "/api/v1/events/list",
+            get(handlers::events::list_events.layer(require_permission(&state, "events:read"))),
+        )
+        .route(
+            "/api/v1/events/detail/{event_id}",
+            get(handlers::events::event_detail.layer(require_permission(&state, "events:read"))),
+        )
+        // approve/reject deliberately carry no static permission layer: the
+        // permission a reviewer needs is declared per resource type
+        // (ReviewableResource::APPROVAL_PERMISSION) and is only known after
+        // loading the target event, so EventService::review performs the
+        // check dynamically.
+        .route(
+            "/api/v1/events/approve/{event_id}",
+            post(handlers::events::approve_event),
+        )
+        .route(
+            "/api/v1/events/reject/{event_id}",
+            post(handlers::events::reject_event),
+        )
+        .route(
             "/api/v1/systems/list",
             get(handlers::systems::list_systems.layer(require_permission(&state, "systems:read"))),
         )

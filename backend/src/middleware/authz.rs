@@ -106,8 +106,12 @@ async fn enforce_permission(
 
 /// Splits `scope1:...:action` at the last `:`. The action must be one of
 /// read/write/approve, every scope segment must be non-empty, and
-/// wildcards are not allowed at route-declaration sites.
-fn parse_permission(permission: &'static str) -> Result<(&'static str, &'static str), String> {
+/// wildcards are not allowed at declaration sites. Shared with the review
+/// framework, which validates `ReviewableResource::APPROVAL_PERMISSION`
+/// against the same grammar at registration time.
+pub(crate) fn parse_permission(
+    permission: &'static str,
+) -> Result<(&'static str, &'static str), String> {
     let (object, action) = permission
         .rsplit_once(':')
         .ok_or_else(|| "expected at least `scope:action`".to_string())?;

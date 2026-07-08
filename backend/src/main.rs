@@ -2,19 +2,21 @@ use anyhow::{Context, Result};
 use backend::{
     app, config, db,
     repositories::{
-        authz::AuthzRepository, departments::DepartmentRepository,
+        authz::AuthzRepository, departments::DepartmentRepository, events::EventRepository,
         product_categories::ProductCategoryRepository, products::ProductRepository,
         sessions::SessionRepository, stores::StoreRepository, systems::SystemRepository,
         user_profiles::UserProfileRepository, users::UserRepository,
     },
     services::{
-        auth::AuthService, authz::AuthzService, product_categories::ProductCategoryService,
-        products::ProductService, stores::StoreService, systems::SystemService, users::UserService,
+        auth::AuthService, authz::AuthzService, events::EventService,
+        product_categories::ProductCategoryService, products::ProductService,
+        review::ApplierRegistry, stores::StoreService, systems::SystemService, users::UserService,
     },
     state::AppState,
 };
-use std::{future::Future, net::SocketAddr};
-use tracing::{info, warn};
+use chrono::Utc;
+use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -45,7 +47,7 @@ async fn main() -> Result<()> {
         sessions.clone(),
         config.session.ttl_seconds,
     );
-    let authz = AuthzService::new(AuthzRepository::new(db))
+    let authz = AuthzService::new(AuthzRepository::new(db.clone()))
         .await
         .context("failed to initialize authorization service")?;
     let users = UserService::new(users, profiles, sessions);
@@ -54,6 +56,21 @@ async fn main() -> Result<()> {
     let products = ProductService::new(products, product_categories);
     let stores_service = StoreService::new(stores.clone(), systems.clone());
     let systems = SystemService::new(systems, departments, stores);
+
+    // Business tables opt into the review flow here as they adopt it, e.g.:
+    // registry.register::<ProductDoc>();
+    // Each type declares its reviewer permission via
+    // ReviewableResource::APPROVAL_PERMISSION; malformed declarations
+    // panic here at startup.
+    let registry = ApplierRegistry::new();
+    let events = EventService::new(
+        EventRepository::new(db),
+        authz.clone(),
+        Arc::new(registry),
+        config.events.retention_days,
+    );
+    spawn_event_retention_sweeper(events.clone(), config.events.sweep_interval_seconds);
+
     let app = app::router(AppState::new(
         auth,
         authz,
@@ -62,6 +79,7 @@ async fn main() -> Result<()> {
         products,
         systems,
         stores_service,
+        events,
         config.auth.clone(),
         config.session.clone(),
     ));
@@ -83,6 +101,26 @@ async fn main() -> Result<()> {
     info!("HTTP server stopped");
 
     Ok(())
+}
+
+/// Periodically deletes finalized events that exceeded their retention
+/// window. The first tick fires immediately, so startup performs a sweep.
+fn spawn_event_retention_sweeper(events: EventService, interval_seconds: u64) {
+    let period = Duration::from_secs(interval_seconds.max(1));
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(period);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticker.tick().await;
+            match events.sweep_expired(Utc::now()).await {
+                Ok(deleted) if deleted > 0 => {
+                    info!(deleted, "event retention sweep removed expired events");
+                }
+                Ok(_) => debug!("event retention sweep found nothing to remove"),
+                Err(error) => error!(%error, "event retention sweep failed"),
+            }
+        }
+    });
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

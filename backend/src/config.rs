@@ -27,6 +27,8 @@ pub struct AppConfig {
     pub dingtalk: DingTalkConfig,
     pub auth: AuthConfig,
     pub session: SessionConfig,
+    #[serde(default)]
+    pub events: EventsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -66,6 +68,22 @@ pub struct AuthConfig {
 pub struct SessionConfig {
     pub ttl_seconds: u64,
     pub cookie_secure: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct EventsConfig {
+    pub retention_days: u32,
+    pub sweep_interval_seconds: u64,
+}
+
+impl Default for EventsConfig {
+    fn default() -> Self {
+        Self {
+            retention_days: 180,
+            sweep_interval_seconds: 86_400,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, ValueEnum)]
@@ -205,6 +223,8 @@ cookie_secure = false
         );
         assert_eq!(config.session.ttl_seconds, 86_400);
         assert!(!config.session.cookie_secure);
+        assert_eq!(config.events.retention_days, 180);
+        assert_eq!(config.events.sweep_interval_seconds, 86_400);
     }
 
     #[test]
@@ -215,11 +235,13 @@ cookie_secure = false
 
         set_test_env("ATLAS__DATABASE__KIND", "sqlite-memory");
         set_test_env("ATLAS__SESSION__TTL_SECONDS", "60");
+        set_test_env("ATLAS__EVENTS__RETENTION_DAYS", "30");
         let config = load_from_sources(&dir, CliArgs::default()).expect("config should load");
         clear_test_env();
 
         assert_eq!(config.database.kind, DatabaseKind::SqliteMemory);
         assert_eq!(config.session.ttl_seconds, 60);
+        assert_eq!(config.events.retention_days, 30);
     }
 
     #[test]
@@ -294,6 +316,7 @@ sqlite_file = "custom.sqlite"
             "ATLAS__SESSION__TTL_SECONDS",
             "ATLAS__SESSION__COOKIE_SECURE",
             "ATLAS__DINGTALK__USER_DETAIL_URL",
+            "ATLAS__EVENTS__RETENTION_DAYS",
         ] {
             // SAFETY: Tests that mutate process environment hold a shared mutex
             // so this crate does not read or write the same variables concurrently.

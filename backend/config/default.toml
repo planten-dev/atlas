@@ -26,3 +26,11 @@ frontend_callback_url = ""
 [session]
 ttl_seconds = 86400
 cookie_secure = false
+
+[events]
+# Days a finalized (approved/rejected) event is kept before the background
+# sweeper deletes it together with its approve/reject events. Pending
+# events are kept forever.
+retention_days = 180
+# How often the retention sweeper runs.
+sweep_interval_seconds = 86400

@@ -184,6 +184,7 @@ mod tests {
         repositories::{
             authz::AuthzRepository,
             departments::DepartmentRepository,
+            events::EventRepository,
             product_categories::ProductCategoryRepository,
             products::ProductRepository,
             sessions::SessionRepository,
@@ -193,8 +194,9 @@ mod tests {
             users::UserRepository,
         },
         services::{
-            auth::AuthService, authz::AuthzService, product_categories::ProductCategoryService,
-            products::ProductService, stores::StoreService, systems::SystemService,
+            auth::AuthService, authz::AuthzService, events::EventService,
+            product_categories::ProductCategoryService, products::ProductService,
+            review::ApplierRegistry, stores::StoreService, systems::SystemService,
             users::UserService,
         },
     };
@@ -632,7 +634,7 @@ mod tests {
             sessions.clone(),
             86_400,
         );
-        let authz = AuthzService::new(AuthzRepository::new(db))
+        let authz = AuthzService::new(AuthzRepository::new(db.clone()))
             .await
             .expect("test authz service should initialize");
         let users_service = UserService::new(users.clone(), profiles, sessions);
@@ -641,6 +643,12 @@ mod tests {
         let products_service = ProductService::new(products, product_categories);
         let stores_service = StoreService::new(stores.clone(), systems.clone());
         let systems_service = SystemService::new(systems, departments.clone(), stores.clone());
+        let events_service = EventService::new(
+            EventRepository::new(db),
+            authz.clone(),
+            std::sync::Arc::new(ApplierRegistry::new()),
+            180,
+        );
         let state = AppState::new(
             auth,
             authz.clone(),
@@ -649,6 +657,7 @@ mod tests {
             products_service,
             systems_service,
             stores_service,
+            events_service,
             AuthConfig {
                 frontend_callback_url: "".to_string(),
             },
