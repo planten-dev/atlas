@@ -172,12 +172,21 @@ mod tests {
         app,
         config::{AuthConfig, DatabaseConfig, DatabaseKind, DingTalkConfig, SessionConfig},
         db,
-        entities::users as users_entity,
+        entities::{
+            events::{ApprovalStatus, EventType},
+            users as users_entity,
+        },
         repositories::{
-            authz::AuthzRepository, departments::DepartmentRepository, events::EventRepository,
-            product_categories::ProductCategoryRepository, products::ProductRepository,
-            sessions::SessionRepository, stores::StoreRepository, systems::SystemRepository,
-            user_profiles::UserProfileRepository, users::UserRepository,
+            authz::AuthzRepository,
+            departments::DepartmentRepository,
+            events::{EventFilter, EventRepository},
+            product_categories::ProductCategoryRepository,
+            products::ProductRepository,
+            sessions::SessionRepository,
+            stores::StoreRepository,
+            systems::SystemRepository,
+            user_profiles::UserProfileRepository,
+            users::UserRepository,
         },
         services::{
             auth::AuthService, authz::AuthzService, events::EventService,
@@ -202,6 +211,7 @@ mod tests {
         app: Router,
         users: UserRepository,
         profiles: UserProfileRepository,
+        events: EventRepository,
     }
 
     #[tokio::test]
@@ -377,8 +387,42 @@ mod tests {
 
         assert_eq!(profile.user_id, user.id);
         assert_eq!(profile.name.as_deref(), Some("张三"));
+        assert_eq!(profile.mobile.as_deref(), Some("13800000000"));
+        assert_eq!(profile.email.as_deref(), Some("user@example.test"));
         assert_eq!(profile.department_external_ids.as_deref(), Some("[10,20]"));
         assert_eq!(profile.is_active, Some(true));
+
+        let (events, total_count) = context
+            .events
+            .list_events(
+                EventFilter {
+                    resource_type: Some("user_profiles".to_string()),
+                    resource_id: Some(user.id),
+                    ..EventFilter::default()
+                },
+                1,
+                20,
+            )
+            .await
+            .expect("profile sync events should be listed");
+        assert_eq!(total_count, 2);
+        assert_eq!(events.len(), 2);
+        for event in &events {
+            assert_eq!(event.actor_user_id, Some(user.id));
+            assert_eq!(event.event_type, EventType::Update);
+            assert_eq!(event.approval_status, ApprovalStatus::None);
+            assert!(event.old_value.is_some());
+            assert!(event.new_value.is_some());
+        }
+        let audit_values = events
+            .iter()
+            .flat_map(|event| [event.old_value.clone(), event.new_value.clone()])
+            .flatten()
+            .collect::<Vec<_>>();
+        let audit_json = serde_json::to_string(&audit_values).expect("audit should serialize");
+        assert!(!audit_json.contains("13800000000"));
+        assert!(!audit_json.contains("user@example.test"));
+        assert!(!audit_json.contains("avatar.png"));
     }
 
     #[tokio::test]
@@ -511,6 +555,7 @@ mod tests {
         let departments = DepartmentRepository::new(db.clone());
         let systems = SystemRepository::new(db.clone());
         let stores = StoreRepository::new(db.clone());
+        let events = EventRepository::new(db.clone());
         let auth = AuthService::new(
             DingTalkConfig {
                 client_id: "test-client-id".to_string(),
@@ -522,12 +567,14 @@ mod tests {
                 corp_token_url: format!("{mock_base_url}/gettoken"),
                 department_listsub_url: format!("{mock_base_url}/listsub"),
                 user_detail_url: format!("{mock_base_url}/user_detail"),
+                getbyunionid_url: format!("{mock_base_url}/getbyunionid"),
                 scope: "openid".to_string(),
                 corp_id: "".to_string(),
                 external_id_fields: vec!["userId".to_string()],
             },
             users.clone(),
             profiles.clone(),
+            events.clone(),
             sessions.clone(),
             86_400,
         );
@@ -541,7 +588,7 @@ mod tests {
         let stores_service = StoreService::new(stores.clone(), systems.clone());
         let systems_service = SystemService::new(systems, departments, stores);
         let events_service = EventService::new(
-            EventRepository::new(db),
+            events.clone(),
             authz.clone(),
             std::sync::Arc::new(ApplierRegistry::new()),
             180,
@@ -567,6 +614,7 @@ mod tests {
             app: app::router(state),
             users,
             profiles,
+            events,
         }
     }
 
@@ -581,7 +629,11 @@ mod tests {
         async fn me() -> Json<Value> {
             Json(json!({
                 "result": {
-                    "userId": "ding-user-1"
+                    "userId": "ding-user-1",
+                    "name": "个人张三",
+                    "avatarUrl": "https://example.test/avatar.png",
+                    "mobile": "13800000000",
+                    "email": "user@example.test"
                 }
             }))
         }

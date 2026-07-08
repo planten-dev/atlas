@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
+use sea_orm::{ActiveModelTrait, ConnectionTrait, DatabaseConnection, EntityTrait, Set};
 use tracing::{debug, info};
 use uuid::Uuid;
 
@@ -41,9 +41,18 @@ impl UserProfileRepository {
         &self,
         user_id: Uuid,
     ) -> Result<Option<user_profiles::Model>, RepositoryError> {
-        let profile = user_profiles::Entity::find_by_id(user_id)
-            .one(&self.db)
-            .await?;
+        self.find_by_user_id_in(&self.db, user_id).await
+    }
+
+    pub(crate) async fn find_by_user_id_in<C>(
+        &self,
+        conn: &C,
+        user_id: Uuid,
+    ) -> Result<Option<user_profiles::Model>, RepositoryError>
+    where
+        C: ConnectionTrait,
+    {
+        let profile = user_profiles::Entity::find_by_id(user_id).one(conn).await?;
 
         debug!(
             found = profile.is_some(),
@@ -60,16 +69,29 @@ impl UserProfileRepository {
         input: UserProfileUpsert,
         now: DateTime<Utc>,
     ) -> Result<user_profiles::Model, RepositoryError> {
-        let existing = self.find_by_user_id(user_id).await?;
+        self.upsert_profile_in(&self.db, user_id, input, now).await
+    }
+
+    pub(crate) async fn upsert_profile_in<C>(
+        &self,
+        conn: &C,
+        user_id: Uuid,
+        input: UserProfileUpsert,
+        now: DateTime<Utc>,
+    ) -> Result<user_profiles::Model, RepositoryError>
+    where
+        C: ConnectionTrait,
+    {
+        let existing = self.find_by_user_id_in(conn, user_id).await?;
         let profile = match existing {
             Some(existing) => {
                 let mut active = model_from_input(user_id, input, now, existing.created_at);
                 active.user_id = Set(existing.user_id);
-                active.update(&self.db).await?
+                active.update(conn).await?
             }
             None => {
                 model_from_input(user_id, input, now, now)
-                    .insert(&self.db)
+                    .insert(conn)
                     .await?
             }
         };

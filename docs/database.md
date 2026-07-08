@@ -25,7 +25,7 @@ CREATE TABLE users (
 | 字段 | 类型示例 | 是否必填 | 说明 |
 | --- | --- | --- | --- |
 | `id` | `UUID` | 是 | 系统内部唯一用户标识，作为 `users` 表主键。系统内部逻辑统一使用该字段识别用户。 |
-| `dingtalk_user_id` | `VARCHAR(128)` | 是 | 钉钉用户标识，用于将钉钉登录用户映射到系统内部用户。 |
+| `dingtalk_user_id` | `VARCHAR(128)` | 是 | 钉钉企业通讯录真实 `userid`，用于将钉钉登录用户映射到系统内部用户。不得保存 `unionId`、`openId` 或 `uuid`。 |
 | `status` | `VARCHAR(32)` | 是 | 用户状态。当前阶段用于区分用户记录是否可正常使用。 |
 | `created_at` | `TIMESTAMPTZ` | 是 | 用户记录创建时间。用户首次通过钉钉登录并创建系统用户记录时写入。 |
 | `updated_at` | `TIMESTAMPTZ` | 是 | 用户记录最后更新时间。用户记录或状态发生变化时更新。 |
@@ -34,7 +34,7 @@ CREATE TABLE users (
 ## 设计原则
 
 - `id` 是系统内部唯一用户标识，也是 `users` 表的主键。
-- `dingtalk_user_id` 用于关联钉钉用户，并作为钉钉登录时查找系统用户的依据。
+- `dingtalk_user_id` 用于关联钉钉企业通讯录用户，并作为钉钉登录时查找系统用户的依据。该字段必须是真实 `userid`，不是 `unionId`、`openId` 或其他网页登录身份字段。
 - 系统内部逻辑统一使用 `id` 表示用户，不直接依赖钉钉用户标识。
 - 用户首次通过钉钉登录时，如果不存在对应的 `dingtalk_user_id`，系统自动创建一条 `users` 记录。
 - 用户后续通过钉钉登录时，系统通过 `dingtalk_user_id` 查找已有用户记录，并更新 `last_login_at`。
@@ -51,12 +51,12 @@ CREATE TABLE users (
 
 该约束用于支持钉钉登录流程：
 
-1. 登录成功后获取钉钉用户标识。
+1. 登录成功后获取或换取钉钉企业通讯录真实 `userid`。
 2. 使用 `dingtalk_user_id` 查询 `users` 表。
 3. 如果记录存在，使用已有用户的 `id`。
 4. 如果记录不存在，创建新的 `users` 记录，并生成新的 `id`。
 
-`dingtalk_user_id` 不应作为主键使用。它来自外部平台，只适合作为登录映射字段；系统内部用户身份应由 `id` 承担。
+`dingtalk_user_id` 不应作为主键使用。它来自外部平台，只适合作为登录映射字段；系统内部用户身份应由 `id` 承担。当前内部开发阶段不兼容曾错误保存为 `unionId`、`openId` 或 `uuid` 的旧数据，修复后应删除旧数据或重建开发数据库再重新登录。
 
 ## 时间字段设计
 
@@ -81,7 +81,7 @@ CREATE TABLE users (
 
 ## user_profiles 表
 
-`user_profiles` 表是 `users` 表的一对一扩展表，用于保存用户通过钉钉登录后，从钉钉“查询用户详情”接口获取并清洗后的基础资料。
+`user_profiles` 表是 `users` 表的一对一扩展表，用于保存用户通过钉钉登录后，从钉钉网页登录个人信息接口和钉钉“查询用户详情”接口获取并清洗后的基础资料。
 
 `users` 表负责保存登录身份映射，例如 `dingtalk_user_id`；`user_profiles` 只保存用户资料，不重复保存钉钉用户标识，也不保存登录凭证、会话信息或未经清洗的原始资料。
 
@@ -142,19 +142,21 @@ CREATE TABLE user_profiles (
 - `user_profiles.user_id` 与 `users.id` 一一对应，不再单独生成资料表主键。
 - `user_id` 同时作为主键和外键关联 `users(id)`，建议使用 `ON DELETE CASCADE`，保证用户删除时其资料记录同步删除。
 - `users` 表负责保存登录身份映射，`user_profiles` 表只保存用户基础资料。
-- `dingtalk_user_id` 不应重复保存到 `user_profiles`。钉钉 `userid` 与 `users.dingtalk_user_id` 属于同一类外部身份映射，应只保存在 `users` 表。
+- `dingtalk_user_id` 不应重复保存到 `user_profiles`。钉钉真实 `userid` 只保存在 `users.dingtalk_user_id`，`user_profiles` 不保存任何外部身份标识。
 - `user_profiles` 不保存 `access_token`、`refresh_token`、`session id`、`client_secret` 等敏感信息。
 - `user_profiles` 不保存未经清洗的 `raw_profile`，避免把 `userid`、敏感字段或无关字段再次写入资料表。
 - 钉钉接口可能缺少 `mobile`、`email`、`avatar` 等字段，资料字段默认允许为空，避免因资料不完整影响用户登录。
 
 ### 钉钉登录资料同步行为
 
-- 用户首次通过钉钉登录时，系统先通过 `users.dingtalk_user_id` 查找或创建 `users` 记录，再使用同一个 `users.id` 创建 `user_profiles` 记录。
+- 用户首次通过钉钉登录时，系统先从网页登录个人信息中读取真实 `userid`；如果缺少 `userid`，使用 `unionId` 换取真实 `userid`。系统随后通过 `users.dingtalk_user_id` 查找或创建 `users` 记录，再使用同一个 `users.id` 创建 `user_profiles` 记录。
 - 用户再次通过钉钉登录时，系统通过 `users.dingtalk_user_id` 找到已有用户，并更新该用户对应的 `user_profiles` 记录。
+- 登录时先使用网页登录个人信息接口同步头像、手机号、邮箱等可见基础资料，再使用钉钉“查询用户详情”接口补充部门、工号、职位、入职时间等组织资料。
 - 同步资料时只处理明确允许保存的字段，写入前应完成字段清洗、类型转换和长度控制。
 - 钉钉返回的 `dept_id_list` 保存到 `department_external_ids`，建议由应用层序列化为 JSON 字符串。
 - 钉钉返回的 `hired_date` 如为时间戳，应由应用层转换后保存到 `hired_at`。
 - 如果钉钉接口缺少手机号、邮箱、头像等字段，对应字段允许为空，同步流程不应因此失败。
+- 每次成功写入或更新 `user_profiles` 后，应向 `events` 审计表写入 `resource_type = 'user_profiles'` 的已完成更新事件。审计事件只保存脱敏摘要，例如触发来源、同步来源、是否已有资料和更新字段名，不保存手机号、邮箱、头像地址、备注或钉钉原始响应。
 
 ### 隐私与安全约束
 

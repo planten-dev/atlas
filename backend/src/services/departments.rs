@@ -347,6 +347,7 @@ mod tests {
             corp_token_url: format!("{mock_base_url}/gettoken"),
             department_listsub_url: format!("{mock_base_url}/listsub"),
             user_detail_url: format!("{mock_base_url}/user_detail"),
+            getbyunionid_url: format!("{mock_base_url}/getbyunionid"),
             scope: "openid".to_string(),
             corp_id: "".to_string(),
             external_id_fields: vec!["userId".to_string()],

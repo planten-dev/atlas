@@ -44,6 +44,7 @@ async fn main() -> Result<()> {
         config.dingtalk.clone(),
         users.clone(),
         profiles.clone(),
+        EventRepository::new(db.clone()),
         sessions.clone(),
         config.session.ttl_seconds,
     );

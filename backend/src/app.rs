@@ -25,6 +25,10 @@ pub fn router(state: AppState) -> Router {
             get(handlers::users::user_profile),
         )
         .route(
+            "/api/v1/users/{user_id}/profile/sync",
+            post(handlers::users::sync_user_profile),
+        )
+        .route(
             "/api/v1/users/update-status/{user_id}",
             post(handlers::users::update_user_status),
         )

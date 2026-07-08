@@ -15,7 +15,7 @@ use crate::{
         auth::ErrorResponse,
         users::{ListUsersQuery, UpdateUserStatusRequest},
     },
-    handlers::error::{authz_error_response, permission_denied_response},
+    handlers::error::{auth_error_response, authz_error_response, permission_denied_response},
     repositories::RepositoryError,
     services::{auth::CurrentSession, users::UserError},
     state::AppState,
@@ -76,6 +76,38 @@ pub async fn user_profile(
     match state.users.user_profile(user_id).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => user_error_response(error),
+    }
+}
+
+pub async fn sync_user_profile(
+    State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
+    path: Result<Path<Uuid>, PathRejection>,
+) -> Response {
+    let user_id = match path {
+        Ok(Path(user_id)) => user_id,
+        Err(error) => return validation_error_response("invalid user_id path parameter", error),
+    };
+
+    if user_id != current_session.user.id {
+        match state
+            .authz
+            .check(current_session.user.id, "users", "write")
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => return permission_denied_response("users", "write"),
+            Err(error) => return authz_error_response(error),
+        }
+    }
+
+    match state
+        .auth
+        .sync_dingtalk_profile_for_user(current_session.user.id, user_id)
+        .await
+    {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => auth_error_response(error),
     }
 }
 
@@ -180,7 +212,7 @@ mod tests {
         repositories::{
             authz::AuthzRepository,
             departments::DepartmentRepository,
-            events::EventRepository,
+            events::{EventFilter, EventRepository},
             product_categories::ProductCategoryRepository,
             products::ProductRepository,
             sessions::{SessionRepository, hash_secret},
@@ -212,6 +244,7 @@ mod tests {
         app: Router,
         users: UserRepository,
         profiles: UserProfileRepository,
+        events: EventRepository,
         sessions: SessionRepository,
         authz: AuthzService,
     }
@@ -246,6 +279,21 @@ mod tests {
             )
             .await
             .expect("user profile request should be handled");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = context
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/users/{}/profile/sync", Uuid::new_v4()))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("user profile sync request should be handled");
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
@@ -359,6 +407,89 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn authenticated_user_can_sync_own_profile_without_users_write_permission() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let current = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("current user should exist");
+        context
+            .profiles
+            .upsert_profile(current.id, profile_input("旧资料"), Utc::now())
+            .await
+            .expect("stale profile should be stored");
+
+        let response = context
+            .app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/users/{}/profile/sync", current.id))
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("profile sync request should be handled");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(
+            body.pointer("/user_id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            Some(current.id.to_string())
+        );
+        assert_eq!(body.pointer("/name").and_then(Value::as_str), Some("张三"));
+        let profile = context
+            .profiles
+            .find_by_user_id(current.id)
+            .await
+            .expect("profile lookup should succeed")
+            .expect("profile should exist");
+        assert_eq!(profile.name.as_deref(), Some("张三"));
+
+        let (events, total_count) = context
+            .events
+            .list_events(
+                EventFilter {
+                    resource_type: Some("user_profiles".to_string()),
+                    resource_id: Some(current.id),
+                    ..EventFilter::default()
+                },
+                1,
+                20,
+            )
+            .await
+            .expect("profile sync events should be listed");
+        assert!(total_count >= 1);
+        let manual_event = events
+            .iter()
+            .find(|event| {
+                event
+                    .new_value
+                    .as_ref()
+                    .and_then(|value| value.pointer("/trigger"))
+                    .and_then(Value::as_str)
+                    == Some("manual")
+            })
+            .expect("manual profile sync event should be recorded");
+        assert_eq!(manual_event.actor_user_id, Some(current.id));
+        let audit_values = vec![
+            manual_event.old_value.clone().unwrap_or(Value::Null),
+            manual_event.new_value.clone().unwrap_or(Value::Null),
+        ];
+        let audit_json = serde_json::to_string(&audit_values).expect("audit should serialize");
+        assert!(!audit_json.contains("13800000000"));
+        assert!(!audit_json.contains("user@example.test"));
+        assert!(!audit_json.contains("avatar.png"));
+    }
+
+    #[tokio::test]
     async fn reading_another_users_profile_requires_users_read_permission() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
@@ -421,6 +552,132 @@ mod tests {
         assert_eq!(allowed.status(), StatusCode::OK);
         let body = response_json(allowed).await;
         assert_eq!(body.pointer("/name").and_then(Value::as_str), Some("李四"));
+    }
+
+    #[tokio::test]
+    async fn syncing_another_users_profile_requires_users_write_permission() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let now = Utc::now();
+        let current = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("current user should exist");
+        let target = context
+            .users
+            .find_or_create_for_login("target-user", now)
+            .await
+            .expect("target user should be created");
+
+        let forbidden = context
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/users/{}/profile/sync", target.id))
+                    .header(header::COOKIE, cookie.clone())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("profile sync request should be handled");
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+
+        context
+            .authz
+            .create_policy(
+                "user".to_string(),
+                current.id,
+                "users".to_string(),
+                "write".to_string(),
+                "allow".to_string(),
+            )
+            .await
+            .expect("users:write policy should be created");
+
+        let allowed = context
+            .app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/users/{}/profile/sync", target.id))
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("profile sync request should be handled");
+        assert_eq!(allowed.status(), StatusCode::OK);
+        let body = response_json(allowed).await;
+        assert_eq!(body.pointer("/name").and_then(Value::as_str), Some("李四"));
+    }
+
+    #[tokio::test]
+    async fn sync_user_profile_reports_missing_user_and_dingtalk_errors() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let current = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("current user should exist");
+        context
+            .authz
+            .create_policy(
+                "user".to_string(),
+                current.id,
+                "users".to_string(),
+                "write".to_string(),
+                "allow".to_string(),
+            )
+            .await
+            .expect("users:write policy should be created");
+
+        let missing_user = context
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/users/{}/profile/sync", Uuid::new_v4()))
+                    .header(header::COOKIE, cookie.clone())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("profile sync request should be handled");
+        assert_eq!(missing_user.status(), StatusCode::NOT_FOUND);
+
+        let target = context
+            .users
+            .find_or_create_for_login("provider-error", Utc::now())
+            .await
+            .expect("target user should be created");
+        let provider_error = context
+            .app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/users/{}/profile/sync", target.id))
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("profile sync request should be handled");
+        assert_eq!(provider_error.status(), StatusCode::BAD_GATEWAY);
+        let profile = context
+            .profiles
+            .find_by_user_id(target.id)
+            .await
+            .expect("profile lookup should succeed");
+        assert!(profile.is_none());
     }
 
     #[tokio::test]
@@ -873,6 +1130,7 @@ mod tests {
         let departments = DepartmentRepository::new(db.clone());
         let systems = SystemRepository::new(db.clone());
         let stores = StoreRepository::new(db.clone());
+        let events = EventRepository::new(db.clone());
         let auth = AuthService::new(
             DingTalkConfig {
                 client_id: "test-client-id".to_string(),
@@ -884,12 +1142,14 @@ mod tests {
                 corp_token_url: format!("{mock_base_url}/gettoken"),
                 department_listsub_url: format!("{mock_base_url}/listsub"),
                 user_detail_url: format!("{mock_base_url}/user_detail"),
+                getbyunionid_url: format!("{mock_base_url}/getbyunionid"),
                 scope: "openid".to_string(),
                 corp_id: "".to_string(),
                 external_id_fields: vec!["userId".to_string()],
             },
             users.clone(),
             profiles.clone(),
+            events.clone(),
             sessions.clone(),
             86_400,
         );
@@ -903,7 +1163,7 @@ mod tests {
         let stores_service = StoreService::new(stores.clone(), systems.clone());
         let systems_service = SystemService::new(systems, departments, stores);
         let events_service = EventService::new(
-            EventRepository::new(db),
+            events.clone(),
             authz.clone(),
             std::sync::Arc::new(ApplierRegistry::new()),
             180,
@@ -929,6 +1189,7 @@ mod tests {
             app: app::router(state),
             users,
             profiles,
+            events,
             sessions,
             authz,
         }
@@ -945,7 +1206,11 @@ mod tests {
         async fn me() -> Json<Value> {
             Json(json!({
                 "result": {
-                    "userId": "ding-user-1"
+                    "userId": "ding-user-1",
+                    "name": "个人张三",
+                    "avatarUrl": "https://example.test/avatar.png",
+                    "mobile": "13800000000",
+                    "email": "user@example.test"
                 }
             }))
         }
@@ -966,17 +1231,35 @@ mod tests {
         }
 
         let user_detail = |axum::Form(form): axum::Form<UserDetailForm>| async move {
-            assert_eq!(form.userid, "ding-user-1");
             assert_eq!(form.language, "zh_CN");
-            Json(json!({
-                "errcode": 0,
-                "errmsg": "ok",
-                "result": {
-                    "name": "张三",
-                    "dept_id_list": [10, 20],
-                    "active": true
-                }
-            }))
+            match form.userid.as_str() {
+                "ding-user-1" => Json(json!({
+                    "errcode": 0,
+                    "errmsg": "ok",
+                    "result": {
+                        "name": "张三",
+                        "dept_id_list": [10, 20],
+                        "active": true
+                    }
+                })),
+                "target-user" => Json(json!({
+                    "errcode": 0,
+                    "errmsg": "ok",
+                    "result": {
+                        "name": "李四",
+                        "dept_id_list": [30],
+                        "active": true
+                    }
+                })),
+                "provider-error" => Json(json!({
+                    "errcode": 50001,
+                    "errmsg": "provider unavailable"
+                })),
+                _ => Json(json!({
+                    "errcode": 60121,
+                    "errmsg": "user not found"
+                })),
+            }
         };
 
         let app = Router::new()

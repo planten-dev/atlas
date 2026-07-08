@@ -62,7 +62,7 @@
         ],
         "summary": "Handle DingTalk login callback",
         "operationId": "handleDingTalkCallback",
-        "description": "Validates OAuth state, exchanges the DingTalk authorization code, maps the DingTalk user to users.dingtalk_user_id, attempts to sync user_profiles from DingTalk user details, creates a server-side session, and sets atlas_session as an HttpOnly cookie. Profile sync failures do not block login. The response body does not include the session id.",
+        "description": "Validates OAuth state, exchanges the DingTalk authorization code, fetches DingTalk personal information, resolves the real DingTalk contact userid for users.dingtalk_user_id, syncs user_profiles from whitelisted DingTalk fields, writes a sanitized audit event for successful profile syncs, creates a server-side session, and sets atlas_session as an HttpOnly cookie. Organization-detail profile sync failures do not block login. The response body does not include the session id.",
         "security": [],
         "parameters": [
           {
@@ -407,6 +407,63 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/profile/sync": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Sync user profile from DingTalk",
+        "operationId": "syncUserProfile",
+        "description": "Manually fetches the user's DingTalk organization details and upserts user_profiles. Users may sync their own profile without users:write; syncing another user's profile requires users:write. The API uses users.dingtalk_user_id as the real DingTalk contact userid, writes a sanitized user_profiles audit event on success, and does not store DingTalk userid, tokens, secrets, session ids, raw profile data, or personal information plaintext in the audit payload.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Atlas internal user id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User profile synced from DingTalk.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProfileResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
           }
         }
       }
@@ -2887,7 +2944,7 @@
           },
           "dingtalk_user_id": {
             "type": "string",
-            "description": "DingTalk user id used for external login mapping."
+            "description": "Real DingTalk contact userid used for external login mapping. This is not unionId, openId, or uuid."
           },
           "status": {
             "type": "string",
