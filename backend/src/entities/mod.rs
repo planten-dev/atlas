@@ -1,4 +1,5 @@
 pub mod auth_sessions;
+pub mod customers;
 pub mod departments;
 pub mod events;
 pub mod oauth_login_states;

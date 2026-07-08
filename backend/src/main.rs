@@ -2,13 +2,13 @@ use anyhow::{Context, Result};
 use backend::{
     app, config, db,
     repositories::{
-        authz::AuthzRepository, departments::DepartmentRepository, events::EventRepository,
-        product_categories::ProductCategoryRepository, products::ProductRepository,
-        sessions::SessionRepository, stores::StoreRepository, systems::SystemRepository,
-        user_profiles::UserProfileRepository, users::UserRepository,
+        authz::AuthzRepository, customers::CustomerRepository, departments::DepartmentRepository,
+        events::EventRepository, product_categories::ProductCategoryRepository,
+        products::ProductRepository, sessions::SessionRepository, stores::StoreRepository,
+        systems::SystemRepository, user_profiles::UserProfileRepository, users::UserRepository,
     },
     services::{
-        auth::AuthService, authz::AuthzService, events::EventService,
+        auth::AuthService, authz::AuthzService, customers::CustomerService, events::EventService,
         product_categories::ProductCategoryService, products::ProductService,
         review::ApplierRegistry, stores::StoreService, systems::SystemService, users::UserService,
     },
@@ -40,6 +40,7 @@ async fn main() -> Result<()> {
     let departments = DepartmentRepository::new(db.clone());
     let systems = SystemRepository::new(db.clone());
     let stores = StoreRepository::new(db.clone());
+    let customers = CustomerRepository::new(db.clone());
     let auth = AuthService::new(
         config.dingtalk.clone(),
         users.clone(),
@@ -56,7 +57,8 @@ async fn main() -> Result<()> {
         ProductCategoryService::new(product_categories.clone(), products.clone());
     let products = ProductService::new(products, product_categories);
     let stores_service = StoreService::new(stores.clone(), systems.clone());
-    let systems = SystemService::new(systems, departments, stores);
+    let systems_service = SystemService::new(systems.clone(), departments.clone(), stores.clone());
+    let customers_service = CustomerService::new(customers, departments, systems, stores);
 
     // Business tables opt into the review flow here as they adopt it, e.g.:
     // registry.register::<ProductDoc>();
@@ -78,8 +80,9 @@ async fn main() -> Result<()> {
         users,
         product_categories_service,
         products,
-        systems,
+        systems_service,
         stores_service,
+        customers_service,
         events,
         config.auth.clone(),
         config.session.clone(),

@@ -191,6 +191,44 @@ pub fn router(state: AppState) -> Router {
             post(handlers::stores::delete_store.layer(require_permission(&state, "stores:write"))),
         )
         .route(
+            "/api/v1/customers/list",
+            get(handlers::customers::list_customers
+                .layer(require_permission(&state, "customers:read"))),
+        )
+        .route(
+            "/api/v1/customers/detail/{customer_id}",
+            get(handlers::customers::customer_detail
+                .layer(require_permission(&state, "customers:read"))),
+        )
+        .route(
+            "/api/v1/customers/create",
+            post(
+                handlers::customers::create_customer
+                    .layer(require_permission(&state, "customers:write")),
+            ),
+        )
+        .route(
+            "/api/v1/customers/update/{customer_id}",
+            post(
+                handlers::customers::update_customer
+                    .layer(require_permission(&state, "customers:write")),
+            ),
+        )
+        .route(
+            "/api/v1/customers/disable/{customer_id}",
+            post(
+                handlers::customers::disable_customer
+                    .layer(require_permission(&state, "customers:write")),
+            ),
+        )
+        .route(
+            "/api/v1/customers/delete/{customer_id}",
+            post(
+                handlers::customers::delete_customer
+                    .layer(require_permission(&state, "customers:write")),
+            ),
+        )
+        .route(
             "/api/v1/permissions/roles",
             get(handlers::permissions::list_roles
                 .layer(require_permission(&state, "system:permissions:read")))

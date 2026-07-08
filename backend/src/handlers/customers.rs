@@ -1,5 +1,5 @@
 use axum::{
-    Json,
+    Extension, Json,
     extract::{
         Path, Query, State,
         rejection::{JsonRejection, PathRejection, QueryRejection},
@@ -13,109 +13,122 @@ use uuid::Uuid;
 use crate::{
     dto::{
         auth::ErrorResponse,
-        stores::{CreateStoreRequest, ListStoresQuery, UpdateStoreRequest},
+        customers::{CreateCustomerRequest, ListCustomersQuery, UpdateCustomerRequest},
     },
     repositories::RepositoryError,
-    services::stores::StoreError,
+    services::{auth::CurrentSession, customers::CustomerError},
     state::AppState,
 };
 
-pub async fn list_stores(
+pub async fn list_customers(
     State(state): State<AppState>,
-    query: Result<Query<ListStoresQuery>, QueryRejection>,
+    query: Result<Query<ListCustomersQuery>, QueryRejection>,
 ) -> Response {
     let query = match query {
         Ok(Query(query)) => query,
         Err(error) => return validation_error_response("invalid query parameters", error),
     };
 
-    match state.stores.list_stores(query).await {
+    match state.customers.list_customers(query).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => store_error_response(error),
+        Err(error) => customer_error_response(error),
     }
 }
 
-pub async fn store_detail(
+pub async fn customer_detail(
     State(state): State<AppState>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
-    let store_id = match path {
-        Ok(Path(store_id)) => store_id,
-        Err(error) => return validation_error_response("invalid store_id path parameter", error),
+    let customer_id = match path {
+        Ok(Path(customer_id)) => customer_id,
+        Err(error) => {
+            return validation_error_response("invalid customer_id path parameter", error);
+        }
     };
 
-    match state.stores.store_detail(store_id).await {
+    match state.customers.customer_detail(customer_id).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => store_error_response(error),
+        Err(error) => customer_error_response(error),
     }
 }
 
-pub async fn create_store(
+pub async fn create_customer(
     State(state): State<AppState>,
-    request: Result<Json<CreateStoreRequest>, JsonRejection>,
+    Extension(current_session): Extension<CurrentSession>,
+    request: Result<Json<CreateCustomerRequest>, JsonRejection>,
 ) -> Response {
     let request = match request {
         Ok(Json(request)) => request,
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
-    match state.stores.create_store(request).await {
+    match state
+        .customers
+        .create_customer(current_session.user.id, request)
+        .await
+    {
         Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
-        Err(error) => store_error_response(error),
+        Err(error) => customer_error_response(error),
     }
 }
 
-pub async fn update_store(
+pub async fn update_customer(
     State(state): State<AppState>,
     path: Result<Path<Uuid>, PathRejection>,
-    request: Result<Json<UpdateStoreRequest>, JsonRejection>,
+    request: Result<Json<UpdateCustomerRequest>, JsonRejection>,
 ) -> Response {
-    let store_id = match path {
-        Ok(Path(store_id)) => store_id,
-        Err(error) => return validation_error_response("invalid store_id path parameter", error),
+    let customer_id = match path {
+        Ok(Path(customer_id)) => customer_id,
+        Err(error) => {
+            return validation_error_response("invalid customer_id path parameter", error);
+        }
     };
     let request = match request {
         Ok(Json(request)) => request,
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
-    match state.stores.update_store(store_id, request).await {
+    match state.customers.update_customer(customer_id, request).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => store_error_response(error),
+        Err(error) => customer_error_response(error),
     }
 }
 
-pub async fn disable_store(
+pub async fn disable_customer(
     State(state): State<AppState>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
-    let store_id = match path {
-        Ok(Path(store_id)) => store_id,
-        Err(error) => return validation_error_response("invalid store_id path parameter", error),
+    let customer_id = match path {
+        Ok(Path(customer_id)) => customer_id,
+        Err(error) => {
+            return validation_error_response("invalid customer_id path parameter", error);
+        }
     };
 
-    match state.stores.disable_store(store_id).await {
+    match state.customers.disable_customer(customer_id).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => store_error_response(error),
+        Err(error) => customer_error_response(error),
     }
 }
 
-pub async fn delete_store(
+pub async fn delete_customer(
     State(state): State<AppState>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
-    let store_id = match path {
-        Ok(Path(store_id)) => store_id,
-        Err(error) => return validation_error_response("invalid store_id path parameter", error),
+    let customer_id = match path {
+        Ok(Path(customer_id)) => customer_id,
+        Err(error) => {
+            return validation_error_response("invalid customer_id path parameter", error);
+        }
     };
 
-    match state.stores.delete_store(store_id).await {
+    match state.customers.delete_customer(customer_id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(error) => store_error_response(error),
+        Err(error) => customer_error_response(error),
     }
 }
 
-fn store_error_response(error: StoreError) -> Response {
+fn customer_error_response(error: CustomerError) -> Response {
     let status = status_code(&error);
     let code = error.code();
 
@@ -124,14 +137,14 @@ fn store_error_response(error: StoreError) -> Response {
             status = status.as_u16(),
             code,
             message = %error,
-            "store request failed"
+            "customer request failed"
         );
     } else {
         warn!(
             status = status.as_u16(),
             code,
             message = %error,
-            "store request rejected"
+            "customer request rejected"
         );
     }
 
@@ -146,7 +159,7 @@ fn store_error_response(error: StoreError) -> Response {
 }
 
 fn validation_error_response(error: &'static str, detail: impl std::fmt::Display) -> Response {
-    warn!(error, detail = %detail, "store request validation failed");
+    warn!(error, detail = %detail, "customer request validation failed");
     (
         StatusCode::BAD_REQUEST,
         Json(ErrorResponse {
@@ -157,19 +170,25 @@ fn validation_error_response(error: &'static str, detail: impl std::fmt::Display
         .into_response()
 }
 
-fn status_code(error: &StoreError) -> StatusCode {
+fn status_code(error: &CustomerError) -> StatusCode {
     match error {
-        StoreError::Repository(error) => match error {
+        CustomerError::Repository(error) => match error {
             RepositoryError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
             RepositoryError::MissingRequiredField { .. } => StatusCode::BAD_REQUEST,
             RepositoryError::DisabledUser => StatusCode::FORBIDDEN,
         },
-        StoreError::StoreNotFound | StoreError::SystemNotFound => StatusCode::NOT_FOUND,
-        StoreError::MissingRequiredField { .. }
-        | StoreError::FieldTooLong { .. }
-        | StoreError::InvalidStatus { .. }
-        | StoreError::InvalidPaginationMinimum { .. }
-        | StoreError::InvalidPaginationMaximum { .. } => StatusCode::BAD_REQUEST,
+        CustomerError::CustomerNotFound
+        | CustomerError::DepartmentNotFound
+        | CustomerError::SystemNotFound
+        | CustomerError::StoreNotFound => StatusCode::NOT_FOUND,
+        CustomerError::CustomerScopeMismatch
+        | CustomerError::StoreSystemMismatch
+        | CustomerError::MissingRequiredField { .. }
+        | CustomerError::FieldTooLong { .. }
+        | CustomerError::InvalidStatus { .. }
+        | CustomerError::InvalidAttachmentMimeType { .. }
+        | CustomerError::InvalidPaginationMinimum { .. }
+        | CustomerError::InvalidPaginationMaximum { .. } => StatusCode::BAD_REQUEST,
     }
 }
 
@@ -211,36 +230,37 @@ mod tests {
         authz: AuthzService,
         departments: DepartmentRepository,
         systems: SystemRepository,
+        stores: StoreRepository,
     }
 
     #[tokio::test]
-    async fn stores_api_requires_session() {
+    async fn customers_api_requires_session() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
 
         let response = context
             .app
             .clone()
-            .oneshot(request(Method::GET, "/api/v1/stores/list", None, None))
+            .oneshot(request(Method::GET, "/api/v1/customers/list", None, None))
             .await
-            .expect("stores list request should be handled");
+            .expect("customers list request should be handled");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
         let response = context
             .app
             .oneshot(request(
                 Method::POST,
-                &format!("/api/v1/stores/delete/{}", Uuid::new_v4()),
+                &format!("/api/v1/customers/delete/{}", Uuid::new_v4()),
                 None,
                 None,
             ))
             .await
-            .expect("store delete request should be handled");
+            .expect("customer delete request should be handled");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
-    async fn session_without_store_permission_is_forbidden() {
+    async fn session_without_customer_permission_is_forbidden() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
@@ -249,12 +269,12 @@ mod tests {
             .app
             .oneshot(request(
                 Method::GET,
-                "/api/v1/stores/list",
+                "/api/v1/customers/list",
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("stores list request should be handled");
+            .expect("customers list request should be handled");
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
         let body = response_json(response).await;
@@ -270,78 +290,94 @@ mod tests {
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        let system_id = create_system(&context, "system-a").await;
-        grant(&context, user_id, "stores", "read").await;
+        let (department_id, system_id, store_id) = create_scope(&context, "scope-a").await;
+        grant(&context, user_id, "customers", "read").await;
 
         let read_response = context
             .app
             .clone()
             .oneshot(request(
                 Method::GET,
-                "/api/v1/stores/list",
+                "/api/v1/customers/list",
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("stores list request should be handled");
+            .expect("customers list request should be handled");
         assert_eq!(read_response.status(), StatusCode::OK);
 
         let write_response = context
             .app
             .oneshot(request(
                 Method::POST,
-                "/api/v1/stores/create",
+                "/api/v1/customers/create",
                 Some(&cookie),
-                Some(json!({"name": "store-a", "system_id": system_id})),
+                Some(json!({
+                    "name": "Alice",
+                    "department_id": department_id,
+                    "system_id": system_id,
+                    "store_id": store_id
+                })),
             ))
             .await
-            .expect("store create request should be handled");
+            .expect("customer create request should be handled");
         assert_eq!(write_response.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
-    async fn store_crud_via_http() {
+    async fn customer_crud_via_http() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        let system_a = create_system(&context, "system-a").await;
-        let system_b = create_system(&context, "system-b").await;
-        grant(&context, user_id, "stores", "read").await;
-        grant(&context, user_id, "stores", "write").await;
+        let (department_a, system_a, store_a) = create_scope(&context, "scope-a").await;
+        let (department_b, system_b, store_b) = create_scope(&context, "scope-b").await;
+        grant(&context, user_id, "customers", "read").await;
+        grant(&context, user_id, "customers", "write").await;
 
         let create_response = context
             .app
             .clone()
             .oneshot(request(
                 Method::POST,
-                "/api/v1/stores/create",
+                "/api/v1/customers/create",
                 Some(&cookie),
                 Some(json!({
-                    "name": "store-a",
-                    "system_id": system_a
+                    "name": "Alice",
+                    "department_id": department_a,
+                    "system_id": system_a,
+                    "store_id": store_a,
+                    "remark": "first visit",
+                    "attachments": [{
+                        "file_id": "img-1",
+                        "file_name": "photo.png",
+                        "mime_type": "image/png",
+                        "size_bytes": 1234
+                    }]
                 })),
             ))
             .await
-            .expect("store create request should be handled");
+            .expect("customer create request should be handled");
         assert_eq!(create_response.status(), StatusCode::CREATED);
         let created = response_json(create_response).await;
         assert_eq!(
             created.pointer("/name").and_then(Value::as_str),
-            Some("store-a")
+            Some("Alice")
         );
         assert_eq!(
-            created.pointer("/system_id").and_then(Value::as_str),
-            Some(system_a.to_string().as_str())
+            created.pointer("/creator_user_id").and_then(Value::as_str),
+            Some(user_id.to_string().as_str())
         );
         assert_eq!(
-            created.pointer("/status").and_then(Value::as_str),
-            Some("active")
+            created
+                .pointer("/attachments/0/file_id")
+                .and_then(Value::as_str),
+            Some("img-1")
         );
-        let store_id = created
+        let customer_id = created
             .pointer("/id")
             .and_then(Value::as_str)
-            .expect("store id should be present")
+            .expect("customer id should be present")
             .to_string();
 
         let list_response = context
@@ -350,13 +386,13 @@ mod tests {
             .oneshot(request(
                 Method::GET,
                 &format!(
-                    "/api/v1/stores/list?status_filter=active&system_id={system_a}&page_number=1&page_size=20"
+                    "/api/v1/customers/list?status_filter=active&department_id={department_a}&system_id={system_a}&store_id={store_a}&creator_user_id={user_id}&name_keyword=Ali&page_number=1&page_size=20"
                 ),
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("stores list request should be handled");
+            .expect("customers list request should be handled");
         assert_eq!(list_response.status(), StatusCode::OK);
         let list = response_json(list_response).await;
         assert_eq!(
@@ -364,8 +400,8 @@ mod tests {
             Some(1)
         );
         assert_eq!(
-            list.pointer("/stores/0/id").and_then(Value::as_str),
-            Some(store_id.as_str())
+            list.pointer("/customers/0/id").and_then(Value::as_str),
+            Some(customer_id.as_str())
         );
 
         let update_response = context
@@ -373,24 +409,32 @@ mod tests {
             .clone()
             .oneshot(request(
                 Method::POST,
-                &format!("/api/v1/stores/update/{store_id}"),
+                &format!("/api/v1/customers/update/{customer_id}"),
                 Some(&cookie),
                 Some(json!({
-                    "name": "store-b",
-                    "system_id": system_b
+                    "name": "Alice Updated",
+                    "department_id": department_b,
+                    "system_id": system_b,
+                    "store_id": store_b,
+                    "remark": null,
+                    "attachments": null
                 })),
             ))
             .await
-            .expect("store update request should be handled");
+            .expect("customer update request should be handled");
         assert_eq!(update_response.status(), StatusCode::OK);
         let updated = response_json(update_response).await;
         assert_eq!(
             updated.pointer("/name").and_then(Value::as_str),
-            Some("store-b")
+            Some("Alice Updated")
         );
+        assert!(updated.pointer("/remark").is_some_and(Value::is_null));
         assert_eq!(
-            updated.pointer("/system_id").and_then(Value::as_str),
-            Some(system_b.to_string().as_str())
+            updated
+                .pointer("/attachments")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0)
         );
 
         let disable_response = context
@@ -398,12 +442,12 @@ mod tests {
             .clone()
             .oneshot(request(
                 Method::POST,
-                &format!("/api/v1/stores/disable/{store_id}"),
+                &format!("/api/v1/customers/disable/{customer_id}"),
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("store disable request should be handled");
+            .expect("customer disable request should be handled");
         assert_eq!(disable_response.status(), StatusCode::OK);
         let disabled = response_json(disable_response).await;
         assert_eq!(
@@ -416,52 +460,53 @@ mod tests {
             .clone()
             .oneshot(request(
                 Method::POST,
-                &format!("/api/v1/stores/delete/{store_id}"),
+                &format!("/api/v1/customers/delete/{customer_id}"),
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("store delete request should be handled");
+            .expect("customer delete request should be handled");
         assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
 
         let missing_detail = context
             .app
             .oneshot(request(
                 Method::GET,
-                &format!("/api/v1/stores/detail/{store_id}"),
+                &format!("/api/v1/customers/detail/{customer_id}"),
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("store detail request should be handled");
+            .expect("customer detail request should be handled");
         assert_eq!(missing_detail.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
-    async fn store_api_validates_inputs_and_missing_resources() {
+    async fn customer_api_validates_inputs_and_missing_resources() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        let system_id = create_system(&context, "system-a").await;
-        grant(&context, user_id, "stores", "read").await;
-        grant(&context, user_id, "stores", "write").await;
+        let (department_id, system_id, store_id) = create_scope(&context, "scope-a").await;
+        grant(&context, user_id, "customers", "read").await;
+        grant(&context, user_id, "customers", "write").await;
 
         for body in [
-            json!({"name": "", "system_id": system_id}),
-            json!({"name": "store-a", "system_id": system_id, "status": "deleted"}),
+            json!({"name": "", "department_id": department_id, "system_id": system_id, "store_id": store_id}),
+            json!({"name": "Alice", "department_id": department_id, "system_id": system_id, "store_id": store_id, "status": "deleted"}),
+            json!({"name": "Alice", "department_id": department_id, "system_id": system_id, "store_id": store_id, "attachments": [{"file_id": "file-1", "mime_type": "application/pdf"}]}),
         ] {
             let response = context
                 .app
                 .clone()
                 .oneshot(request(
                     Method::POST,
-                    "/api/v1/stores/create",
+                    "/api/v1/customers/create",
                     Some(&cookie),
                     Some(body),
                 ))
                 .await
-                .expect("store create request should be handled");
+                .expect("customer create request should be handled");
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         }
 
@@ -470,12 +515,17 @@ mod tests {
             .clone()
             .oneshot(request(
                 Method::POST,
-                "/api/v1/stores/create",
+                "/api/v1/customers/create",
                 Some(&cookie),
-                Some(json!({"name": "store-a", "system_id": Uuid::new_v4()})),
+                Some(json!({
+                    "name": "Alice",
+                    "department_id": department_id,
+                    "system_id": Uuid::new_v4(),
+                    "store_id": store_id
+                })),
             ))
             .await
-            .expect("store create request should be handled");
+            .expect("customer create request should be handled");
         assert_eq!(missing_system.status(), StatusCode::NOT_FOUND);
 
         let invalid_status_query = context
@@ -483,50 +533,50 @@ mod tests {
             .clone()
             .oneshot(request(
                 Method::GET,
-                "/api/v1/stores/list?status_filter=deleted",
+                "/api/v1/customers/list?status_filter=deleted",
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("stores list request should be handled");
+            .expect("customers list request should be handled");
         assert_eq!(invalid_status_query.status(), StatusCode::BAD_REQUEST);
 
-        let invalid_system_query = context
+        let invalid_store_query = context
             .app
             .clone()
             .oneshot(request(
                 Method::GET,
-                "/api/v1/stores/list?system_id=not-a-uuid",
+                "/api/v1/customers/list?store_id=not-a-uuid",
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("stores list request should be handled");
-        assert_eq!(invalid_system_query.status(), StatusCode::BAD_REQUEST);
+            .expect("customers list request should be handled");
+        assert_eq!(invalid_store_query.status(), StatusCode::BAD_REQUEST);
 
         let invalid_id = context
             .app
             .clone()
             .oneshot(request(
                 Method::POST,
-                "/api/v1/stores/update/not-a-uuid",
+                "/api/v1/customers/update/not-a-uuid",
                 Some(&cookie),
-                Some(json!({"name": "store-a"})),
+                Some(json!({"name": "Alice"})),
             ))
             .await
-            .expect("store update request should be handled");
+            .expect("customer update request should be handled");
         assert_eq!(invalid_id.status(), StatusCode::BAD_REQUEST);
 
         let missing_delete = context
             .app
             .oneshot(request(
                 Method::POST,
-                &format!("/api/v1/stores/delete/{}", Uuid::new_v4()),
+                &format!("/api/v1/customers/delete/{}", Uuid::new_v4()),
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("store delete request should be handled");
+            .expect("customer delete request should be handled");
         assert_eq!(missing_delete.status(), StatusCode::NOT_FOUND);
     }
 
@@ -616,6 +666,7 @@ mod tests {
             authz,
             departments,
             systems,
+            stores,
         }
     }
 
@@ -699,7 +750,7 @@ mod tests {
             .id
     }
 
-    async fn create_system(context: &TestContext, name: &str) -> Uuid {
+    async fn create_scope(context: &TestContext, name: &str) -> (Uuid, Uuid, Uuid) {
         let department = context
             .departments
             .insert_department(
@@ -712,7 +763,7 @@ mod tests {
             )
             .await
             .expect("department should be created");
-        context
+        let system = context
             .systems
             .create_system(
                 crate::repositories::systems::NewSystem {
@@ -723,8 +774,20 @@ mod tests {
                 chrono::Utc::now(),
             )
             .await
-            .expect("system should be created")
-            .id
+            .expect("system should be created");
+        let store = context
+            .stores
+            .create_store(
+                crate::repositories::stores::NewStore {
+                    name: name.to_string(),
+                    system_id: system.id,
+                    status: "active".to_string(),
+                },
+                chrono::Utc::now(),
+            )
+            .await
+            .expect("store should be created");
+        (department.id, system.id, store.id)
     }
 
     async fn grant(context: &TestContext, user_id: Uuid, object: &str, action: &str) {

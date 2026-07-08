@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod customers;
 pub(crate) mod error;
 pub mod events;
 mod health;
