@@ -464,12 +464,12 @@ mod tests {
                 ..
             })
         ));
-        assert!(matches!(
+        assert!(
             serde_json::from_value::<CreateSystemRequest>(
                 json!({"name": "system-a", "department_id": Uuid::new_v4()})
-            ),
-            Err(_)
-        ));
+            )
+            .is_err()
+        );
     }
 
     #[tokio::test]
@@ -526,9 +526,9 @@ mod tests {
             service.update_system(created.id, null_name).await,
             Err(SystemError::MissingRequiredField { field: "name" })
         ));
-        assert!(matches!(
-            serde_json::from_value::<UpdateSystemRequest>(json!({"department_id": Uuid::new_v4()})),
-            Err(_)
-        ));
+        assert!(
+            serde_json::from_value::<UpdateSystemRequest>(json!({"department_id": Uuid::new_v4()}))
+                .is_err()
+        );
     }
 }

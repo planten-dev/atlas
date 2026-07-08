@@ -707,25 +707,25 @@ mod tests {
             std::sync::Arc::new(ApplierRegistry::new()),
             180,
         );
-        let state = AppState::new(
+        let state = AppState::new(crate::state::AppStateParts {
             auth,
-            authz.clone(),
-            users_service,
-            product_categories_service,
-            products_service,
-            systems_service,
-            stores_service,
-            customers_service,
-            sales_records_service,
-            events_service,
-            AuthConfig {
+            authz: authz.clone(),
+            users: users_service,
+            product_categories: product_categories_service,
+            products: products_service,
+            systems: systems_service,
+            stores: stores_service,
+            customers: customers_service,
+            sales_records: sales_records_service,
+            events: events_service,
+            auth_config: AuthConfig {
                 frontend_callback_url: "".to_string(),
             },
-            SessionConfig {
+            session_config: SessionConfig {
                 ttl_seconds: 86_400,
                 cookie_secure: false,
             },
-        );
+        });
         TestContext {
             app: app::router(state),
             users,

@@ -14,7 +14,7 @@ use backend::{
         review::ApplierRegistry, sales_records::SalesRecordService, stores::StoreService,
         systems::SystemService, users::UserService,
     },
-    state::AppState,
+    state::{AppState, AppStateParts},
 };
 use chrono::Utc;
 use std::{future::Future, net::SocketAddr, path::Path, sync::Arc, time::Duration};
@@ -95,20 +95,20 @@ async fn main() -> Result<()> {
     );
     spawn_event_retention_sweeper(events.clone(), config.events.sweep_interval_seconds);
 
-    let app = app::router(AppState::new(
+    let app = app::router(AppState::new(AppStateParts {
         auth,
         authz,
-        users_service,
-        product_categories_service,
+        users: users_service,
+        product_categories: product_categories_service,
         products,
-        systems_service,
-        stores_service,
-        customers_service,
-        sales_records_service,
+        systems: systems_service,
+        stores: stores_service,
+        customers: customers_service,
+        sales_records: sales_records_service,
         events,
-        config.auth.clone(),
-        config.session.clone(),
-    ));
+        auth_config: config.auth.clone(),
+        session_config: config.session.clone(),
+    }));
     let addr: SocketAddr = config
         .server
         .bind_addr

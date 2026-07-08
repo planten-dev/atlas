@@ -98,17 +98,12 @@ pub struct UpdateCustomerRequest {
     pub status: PatchField<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum PatchField<T> {
+    #[default]
     Unset,
     Null,
     Value(T),
-}
-
-impl<T> Default for PatchField<T> {
-    fn default() -> Self {
-        Self::Unset
-    }
 }
 
 impl<'de, T> Deserialize<'de> for PatchField<T>

@@ -764,14 +764,14 @@ mod tests {
             created_attached.attachments[0].file_name.as_deref(),
             Some("photo.png")
         );
-        assert!(matches!(
+        assert!(
             serde_json::from_value::<CreateCustomerRequest>(json!({
                 "name": "Bob",
                 "store_id": store_id,
                 "department_id": Uuid::new_v4()
-            })),
-            Err(_)
-        ));
+            }))
+            .is_err()
+        );
     }
 
     #[tokio::test]
@@ -842,12 +842,12 @@ mod tests {
                 .await,
             Err(CustomerError::StoreSystemMismatch)
         ));
-        assert!(matches!(
+        assert!(
             serde_json::from_value::<UpdateCustomerRequest>(
                 json!({"department_id": Uuid::new_v4()})
-            ),
-            Err(_)
-        ));
+            )
+            .is_err()
+        );
         assert!(matches!(
             service
                 .list_customers(ListCustomersQuery {
