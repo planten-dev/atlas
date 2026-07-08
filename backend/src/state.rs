@@ -1,7 +1,8 @@
 use crate::{
     config::{AuthConfig, SessionConfig},
     services::{
-        auth::AuthService, authz::AuthzService, customers::CustomerService, events::EventService,
+        auth::AuthService, authz::AuthzService, customers::CustomerService,
+        departments::DepartmentService, events::EventService,
         product_categories::ProductCategoryService, products::ProductService,
         sales_records::SalesRecordService, stores::StoreService, systems::SystemService,
         users::UserService,
@@ -20,11 +21,13 @@ pub struct AppState {
     pub customers: CustomerService,
     pub sales_records: SalesRecordService,
     pub events: EventService,
+    pub departments: DepartmentService,
     pub auth_config: AuthConfig,
     pub session_config: SessionConfig,
 }
 
 impl AppState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         auth: AuthService,
         authz: AuthzService,
@@ -36,6 +39,7 @@ impl AppState {
         customers: CustomerService,
         sales_records: SalesRecordService,
         events: EventService,
+        departments: DepartmentService,
         auth_config: AuthConfig,
         session_config: SessionConfig,
     ) -> Self {
@@ -50,6 +54,7 @@ impl AppState {
             customers,
             sales_records,
             events,
+            departments,
             auth_config,
             session_config,
         }

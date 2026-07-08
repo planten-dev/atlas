@@ -2,11 +2,14 @@ use std::collections::HashMap;
 
 use chrono::Utc;
 use thiserror::Error;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
     config::DingTalkConfig,
+    dto::departments::{
+        DepartmentResponse, DepartmentSyncResponse, ListDepartmentsQuery, ListDepartmentsResponse,
+    },
     entities::departments,
     integrations::dingtalk::{
         DingTalkClient, DingTalkDepartment, DingTalkError, ROOT_DEPARTMENT_ID,
@@ -16,6 +19,10 @@ use crate::{
 
 pub const SOURCE_DINGTALK: &str = "dingtalk";
 pub const SOURCE_MANUAL: &str = "manual";
+
+const DEFAULT_PAGE_NUMBER: u64 = 1;
+const DEFAULT_PAGE_SIZE: u64 = 50;
+const MAX_PAGE_SIZE: u64 = 200;
 
 #[derive(Clone)]
 pub struct DepartmentService {
@@ -29,6 +36,67 @@ impl DepartmentService {
             dingtalk_config,
             departments,
         }
+    }
+
+    #[tracing::instrument(level = "debug", skip(self, query))]
+    pub async fn list_departments(
+        &self,
+        query: ListDepartmentsQuery,
+    ) -> Result<ListDepartmentsResponse, DepartmentError> {
+        let page_number = query.page_number.unwrap_or(DEFAULT_PAGE_NUMBER);
+        let page_size = query.page_size.unwrap_or(DEFAULT_PAGE_SIZE);
+        validate_page_number(page_number)?;
+        validate_page_size(page_size)?;
+
+        let status_filter = query
+            .status_filter
+            .as_deref()
+            .map(|value| parse_status("status_filter", value))
+            .transpose()?;
+        let source_filter = query
+            .source_filter
+            .as_deref()
+            .map(|value| parse_source("source_filter", value))
+            .transpose()?;
+        let (departments, total_count) = self
+            .departments
+            .list_departments(
+                status_filter,
+                source_filter,
+                query.parent_id,
+                page_number,
+                page_size,
+            )
+            .await?;
+
+        debug!(
+            count = departments.len(),
+            total_count, page_number, page_size, "listed departments through service"
+        );
+        Ok(ListDepartmentsResponse {
+            departments: departments
+                .into_iter()
+                .map(DepartmentResponse::from)
+                .collect(),
+            page_number,
+            page_size,
+            total_count,
+        })
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn department_detail(
+        &self,
+        department_id: Uuid,
+    ) -> Result<DepartmentResponse, DepartmentError> {
+        let department = self
+            .departments
+            .find_by_id(department_id)
+            .await?
+            .ok_or(DepartmentError::DepartmentNotFound)?;
+
+        debug!(%department_id, "loaded department detail");
+        Ok(DepartmentResponse::from(department))
     }
 
     #[tracing::instrument(level = "info", skip(self), fields(provider = SOURCE_DINGTALK))]
@@ -87,12 +155,33 @@ pub struct DepartmentSyncSummary {
     pub unchanged: usize,
 }
 
+impl From<DepartmentSyncSummary> for DepartmentSyncResponse {
+    fn from(summary: DepartmentSyncSummary) -> Self {
+        Self {
+            total: summary.total,
+            created: summary.created,
+            updated: summary.updated,
+            unchanged: summary.unchanged,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum DepartmentError {
     #[error(transparent)]
     DingTalk(#[from] DingTalkError),
     #[error(transparent)]
     Repository(#[from] RepositoryError),
+    #[error("department was not found")]
+    DepartmentNotFound,
+    #[error("{field} must be one of: active, disabled")]
+    InvalidStatus { field: &'static str, value: String },
+    #[error("{field} must be one of: dingtalk, manual")]
+    InvalidSource { field: &'static str, value: String },
+    #[error("{field} must be greater than or equal to {minimum}")]
+    InvalidPaginationMinimum { field: &'static str, minimum: u64 },
+    #[error("{field} must be less than or equal to {maximum}")]
+    InvalidPaginationMaximum { field: &'static str, maximum: u64 },
 }
 
 impl DepartmentError {
@@ -106,8 +195,70 @@ impl DepartmentError {
                 RepositoryError::Database(_) => "database_error",
                 _ => "validation_error",
             },
+            Self::DepartmentNotFound => "department_not_found",
+            Self::InvalidStatus { .. }
+            | Self::InvalidSource { .. }
+            | Self::InvalidPaginationMinimum { .. }
+            | Self::InvalidPaginationMaximum { .. } => "validation_error",
         }
     }
+}
+
+fn parse_status(field: &'static str, value: &str) -> Result<&'static str, DepartmentError> {
+    match value.trim() {
+        "active" => Ok("active"),
+        "disabled" => Ok("disabled"),
+        _ => {
+            warn!(field, value, "rejected invalid department status filter");
+            Err(DepartmentError::InvalidStatus {
+                field,
+                value: value.to_string(),
+            })
+        }
+    }
+}
+
+fn parse_source(field: &'static str, value: &str) -> Result<&'static str, DepartmentError> {
+    match value.trim() {
+        SOURCE_DINGTALK => Ok(SOURCE_DINGTALK),
+        SOURCE_MANUAL => Ok(SOURCE_MANUAL),
+        _ => {
+            warn!(field, value, "rejected invalid department source filter");
+            Err(DepartmentError::InvalidSource {
+                field,
+                value: value.to_string(),
+            })
+        }
+    }
+}
+
+fn validate_page_number(page_number: u64) -> Result<(), DepartmentError> {
+    if page_number == 0 {
+        return Err(DepartmentError::InvalidPaginationMinimum {
+            field: "page_number",
+            minimum: 1,
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_page_size(page_size: u64) -> Result<(), DepartmentError> {
+    if page_size == 0 {
+        return Err(DepartmentError::InvalidPaginationMinimum {
+            field: "page_size",
+            minimum: 1,
+        });
+    }
+
+    if page_size > MAX_PAGE_SIZE {
+        return Err(DepartmentError::InvalidPaginationMaximum {
+            field: "page_size",
+            maximum: MAX_PAGE_SIZE,
+        });
+    }
+
+    Ok(())
 }
 
 pub(crate) struct DepartmentSyncPlan {
@@ -412,6 +563,146 @@ mod tests {
                 vec![json!({"dept_id": 21, "name": "后端", "parent_id": 20})],
             ),
         ])
+    }
+
+    #[tokio::test]
+    async fn lists_departments_with_filters_and_defaults() {
+        let db = db::connect_and_migrate(&sqlite_memory_config())
+            .await
+            .expect("sqlite memory database should initialize");
+        let repository = DepartmentRepository::new(db);
+        let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
+        let parent = repository
+            .insert_department(Uuid::new_v4(), SOURCE_DINGTALK, "10", "总裁办", None, now)
+            .await
+            .expect("parent should be created");
+        let child = repository
+            .insert_department(
+                Uuid::new_v4(),
+                SOURCE_DINGTALK,
+                "11",
+                "秘书处",
+                Some(parent.id),
+                now,
+            )
+            .await
+            .expect("child should be created");
+        repository
+            .insert_department(Uuid::new_v4(), SOURCE_MANUAL, "m-1", "手动部门", None, now)
+            .await
+            .expect("manual department should be created");
+        // The service only lists; DingTalk config is never touched here.
+        let service = DepartmentService::new(
+            test_dingtalk_config("http://127.0.0.1:1"),
+            repository.clone(),
+        );
+
+        let all = service
+            .list_departments(ListDepartmentsQuery::default())
+            .await
+            .expect("departments should list");
+        assert_eq!(all.page_number, 1);
+        assert_eq!(all.page_size, 50);
+        assert_eq!(all.total_count, 3);
+
+        let dingtalk_children = service
+            .list_departments(ListDepartmentsQuery {
+                status_filter: Some("active".to_string()),
+                source_filter: Some(SOURCE_DINGTALK.to_string()),
+                parent_id: Some(parent.id),
+                page_number: None,
+                page_size: None,
+            })
+            .await
+            .expect("filtered departments should list");
+        assert_eq!(dingtalk_children.total_count, 1);
+        assert_eq!(dingtalk_children.departments[0].id, child.id);
+        assert_eq!(dingtalk_children.departments[0].parent_id, Some(parent.id));
+
+        let detail = service
+            .department_detail(parent.id)
+            .await
+            .expect("department detail should load");
+        assert_eq!(detail.id, parent.id);
+        assert_eq!(detail.name, "总裁办");
+        assert_eq!(detail.source, SOURCE_DINGTALK);
+
+        assert!(matches!(
+            service.department_detail(Uuid::new_v4()).await,
+            Err(DepartmentError::DepartmentNotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_list_parameters() {
+        let db = db::connect_and_migrate(&sqlite_memory_config())
+            .await
+            .expect("sqlite memory database should initialize");
+        let service = DepartmentService::new(
+            test_dingtalk_config("http://127.0.0.1:1"),
+            DepartmentRepository::new(db),
+        );
+
+        assert!(matches!(
+            service
+                .list_departments(ListDepartmentsQuery {
+                    status_filter: Some("deleted".to_string()),
+                    ..ListDepartmentsQuery::default()
+                })
+                .await,
+            Err(DepartmentError::InvalidStatus {
+                field: "status_filter",
+                ..
+            })
+        ));
+        assert!(matches!(
+            service
+                .list_departments(ListDepartmentsQuery {
+                    source_filter: Some("wechat".to_string()),
+                    ..ListDepartmentsQuery::default()
+                })
+                .await,
+            Err(DepartmentError::InvalidSource {
+                field: "source_filter",
+                ..
+            })
+        ));
+        assert!(matches!(
+            service
+                .list_departments(ListDepartmentsQuery {
+                    page_number: Some(0),
+                    ..ListDepartmentsQuery::default()
+                })
+                .await,
+            Err(DepartmentError::InvalidPaginationMinimum {
+                field: "page_number",
+                ..
+            })
+        ));
+        assert!(matches!(
+            service
+                .list_departments(ListDepartmentsQuery {
+                    page_size: Some(0),
+                    ..ListDepartmentsQuery::default()
+                })
+                .await,
+            Err(DepartmentError::InvalidPaginationMinimum {
+                field: "page_size",
+                ..
+            })
+        ));
+        assert!(matches!(
+            service
+                .list_departments(ListDepartmentsQuery {
+                    page_size: Some(MAX_PAGE_SIZE + 1),
+                    ..ListDepartmentsQuery::default()
+                })
+                .await,
+            Err(DepartmentError::InvalidPaginationMaximum {
+                field: "page_size",
+                ..
+            })
+        ));
     }
 
     #[tokio::test]

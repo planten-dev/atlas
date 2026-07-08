@@ -1,8 +1,8 @@
 use axum::{
-    Extension, Json,
+    Json,
     extract::{
         Path, Query, State,
-        rejection::{JsonRejection, PathRejection, QueryRejection},
+        rejection::{PathRejection, QueryRejection},
     },
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -11,107 +11,59 @@ use tracing::{error, warn};
 use uuid::Uuid;
 
 use crate::{
-    dto::{
-        auth::ErrorResponse,
-        events::{ListEventsQuery, ReviewEventRequest},
-    },
+    dto::{auth::ErrorResponse, departments::ListDepartmentsQuery},
+    integrations::dingtalk::DingTalkError,
     repositories::RepositoryError,
-    services::{
-        auth::CurrentSession,
-        events::{EventError, ReviewDecision},
-    },
+    services::departments::DepartmentError,
     state::AppState,
 };
 
-pub async fn list_events(
+pub async fn list_departments(
     State(state): State<AppState>,
-    query: Result<Query<ListEventsQuery>, QueryRejection>,
+    query: Result<Query<ListDepartmentsQuery>, QueryRejection>,
 ) -> Response {
     let query = match query {
         Ok(Query(query)) => query,
         Err(error) => return validation_error_response("invalid query parameters", error),
     };
 
-    match state.events.list_events(query).await {
+    match state.departments.list_departments(query).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => event_error_response(error),
+        Err(error) => department_error_response(error),
     }
 }
 
-pub async fn event_detail(
+pub async fn department_detail(
     State(state): State<AppState>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
-    let event_id = match path {
-        Ok(Path(event_id)) => event_id,
-        Err(error) => return validation_error_response("invalid event_id path parameter", error),
+    let department_id = match path {
+        Ok(Path(department_id)) => department_id,
+        Err(error) => {
+            return validation_error_response("invalid department_id path parameter", error);
+        }
     };
 
-    match state.events.event_detail(event_id).await {
+    match state.departments.department_detail(department_id).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => event_error_response(error),
+        Err(error) => department_error_response(error),
     }
 }
 
-pub async fn approve_event(
-    State(state): State<AppState>,
-    Extension(current_session): Extension<CurrentSession>,
-    path: Result<Path<Uuid>, PathRejection>,
-    request: Result<Json<ReviewEventRequest>, JsonRejection>,
-) -> Response {
-    review_event(
-        state,
-        current_session,
-        path,
-        request,
-        ReviewDecision::Approve,
-    )
-    .await
-}
-
-pub async fn reject_event(
-    State(state): State<AppState>,
-    Extension(current_session): Extension<CurrentSession>,
-    path: Result<Path<Uuid>, PathRejection>,
-    request: Result<Json<ReviewEventRequest>, JsonRejection>,
-) -> Response {
-    review_event(
-        state,
-        current_session,
-        path,
-        request,
-        ReviewDecision::Reject,
-    )
-    .await
-}
-
-async fn review_event(
-    state: AppState,
-    current_session: CurrentSession,
-    path: Result<Path<Uuid>, PathRejection>,
-    request: Result<Json<ReviewEventRequest>, JsonRejection>,
-    decision: ReviewDecision,
-) -> Response {
-    let event_id = match path {
-        Ok(Path(event_id)) => event_id,
-        Err(error) => return validation_error_response("invalid event_id path parameter", error),
-    };
-    let request = match request {
-        Ok(Json(request)) => request,
-        Err(error) => return validation_error_response("invalid request body", error),
-    };
-
-    match state
-        .events
-        .review(event_id, current_session.user.id, decision, request)
-        .await
-    {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => event_error_response(error),
+pub async fn sync_dingtalk_departments(State(state): State<AppState>) -> Response {
+    match state.departments.sync_from_dingtalk().await {
+        Ok(summary) => (
+            StatusCode::OK,
+            Json(crate::dto::departments::DepartmentSyncResponse::from(
+                summary,
+            )),
+        )
+            .into_response(),
+        Err(error) => department_error_response(error),
     }
 }
 
-fn event_error_response(error: EventError) -> Response {
+fn department_error_response(error: DepartmentError) -> Response {
     let status = status_code(&error);
     let code = error.code();
 
@@ -120,14 +72,14 @@ fn event_error_response(error: EventError) -> Response {
             status = status.as_u16(),
             code,
             message = %error,
-            "event request failed"
+            "department request failed"
         );
     } else {
         warn!(
             status = status.as_u16(),
             code,
             message = %error,
-            "event request rejected"
+            "department request rejected"
         );
     }
 
@@ -142,7 +94,7 @@ fn event_error_response(error: EventError) -> Response {
 }
 
 fn validation_error_response(error: &'static str, detail: impl std::fmt::Display) -> Response {
-    warn!(error, detail = %detail, "event request validation failed");
+    warn!(error, detail = %detail, "department request validation failed");
     (
         StatusCode::BAD_REQUEST,
         Json(ErrorResponse {
@@ -153,26 +105,28 @@ fn validation_error_response(error: &'static str, detail: impl std::fmt::Display
         .into_response()
 }
 
-fn status_code(error: &EventError) -> StatusCode {
+fn status_code(error: &DepartmentError) -> StatusCode {
     match error {
-        EventError::Repository(error) => match error {
+        DepartmentError::DingTalk(error) => match error {
+            DingTalkError::MissingConfig(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            DingTalkError::ProviderHttp { .. }
+            | DingTalkError::ProviderApi { .. }
+            | DingTalkError::MissingResponseField { .. }
+            | DingTalkError::Http(_) => StatusCode::BAD_GATEWAY,
+            DingTalkError::MissingRequiredField { .. } | DingTalkError::MissingIdentityField(_) => {
+                StatusCode::BAD_REQUEST
+            }
+        },
+        DepartmentError::Repository(error) => match error {
             RepositoryError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
             RepositoryError::MissingRequiredField { .. } => StatusCode::BAD_REQUEST,
             RepositoryError::DisabledUser => StatusCode::FORBIDDEN,
         },
-        EventError::Authz(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        EventError::EventNotFound => StatusCode::NOT_FOUND,
-        EventError::EventNotReviewable => StatusCode::UNPROCESSABLE_ENTITY,
-        EventError::EventNotPending => StatusCode::CONFLICT,
-        EventError::DuplicateReview => StatusCode::CONFLICT,
-        EventError::PermissionDenied { .. } => StatusCode::FORBIDDEN,
-        EventError::UnknownResourceType { .. } => StatusCode::UNPROCESSABLE_ENTITY,
-        EventError::MissingPayload { .. } => StatusCode::INTERNAL_SERVER_ERROR,
-        EventError::Apply(_) | EventError::Serialization(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        EventError::InvalidInput(_)
-        | EventError::InvalidPaginationMinimum { .. }
-        | EventError::InvalidPaginationMaximum { .. }
-        | EventError::InvalidEnumValue { .. } => StatusCode::BAD_REQUEST,
+        DepartmentError::DepartmentNotFound => StatusCode::NOT_FOUND,
+        DepartmentError::InvalidStatus { .. }
+        | DepartmentError::InvalidSource { .. }
+        | DepartmentError::InvalidPaginationMinimum { .. }
+        | DepartmentError::InvalidPaginationMaximum { .. } => StatusCode::BAD_REQUEST,
     }
 }
 
@@ -183,7 +137,6 @@ mod tests {
         app,
         config::{AuthConfig, DatabaseConfig, DatabaseKind, DingTalkConfig, SessionConfig},
         db,
-        entities::{product_category, products},
         repositories::{
             authz::AuthzRepository, customers::CustomerRepository,
             departments::DepartmentRepository, events::EventRepository,
@@ -193,254 +146,152 @@ mod tests {
             user_profiles::UserProfileRepository, users::UserRepository,
         },
         services::{
-            auth::AuthService,
-            authz::AuthzService,
-            customers::CustomerService,
-            departments::DepartmentService,
-            events::EventService,
-            product_categories::ProductCategoryService,
-            products::ProductService,
-            review::{ApplierRegistry, ApplyError, ReviewableResource},
-            sales_records::SalesRecordService,
-            stores::StoreService,
-            systems::SystemService,
-            users::UserService,
+            auth::AuthService, authz::AuthzService, customers::CustomerService,
+            departments::DepartmentService, events::EventService,
+            product_categories::ProductCategoryService, products::ProductService,
+            review::ApplierRegistry, sales_records::SalesRecordService, stores::StoreService,
+            systems::SystemService, users::UserService,
         },
-        state::AppState,
     };
-    use async_trait::async_trait;
     use axum::{
-        Router,
+        Form, Router,
         body::{Body, to_bytes},
         http::{Method, Request, header},
         routing::{get, post},
     };
-    use chrono::{DateTime, Utc};
-    use sea_orm::entity::prelude::Decimal;
-    use sea_orm::{ActiveModelTrait, DatabaseTransaction, EntityTrait, Set};
-    use serde::{Deserialize, Serialize};
     use serde_json::{Value, json};
-    use std::{path::PathBuf, str::FromStr, sync::Arc};
+    use std::path::PathBuf;
     use tokio::net::TcpListener;
     use tower::ServiceExt;
-
-    #[derive(Debug, Serialize, Deserialize)]
-    struct TestProduct {
-        name: String,
-        unit_price: String,
-    }
-
-    #[async_trait]
-    impl ReviewableResource for TestProduct {
-        const RESOURCE_TYPE: &'static str = "products";
-        const APPROVAL_PERMISSION: &'static str = "products:approve";
-
-        async fn apply_insert(
-            self,
-            tx: &DatabaseTransaction,
-            now: DateTime<Utc>,
-        ) -> Result<Uuid, ApplyError> {
-            // Products require a category; use one of the seeded defaults.
-            let category = product_category::Entity::find()
-                .one(tx)
-                .await?
-                .ok_or(ApplyError::ResourceMissing)?;
-            let product = products::ActiveModel {
-                id: Set(Uuid::new_v4()),
-                name: Set(self.name),
-                category_id: Set(category.id),
-                series: Set(None),
-                brand_name: Set(None),
-                specification: Set(None),
-                unit: Set(None),
-                unit_price: Set(
-                    Decimal::from_str(&self.unit_price).map_err(|_| ApplyError::ResourceMissing)?
-                ),
-                status: Set("active".to_string()),
-                created_at: Set(now),
-                updated_at: Set(now),
-            }
-            .insert(tx)
-            .await?;
-            Ok(product.id)
-        }
-
-        async fn apply_update(
-            self,
-            _tx: &DatabaseTransaction,
-            _resource_id: Uuid,
-            _now: DateTime<Utc>,
-        ) -> Result<(), ApplyError> {
-            unimplemented!("handler tests only exercise create events")
-        }
-
-        async fn apply_delete(
-            _tx: &DatabaseTransaction,
-            _resource_id: Uuid,
-            _now: DateTime<Utc>,
-        ) -> Result<(), ApplyError> {
-            unimplemented!("handler tests only exercise create events")
-        }
-    }
 
     struct TestContext {
         app: Router,
         users: UserRepository,
         authz: AuthzService,
-        events: EventService,
+        departments: DepartmentRepository,
     }
 
     #[tokio::test]
-    async fn events_api_requires_session() {
+    async fn departments_api_requires_session() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
 
-        let response = context
-            .app
-            .clone()
-            .oneshot(request(Method::GET, "/api/v1/events/list", None, None))
-            .await
-            .expect("events list request should be handled");
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-
-        let response = context
-            .app
-            .oneshot(request(
+        for (method, uri) in [
+            (Method::GET, "/api/v1/departments/list".to_string()),
+            (
+                Method::GET,
+                format!("/api/v1/departments/detail/{}", Uuid::new_v4()),
+            ),
+            (
                 Method::POST,
-                &format!("/api/v1/events/approve/{}", Uuid::new_v4()),
-                None,
-                Some(json!({})),
-            ))
-            .await
-            .expect("event approve request should be handled");
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+                "/api/v1/departments/sync/dingtalk".to_string(),
+            ),
+        ] {
+            let response = context
+                .app
+                .clone()
+                .oneshot(request(method, &uri, None, None))
+                .await
+                .expect("department request should be handled");
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        }
     }
 
     #[tokio::test]
-    async fn list_requires_events_read_permission() {
+    async fn session_without_department_permission_is_forbidden() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
 
         let response = context
             .app
+            .clone()
             .oneshot(request(
                 Method::GET,
-                "/api/v1/events/list",
+                "/api/v1/departments/list",
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("events list request should be handled");
-
+            .expect("departments list request should be handled");
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
         let body = response_json(response).await;
         assert_eq!(
             body.pointer("/error").and_then(Value::as_str),
             Some("permission_denied")
         );
+
+        // Sync mutates local rows, so read permission alone must not allow it.
+        let user_id = logged_in_user_id(&context).await;
+        grant(&context, user_id, "departments", "read").await;
+        let response = context
+            .app
+            .oneshot(request(
+                Method::POST,
+                "/api/v1/departments/sync/dingtalk",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("department sync request should be handled");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
-    async fn approve_and_reject_via_http() {
+    async fn lists_and_reads_departments_via_http() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
-        let reviewer_id = logged_in_user_id(&context).await;
-        grant(&context, reviewer_id, "events", "read").await;
-        grant(&context, reviewer_id, "products", "approve").await;
+        let user_id = logged_in_user_id(&context).await;
+        grant(&context, user_id, "departments", "read").await;
 
-        // Events are submitted by handlers through the service; simulate a
-        // separate actor here.
-        let actor = context
-            .users
-            .find_or_create_for_login("ding-actor", Utc::now())
+        let now = chrono::Utc::now();
+        let parent = context
+            .departments
+            .insert_department(Uuid::new_v4(), "dingtalk", "10", "总裁办", None, now)
             .await
-            .expect("actor should be created")
-            .id;
-        let approve_target = context
-            .events
-            .submit_create(
-                actor,
-                &TestProduct {
-                    name: "http approved".to_string(),
-                    unit_price: "10.00".to_string(),
-                },
-                1,
+            .expect("parent department should be created");
+        let child = context
+            .departments
+            .insert_department(
+                Uuid::new_v4(),
+                "dingtalk",
+                "11",
+                "秘书处",
+                Some(parent.id),
+                now,
             )
             .await
-            .expect("event should be submitted");
-        let reject_target = context
-            .events
-            .submit_create(
-                actor,
-                &TestProduct {
-                    name: "http rejected".to_string(),
-                    unit_price: "10.00".to_string(),
-                },
-                1,
-            )
-            .await
-            .expect("event should be submitted");
+            .expect("child department should be created");
 
         let list_response = context
             .app
             .clone()
             .oneshot(request(
                 Method::GET,
-                "/api/v1/events/list?approval_status=1",
+                &format!(
+                    "/api/v1/departments/list?status_filter=active&source_filter=dingtalk&parent_id={}&page_number=1&page_size=20",
+                    parent.id
+                ),
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("events list request should be handled");
+            .expect("departments list request should be handled");
         assert_eq!(list_response.status(), StatusCode::OK);
         let list = response_json(list_response).await;
         assert_eq!(
             list.pointer("/total_count").and_then(Value::as_u64),
-            Some(2)
+            Some(1)
         );
-
-        let approve_response = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::POST,
-                &format!("/api/v1/events/approve/{}", approve_target.id),
-                Some(&cookie),
-                Some(json!({})),
-            ))
-            .await
-            .expect("event approve request should be handled");
-        assert_eq!(approve_response.status(), StatusCode::OK);
-        let approved = response_json(approve_response).await;
         assert_eq!(
-            approved.pointer("/approval_status").and_then(Value::as_i64),
-            Some(2)
+            list.pointer("/departments/0/id").and_then(Value::as_str),
+            Some(child.id.to_string().as_str())
         );
-        assert!(
-            approved
-                .pointer("/resource_id")
-                .and_then(Value::as_str)
-                .is_some()
-        );
-
-        let reject_response = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::POST,
-                &format!("/api/v1/events/reject/{}", reject_target.id),
-                Some(&cookie),
-                Some(json!({"remark": "not needed"})),
-            ))
-            .await
-            .expect("event reject request should be handled");
-        assert_eq!(reject_response.status(), StatusCode::OK);
-        let rejected = response_json(reject_response).await;
         assert_eq!(
-            rejected.pointer("/approval_status").and_then(Value::as_i64),
-            Some(3)
+            list.pointer("/departments/0/parent_id")
+                .and_then(Value::as_str),
+            Some(parent.id.to_string().as_str())
         );
 
         let detail_response = context
@@ -448,95 +299,131 @@ mod tests {
             .clone()
             .oneshot(request(
                 Method::GET,
-                &format!("/api/v1/events/detail/{}", reject_target.id),
+                &format!("/api/v1/departments/detail/{}", parent.id),
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("event detail request should be handled");
+            .expect("department detail request should be handled");
         assert_eq!(detail_response.status(), StatusCode::OK);
+        let detail = response_json(detail_response).await;
+        assert_eq!(
+            detail.pointer("/name").and_then(Value::as_str),
+            Some("总裁办")
+        );
+        assert_eq!(
+            detail.pointer("/source").and_then(Value::as_str),
+            Some("dingtalk")
+        );
 
-        // Finalized events reject further reviews.
-        let conflict_response = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::POST,
-                &format!("/api/v1/events/approve/{}", reject_target.id),
-                Some(&cookie),
-                Some(json!({})),
-            ))
-            .await
-            .expect("event approve request should be handled");
-        assert_eq!(conflict_response.status(), StatusCode::CONFLICT);
-
-        let missing_response = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::POST,
-                &format!("/api/v1/events/approve/{}", Uuid::new_v4()),
-                Some(&cookie),
-                Some(json!({})),
-            ))
-            .await
-            .expect("event approve request should be handled");
-        assert_eq!(missing_response.status(), StatusCode::NOT_FOUND);
-
-        let invalid_response = context
+        let missing_detail = context
             .app
             .oneshot(request(
-                Method::POST,
-                "/api/v1/events/approve/not-a-uuid",
+                Method::GET,
+                &format!("/api/v1/departments/detail/{}", Uuid::new_v4()),
                 Some(&cookie),
-                Some(json!({})),
+                None,
             ))
             .await
-            .expect("event approve request should be handled");
-        assert_eq!(invalid_response.status(), StatusCode::BAD_REQUEST);
+            .expect("department detail request should be handled");
+        assert_eq!(missing_detail.status(), StatusCode::NOT_FOUND);
+        let body = response_json(missing_detail).await;
+        assert_eq!(
+            body.pointer("/error").and_then(Value::as_str),
+            Some("department_not_found")
+        );
     }
 
     #[tokio::test]
-    async fn review_without_approval_permission_is_forbidden() {
+    async fn rejects_invalid_department_query_parameters() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
+        let user_id = logged_in_user_id(&context).await;
+        grant(&context, user_id, "departments", "read").await;
 
-        let actor = context
-            .users
-            .find_or_create_for_login("ding-actor", Utc::now())
-            .await
-            .expect("actor should be created")
-            .id;
-        let event = context
-            .events
-            .submit_create(
-                actor,
-                &TestProduct {
-                    name: "guarded".to_string(),
-                    unit_price: "10.00".to_string(),
-                },
-                1,
-            )
-            .await
-            .expect("event should be submitted");
+        for uri in [
+            "/api/v1/departments/list?status_filter=deleted",
+            "/api/v1/departments/list?source_filter=wechat",
+            "/api/v1/departments/list?parent_id=not-a-uuid",
+            "/api/v1/departments/list?page_number=0",
+            "/api/v1/departments/list?page_size=201",
+        ] {
+            let response = context
+                .app
+                .clone()
+                .oneshot(request(Method::GET, uri, Some(&cookie), None))
+                .await
+                .expect("departments list request should be handled");
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "uri: {uri}");
+        }
 
-        let response = context
+        let invalid_id = context
+            .app
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/departments/detail/not-a-uuid",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("department detail request should be handled");
+        assert_eq!(invalid_id.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn syncs_departments_from_dingtalk_via_http() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let user_id = logged_in_user_id(&context).await;
+        grant(&context, user_id, "departments", "write").await;
+
+        let sync_response = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/api/v1/departments/sync/dingtalk",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("department sync request should be handled");
+        assert_eq!(sync_response.status(), StatusCode::OK);
+        let summary = response_json(sync_response).await;
+        assert_eq!(summary.pointer("/total").and_then(Value::as_u64), Some(3));
+        assert_eq!(summary.pointer("/created").and_then(Value::as_u64), Some(3));
+        assert_eq!(summary.pointer("/updated").and_then(Value::as_u64), Some(0));
+        assert_eq!(
+            summary.pointer("/unchanged").and_then(Value::as_u64),
+            Some(0)
+        );
+
+        let synced = context
+            .departments
+            .list_by_source("dingtalk")
+            .await
+            .expect("synced departments should list");
+        assert_eq!(synced.len(), 3);
+
+        // A second sync sees the same tree and changes nothing.
+        let second_response = context
             .app
             .oneshot(request(
                 Method::POST,
-                &format!("/api/v1/events/approve/{}", event.id),
+                "/api/v1/departments/sync/dingtalk",
                 Some(&cookie),
-                Some(json!({})),
+                None,
             ))
             .await
-            .expect("event approve request should be handled");
-
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-        let body = response_json(response).await;
+            .expect("department sync request should be handled");
+        assert_eq!(second_response.status(), StatusCode::OK);
+        let second = response_json(second_response).await;
+        assert_eq!(second.pointer("/created").and_then(Value::as_u64), Some(0));
         assert_eq!(
-            body.pointer("/error").and_then(Value::as_str),
-            Some("permission_denied")
+            second.pointer("/unchanged").and_then(Value::as_u64),
+            Some(3)
         );
     }
 
@@ -568,7 +455,7 @@ mod tests {
             user_info_url: format!("{mock_base_url}/me"),
             corp_token_url: format!("{mock_base_url}/gettoken"),
             department_listsub_url: format!("{mock_base_url}/listsub"),
-            user_detail_url: format!("{mock_base_url}/user/get"),
+            user_detail_url: format!("{mock_base_url}/user_detail"),
             getbyunionid_url: format!("{mock_base_url}/getbyunionid"),
             scope: "openid".to_string(),
             corp_id: "".to_string(),
@@ -582,16 +469,7 @@ mod tests {
             sessions.clone(),
             86_400,
         );
-        let departments_service = DepartmentService::new(dingtalk_config, departments.clone());
-        let mut registry = ApplierRegistry::new();
-        registry.register::<TestProduct>();
-        // Merge approval permissions into the catalog, mirroring the
-        // startup wiring in main.rs, so reviewer policies validate.
-        let mut catalog = crate::services::authz_catalog::PermissionCatalog::builtin();
-        for (resource_type, object, action) in registry.approval_permissions() {
-            catalog.add_permission(object, action, "审核", resource_type);
-        }
-        let authz = AuthzService::with_catalog(AuthzRepository::new(db.clone()), catalog)
+        let authz = AuthzService::new(AuthzRepository::new(db.clone()))
             .await
             .expect("test authz service should initialize");
         let users_service = UserService::new(users.clone(), profiles, sessions);
@@ -601,6 +479,7 @@ mod tests {
         let stores_service = StoreService::new(stores.clone(), systems.clone());
         let systems_service =
             SystemService::new(systems.clone(), departments.clone(), stores.clone());
+        let departments_service = DepartmentService::new(dingtalk_config, departments.clone());
         let customers_service = CustomerService::new(
             customers.clone(),
             departments.clone(),
@@ -619,10 +498,10 @@ mod tests {
         let events_service = EventService::new(
             EventRepository::new(db),
             authz.clone(),
-            Arc::new(registry),
+            std::sync::Arc::new(ApplierRegistry::new()),
             180,
         );
-        let state = AppState::new(
+        let state = crate::state::AppState::new(
             auth,
             authz.clone(),
             users_service,
@@ -632,7 +511,7 @@ mod tests {
             stores_service,
             customers_service,
             sales_records_service,
-            events_service.clone(),
+            events_service,
             departments_service,
             AuthConfig {
                 frontend_callback_url: "".to_string(),
@@ -646,8 +525,14 @@ mod tests {
             app: app::router(state),
             users,
             authz,
-            events: events_service,
+            departments,
         }
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ListSubForm {
+        dept_id: i64,
+        language: String,
     }
 
     async fn start_mock_dingtalk() -> String {
@@ -666,9 +551,38 @@ mod tests {
             }))
         }
 
+        async fn gettoken() -> Json<Value> {
+            Json(json!({
+                "errcode": 0,
+                "errmsg": "ok",
+                "access_token": "corp-token",
+                "expires_in": 7200
+            }))
+        }
+
+        // Small fixed org tree: root -> (10 总裁办, 20 研发), 20 -> 21 后端.
+        async fn listsub(Form(form): Form<ListSubForm>) -> Json<Value> {
+            assert_eq!(form.language, "zh_CN");
+            let result = match form.dept_id {
+                1 => json!([
+                    {"dept_id": 10, "name": "总裁办", "parent_id": 1},
+                    {"dept_id": 20, "name": "研发", "parent_id": 1},
+                ]),
+                20 => json!([{"dept_id": 21, "name": "后端", "parent_id": 20}]),
+                _ => json!([]),
+            };
+            Json(json!({
+                "errcode": 0,
+                "errmsg": "ok",
+                "result": result
+            }))
+        }
+
         let app = Router::new()
             .route("/token", post(token))
-            .route("/me", get(me));
+            .route("/me", get(me))
+            .route("/gettoken", get(gettoken))
+            .route("/listsub", post(listsub));
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("mock DingTalk listener should bind");

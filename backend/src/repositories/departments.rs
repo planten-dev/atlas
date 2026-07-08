@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, Set,
 };
 use tracing::{debug, info};
 use uuid::Uuid;
@@ -32,6 +33,42 @@ impl DepartmentRepository {
             "looked up department by id"
         );
         Ok(department)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn list_departments(
+        &self,
+        status_filter: Option<&str>,
+        source_filter: Option<&str>,
+        parent_id: Option<Uuid>,
+        page_number: u64,
+        page_size: u64,
+    ) -> Result<(Vec<departments::Model>, u64), RepositoryError> {
+        let mut query = departments::Entity::find()
+            .order_by_asc(departments::Column::CreatedAt)
+            .order_by_asc(departments::Column::Name);
+
+        if let Some(status_filter) = status_filter {
+            validate_required("status_filter", status_filter)?;
+            query = query.filter(departments::Column::Status.eq(status_filter.trim()));
+        }
+        if let Some(source_filter) = source_filter {
+            validate_required("source_filter", source_filter)?;
+            query = query.filter(departments::Column::Source.eq(source_filter.trim()));
+        }
+        if let Some(parent_id) = parent_id {
+            query = query.filter(departments::Column::ParentId.eq(parent_id));
+        }
+
+        let paginator = query.paginate(&self.db, page_size);
+        let total_count = paginator.num_items().await?;
+        let departments = paginator.fetch_page(page_number.saturating_sub(1)).await?;
+
+        debug!(
+            count = departments.len(),
+            total_count, page_number, page_size, "listed departments"
+        );
+        Ok((departments, total_count))
     }
 
     #[tracing::instrument(level = "debug", skip(self), fields(source = %source))]
@@ -253,6 +290,80 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(RepositoryError::Database(_))));
+    }
+
+    #[tokio::test]
+    async fn lists_departments_with_filters_and_pagination() {
+        let repository = test_repository().await;
+        let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
+        let parent = repository
+            .insert_department(Uuid::new_v4(), "dingtalk", "10", "总裁办", None, now)
+            .await
+            .expect("parent should be created");
+        let child = repository
+            .insert_department(
+                Uuid::new_v4(),
+                "dingtalk",
+                "11",
+                "秘书处",
+                Some(parent.id),
+                now,
+            )
+            .await
+            .expect("child should be created");
+        repository
+            .insert_department(Uuid::new_v4(), "manual", "m-1", "手动部门", None, now)
+            .await
+            .expect("manual department should be created");
+
+        let (all, total_count) = repository
+            .list_departments(None, None, None, 1, 50)
+            .await
+            .expect("departments should list");
+        assert_eq!(total_count, 3);
+        assert_eq!(all.len(), 3);
+
+        let (dingtalk_only, total_count) = repository
+            .list_departments(None, Some("dingtalk"), None, 1, 50)
+            .await
+            .expect("departments should list by source");
+        assert_eq!(total_count, 2);
+        assert!(dingtalk_only.iter().all(|d| d.source == "dingtalk"));
+
+        let (children, total_count) = repository
+            .list_departments(None, None, Some(parent.id), 1, 50)
+            .await
+            .expect("departments should list by parent");
+        assert_eq!(total_count, 1);
+        assert_eq!(children[0].id, child.id);
+
+        let (active, total_count) = repository
+            .list_departments(Some("active"), None, None, 1, 50)
+            .await
+            .expect("departments should list by status");
+        assert_eq!(total_count, 3);
+        assert_eq!(active.len(), 3);
+
+        let (first_page, total_count) = repository
+            .list_departments(None, None, None, 1, 2)
+            .await
+            .expect("first page should list");
+        assert_eq!(total_count, 3);
+        assert_eq!(first_page.len(), 2);
+        let (second_page, _) = repository
+            .list_departments(None, None, None, 2, 2)
+            .await
+            .expect("second page should list");
+        assert_eq!(second_page.len(), 1);
+
+        assert!(matches!(
+            repository
+                .list_departments(Some(" "), None, None, 1, 50)
+                .await,
+            Err(RepositoryError::MissingRequiredField {
+                field: "status_filter"
+            })
+        ));
     }
 
     #[tokio::test]

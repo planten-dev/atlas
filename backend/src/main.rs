@@ -10,7 +10,7 @@ use backend::{
     },
     services::{
         auth::AuthService, authz::AuthzService, authz_catalog::PermissionCatalog,
-        customers::CustomerService, events::EventService,
+        customers::CustomerService, departments::DepartmentService, events::EventService,
         product_categories::ProductCategoryService, products::ProductService,
         review::ApplierRegistry, sales_records::SalesRecordService, stores::StoreService,
         systems::SystemService, users::UserService,
@@ -79,6 +79,7 @@ async fn main() -> Result<()> {
     let products = ProductService::new(products, product_categories.clone());
     let stores_service = StoreService::new(stores.clone(), systems.clone());
     let systems_service = SystemService::new(systems.clone(), departments.clone(), stores.clone());
+    let departments_service = DepartmentService::new(config.dingtalk.clone(), departments.clone());
     let customers_service = CustomerService::new(
         customers.clone(),
         departments.clone(),
@@ -113,6 +114,7 @@ async fn main() -> Result<()> {
         customers_service,
         sales_records_service,
         events,
+        departments_service,
         config.auth.clone(),
         config.session.clone(),
     ));
