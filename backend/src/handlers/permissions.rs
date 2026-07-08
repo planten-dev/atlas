@@ -260,16 +260,18 @@ mod tests {
         config::{AuthConfig, DatabaseConfig, DatabaseKind, DingTalkConfig, SessionConfig},
         db,
         repositories::{
-            authz::AuthzRepository, departments::DepartmentRepository, events::EventRepository,
+            authz::AuthzRepository, customers::CustomerRepository,
+            departments::DepartmentRepository, events::EventRepository,
             product_categories::ProductCategoryRepository, products::ProductRepository,
-            sessions::SessionRepository, stores::StoreRepository, systems::SystemRepository,
-            users::UserRepository,
+            sales_records::SalesRecordRepository, sessions::SessionRepository,
+            stores::StoreRepository, systems::SystemRepository,
+            user_profiles::UserProfileRepository, users::UserRepository,
         },
         services::{
-            auth::AuthService, authz::AuthzService, events::EventService,
-            product_categories::ProductCategoryService, products::ProductService,
-            review::ApplierRegistry, stores::StoreService, systems::SystemService,
-            users::UserService,
+            auth::AuthService, authz::AuthzService, customers::CustomerService,
+            events::EventService, product_categories::ProductCategoryService,
+            products::ProductService, review::ApplierRegistry, sales_records::SalesRecordService,
+            stores::StoreService, systems::SystemService, users::UserService,
         },
         state::AppState,
     };
@@ -301,12 +303,15 @@ mod tests {
             .await
             .expect("test database should initialize");
         let users = UserRepository::new(db.clone());
+        let profiles = UserProfileRepository::new(db.clone());
         let sessions = SessionRepository::new(db.clone());
         let product_categories = ProductCategoryRepository::new(db.clone());
         let products = ProductRepository::new(db.clone());
         let departments = DepartmentRepository::new(db.clone());
         let systems = SystemRepository::new(db.clone());
         let stores = StoreRepository::new(db.clone());
+        let customers = CustomerRepository::new(db.clone());
+        let sales_records = SalesRecordRepository::new(db.clone());
         let auth = AuthService::new(
             DingTalkConfig {
                 client_id: "test-client-id".to_string(),
@@ -317,23 +322,43 @@ mod tests {
                 user_info_url: format!("{mock_base_url}/me"),
                 corp_token_url: format!("{mock_base_url}/gettoken"),
                 department_listsub_url: format!("{mock_base_url}/listsub"),
+                user_detail_url: format!("{mock_base_url}/user_detail"),
+                getbyunionid_url: format!("{mock_base_url}/getbyunionid"),
                 scope: "openid".to_string(),
                 corp_id: "".to_string(),
                 external_id_fields: vec!["userId".to_string()],
             },
             users.clone(),
+            profiles.clone(),
+            EventRepository::new(db.clone()),
             sessions.clone(),
             86_400,
         );
         let authz = AuthzService::new(AuthzRepository::new(db.clone()))
             .await
             .expect("test authz service should initialize");
-        let users_service = UserService::new(users.clone(), sessions);
+        let users_service = UserService::new(users.clone(), profiles, sessions);
         let product_categories_service =
             ProductCategoryService::new(product_categories.clone(), products.clone());
-        let products_service = ProductService::new(products, product_categories);
+        let products_service = ProductService::new(products, product_categories.clone());
         let stores_service = StoreService::new(stores.clone(), systems.clone());
-        let systems_service = SystemService::new(systems, departments, stores);
+        let systems_service =
+            SystemService::new(systems.clone(), departments.clone(), stores.clone());
+        let customers_service = CustomerService::new(
+            customers.clone(),
+            departments.clone(),
+            systems.clone(),
+            stores.clone(),
+        );
+        let sales_records_service = SalesRecordService::new(
+            sales_records,
+            customers.clone(),
+            departments.clone(),
+            systems.clone(),
+            stores.clone(),
+            product_categories.clone(),
+            users.clone(),
+        );
         let events_service = EventService::new(
             EventRepository::new(db),
             authz.clone(),
@@ -348,6 +373,8 @@ mod tests {
             products_service,
             systems_service,
             stores_service,
+            customers_service,
+            sales_records_service,
             events_service,
             AuthConfig {
                 frontend_callback_url: "".to_string(),

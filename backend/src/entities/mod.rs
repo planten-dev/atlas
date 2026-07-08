@@ -1,4 +1,5 @@
 pub mod auth_sessions;
+pub mod customers;
 pub mod departments;
 pub mod events;
 pub mod oauth_login_states;
@@ -7,7 +8,11 @@ pub mod product_category;
 pub mod products;
 pub mod role_inheritances;
 pub mod roles;
+pub mod sales_record_operation_counts;
+pub mod sales_record_operation_usages;
+pub mod sales_records;
 pub mod stores;
 pub mod systems;
+pub mod user_profiles;
 pub mod user_roles;
 pub mod users;

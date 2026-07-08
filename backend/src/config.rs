@@ -53,6 +53,8 @@ pub struct DingTalkConfig {
     pub user_info_url: String,
     pub corp_token_url: String,
     pub department_listsub_url: String,
+    pub user_detail_url: String,
+    pub getbyunionid_url: String,
     pub scope: String,
     pub corp_id: String,
     pub external_id_fields: Vec<String>,
@@ -192,9 +194,11 @@ token_url = "https://api.dingtalk.com/v1.0/oauth2/userAccessToken"
 user_info_url = "https://api.dingtalk.com/v1.0/contact/users/me"
 corp_token_url = "https://oapi.dingtalk.com/gettoken"
 department_listsub_url = "https://oapi.dingtalk.com/topapi/v2/department/listsub"
+user_detail_url = "https://oapi.dingtalk.com/topapi/v2/user/get"
+getbyunionid_url = "https://oapi.dingtalk.com/topapi/user/getbyunionid"
 scope = "openid corpid"
 corp_id = ""
-external_id_fields = ["userId", "userid", "user_id", "unionId", "unionid", "union_id", "openId", "openid", "open_id", "uuid"]
+external_id_fields = ["userId", "userid", "user_id"]
 
 [auth]
 frontend_callback_url = ""
@@ -313,6 +317,8 @@ sqlite_file = "custom.sqlite"
             "ATLAS__DATABASE__SQLITE_FILE",
             "ATLAS__SESSION__TTL_SECONDS",
             "ATLAS__SESSION__COOKIE_SECURE",
+            "ATLAS__DINGTALK__USER_DETAIL_URL",
+            "ATLAS__DINGTALK__GETBYUNIONID_URL",
             "ATLAS__EVENTS__RETENTION_DAYS",
         ] {
             // SAFETY: Tests that mutate process environment hold a shared mutex

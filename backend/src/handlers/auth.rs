@@ -172,22 +172,33 @@ mod tests {
         app,
         config::{AuthConfig, DatabaseConfig, DatabaseKind, DingTalkConfig, SessionConfig},
         db,
-        entities::users as users_entity,
+        entities::{
+            events::{ApprovalStatus, EventType},
+            users as users_entity,
+        },
         repositories::{
-            authz::AuthzRepository, departments::DepartmentRepository, events::EventRepository,
-            product_categories::ProductCategoryRepository, products::ProductRepository,
-            sessions::SessionRepository, stores::StoreRepository, systems::SystemRepository,
+            authz::AuthzRepository,
+            customers::CustomerRepository,
+            departments::DepartmentRepository,
+            events::{EventFilter, EventRepository},
+            product_categories::ProductCategoryRepository,
+            products::ProductRepository,
+            sales_records::SalesRecordRepository,
+            sessions::SessionRepository,
+            stores::StoreRepository,
+            systems::SystemRepository,
+            user_profiles::UserProfileRepository,
             users::UserRepository,
         },
         services::{
-            auth::AuthService, authz::AuthzService, events::EventService,
-            product_categories::ProductCategoryService, products::ProductService,
-            review::ApplierRegistry, stores::StoreService, systems::SystemService,
-            users::UserService,
+            auth::AuthService, authz::AuthzService, customers::CustomerService,
+            events::EventService, product_categories::ProductCategoryService,
+            products::ProductService, review::ApplierRegistry, sales_records::SalesRecordService,
+            stores::StoreService, systems::SystemService, users::UserService,
         },
     };
     use axum::{
-        Router,
+        Form, Router,
         body::{Body, to_bytes},
         http::{Method, Request},
         routing::{get, post},
@@ -201,6 +212,8 @@ mod tests {
     struct TestContext {
         app: Router,
         users: UserRepository,
+        profiles: UserProfileRepository,
+        events: EventRepository,
     }
 
     #[tokio::test]
@@ -354,6 +367,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn callback_syncs_dingtalk_profile_without_returning_profile_in_login_body() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+
+        let cookie = login_and_cookie(context.app.clone()).await;
+        assert!(cookie.starts_with("atlas_session="));
+
+        let user = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("user should exist");
+        let profile = context
+            .profiles
+            .find_by_user_id(user.id)
+            .await
+            .expect("profile lookup should succeed")
+            .expect("profile should be synced");
+
+        assert_eq!(profile.user_id, user.id);
+        assert_eq!(profile.name.as_deref(), Some("张三"));
+        assert_eq!(profile.mobile.as_deref(), Some("13800000000"));
+        assert_eq!(profile.email.as_deref(), Some("user@example.test"));
+        assert_eq!(profile.department_external_ids.as_deref(), Some("[10,20]"));
+        assert_eq!(profile.is_active, Some(true));
+
+        let (events, total_count) = context
+            .events
+            .list_events(
+                EventFilter {
+                    resource_type: Some("user_profiles".to_string()),
+                    resource_id: Some(user.id),
+                    ..EventFilter::default()
+                },
+                1,
+                20,
+            )
+            .await
+            .expect("profile sync events should be listed");
+        assert_eq!(total_count, 2);
+        assert_eq!(events.len(), 2);
+        for event in &events {
+            assert_eq!(event.actor_user_id, Some(user.id));
+            assert_eq!(event.event_type, EventType::Update);
+            assert_eq!(event.approval_status, ApprovalStatus::None);
+            assert!(event.old_value.is_some());
+            assert!(event.new_value.is_some());
+        }
+        let audit_values = events
+            .iter()
+            .flat_map(|event| [event.old_value.clone(), event.new_value.clone()])
+            .flatten()
+            .collect::<Vec<_>>();
+        let audit_json = serde_json::to_string(&audit_values).expect("audit should serialize");
+        assert!(!audit_json.contains("13800000000"));
+        assert!(!audit_json.contains("user@example.test"));
+        assert!(!audit_json.contains("avatar.png"));
+    }
+
+    #[tokio::test]
     async fn missing_session_cookie_returns_unauthorized() {
         let mock_base_url = start_mock_dingtalk().await;
         let app = test_app(&mock_base_url).await;
@@ -476,12 +550,16 @@ mod tests {
             .await
             .expect("test database should initialize");
         let users = UserRepository::new(db.clone());
+        let profiles = UserProfileRepository::new(db.clone());
         let sessions = SessionRepository::new(db.clone());
         let product_categories = ProductCategoryRepository::new(db.clone());
         let products = ProductRepository::new(db.clone());
         let departments = DepartmentRepository::new(db.clone());
         let systems = SystemRepository::new(db.clone());
         let stores = StoreRepository::new(db.clone());
+        let customers = CustomerRepository::new(db.clone());
+        let sales_records = SalesRecordRepository::new(db.clone());
+        let events = EventRepository::new(db.clone());
         let auth = AuthService::new(
             DingTalkConfig {
                 client_id: "test-client-id".to_string(),
@@ -492,25 +570,45 @@ mod tests {
                 user_info_url: format!("{mock_base_url}/me"),
                 corp_token_url: format!("{mock_base_url}/gettoken"),
                 department_listsub_url: format!("{mock_base_url}/listsub"),
+                user_detail_url: format!("{mock_base_url}/user_detail"),
+                getbyunionid_url: format!("{mock_base_url}/getbyunionid"),
                 scope: "openid".to_string(),
                 corp_id: "".to_string(),
                 external_id_fields: vec!["userId".to_string()],
             },
             users.clone(),
+            profiles.clone(),
+            events.clone(),
             sessions.clone(),
             86_400,
         );
         let authz = AuthzService::new(AuthzRepository::new(db.clone()))
             .await
             .expect("test authz service should initialize");
-        let users_service = UserService::new(users.clone(), sessions);
+        let users_service = UserService::new(users.clone(), profiles.clone(), sessions);
         let product_categories_service =
             ProductCategoryService::new(product_categories.clone(), products.clone());
-        let products_service = ProductService::new(products, product_categories);
+        let products_service = ProductService::new(products, product_categories.clone());
         let stores_service = StoreService::new(stores.clone(), systems.clone());
-        let systems_service = SystemService::new(systems, departments, stores);
+        let systems_service =
+            SystemService::new(systems.clone(), departments.clone(), stores.clone());
+        let customers_service = CustomerService::new(
+            customers.clone(),
+            departments.clone(),
+            systems.clone(),
+            stores.clone(),
+        );
+        let sales_records_service = SalesRecordService::new(
+            sales_records,
+            customers.clone(),
+            departments.clone(),
+            systems.clone(),
+            stores.clone(),
+            product_categories.clone(),
+            users.clone(),
+        );
         let events_service = EventService::new(
-            EventRepository::new(db),
+            events.clone(),
             authz.clone(),
             std::sync::Arc::new(ApplierRegistry::new()),
             180,
@@ -523,6 +621,8 @@ mod tests {
             products_service,
             systems_service,
             stores_service,
+            customers_service,
+            sales_records_service,
             events_service,
             AuthConfig {
                 frontend_callback_url: "".to_string(),
@@ -535,6 +635,8 @@ mod tests {
         TestContext {
             app: app::router(state),
             users,
+            profiles,
+            events,
         }
     }
 
@@ -549,14 +651,49 @@ mod tests {
         async fn me() -> Json<Value> {
             Json(json!({
                 "result": {
-                    "userId": "ding-user-1"
+                    "userId": "ding-user-1",
+                    "name": "个人张三",
+                    "avatarUrl": "https://example.test/avatar.png",
+                    "mobile": "13800000000",
+                    "email": "user@example.test"
                 }
             }))
         }
 
+        #[derive(serde::Deserialize)]
+        struct UserDetailForm {
+            userid: String,
+            language: String,
+        }
+
+        async fn gettoken() -> Json<Value> {
+            Json(json!({
+                "errcode": 0,
+                "errmsg": "ok",
+                "access_token": "corp-token",
+                "expires_in": 7200
+            }))
+        }
+
+        let user_detail = |Form(form): Form<UserDetailForm>| async move {
+            assert_eq!(form.userid, "ding-user-1");
+            assert_eq!(form.language, "zh_CN");
+            Json(json!({
+                "errcode": 0,
+                "errmsg": "ok",
+                "result": {
+                    "name": "张三",
+                    "dept_id_list": [10, 20],
+                    "active": true
+                }
+            }))
+        };
+
         let app = Router::new()
             .route("/token", post(token))
-            .route("/me", get(me));
+            .route("/me", get(me))
+            .route("/gettoken", get(gettoken))
+            .route("/user_detail", post(user_detail));
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("mock DingTalk listener should bind");

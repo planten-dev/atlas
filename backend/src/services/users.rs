@@ -5,10 +5,13 @@ use uuid::Uuid;
 
 use crate::{
     dto::users::{
-        ListUsersQuery, ListUsersResponse, UpdateUserStatusRequest, UserResponse, UserStatus,
-        UserStatusParseError,
+        ListUsersQuery, ListUsersResponse, UpdateUserStatusRequest, UserProfileResponse,
+        UserResponse, UserStatus, UserStatusParseError,
     },
-    repositories::{RepositoryError, sessions::SessionRepository, users::UserRepository},
+    repositories::{
+        RepositoryError, sessions::SessionRepository, user_profiles::UserProfileRepository,
+        users::UserRepository,
+    },
 };
 
 const DEFAULT_PAGE_NUMBER: u64 = 1;
@@ -18,12 +21,21 @@ const MAX_PAGE_SIZE: u64 = 200;
 #[derive(Clone)]
 pub struct UserService {
     users: UserRepository,
+    profiles: UserProfileRepository,
     sessions: SessionRepository,
 }
 
 impl UserService {
-    pub fn new(users: UserRepository, sessions: SessionRepository) -> Self {
-        Self { users, sessions }
+    pub fn new(
+        users: UserRepository,
+        profiles: UserProfileRepository,
+        sessions: SessionRepository,
+    ) -> Self {
+        Self {
+            users,
+            profiles,
+            sessions,
+        }
     }
 
     #[tracing::instrument(level = "debug", skip(self, query))]
@@ -69,6 +81,22 @@ impl UserService {
 
         debug!(%user_id, "loaded user detail");
         Ok(UserResponse::from(user))
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn user_profile(&self, user_id: Uuid) -> Result<UserProfileResponse, UserError> {
+        if self.users.find_by_id(user_id).await?.is_none() {
+            return Err(UserError::UserNotFound);
+        }
+
+        let profile = self
+            .profiles
+            .find_by_user_id(user_id)
+            .await?
+            .ok_or(UserError::UserProfileNotFound)?;
+
+        debug!(%user_id, "loaded user profile");
+        Ok(UserProfileResponse::from(profile))
     }
 
     #[tracing::instrument(level = "info", skip(self, request))]
@@ -135,6 +163,8 @@ pub enum UserError {
     Repository(#[from] RepositoryError),
     #[error("user was not found")]
     UserNotFound,
+    #[error("user profile was not found")]
+    UserProfileNotFound,
     #[error("{field} must be one of: active, disabled")]
     InvalidStatus { field: &'static str, value: String },
     #[error("{field} must be greater than or equal to {minimum}")]
@@ -152,6 +182,7 @@ impl UserError {
                 RepositoryError::Database(_) => "database_error",
             },
             Self::UserNotFound => "user_not_found",
+            Self::UserProfileNotFound => "user_profile_not_found",
             Self::InvalidStatus { .. }
             | Self::InvalidPaginationMinimum { .. }
             | Self::InvalidPaginationMaximum { .. } => "validation_error",
@@ -226,8 +257,9 @@ mod tests {
             .await
             .expect("sqlite memory database should initialize");
         let users = UserRepository::new(db.clone());
+        let profiles = UserProfileRepository::new(db.clone());
         let sessions = SessionRepository::new(db);
-        let service = UserService::new(users.clone(), sessions.clone());
+        let service = UserService::new(users.clone(), profiles, sessions.clone());
         (users, sessions, service)
     }
 

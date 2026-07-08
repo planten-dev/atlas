@@ -1,11 +1,14 @@
 pub mod authz;
+pub mod customers;
 pub mod departments;
 pub mod events;
 pub mod product_categories;
 pub mod products;
+pub mod sales_records;
 pub mod sessions;
 pub mod stores;
 pub mod systems;
+pub mod user_profiles;
 pub mod users;
 
 use thiserror::Error;

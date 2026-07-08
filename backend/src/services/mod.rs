@@ -1,11 +1,13 @@
 pub mod auth;
 pub mod authz;
 pub mod authz_catalog;
+pub mod customers;
 pub mod departments;
 pub mod events;
 pub mod product_categories;
 pub mod products;
 pub mod review;
+pub mod sales_records;
 pub mod stores;
 pub mod systems;
 pub mod users;

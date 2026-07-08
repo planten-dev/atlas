@@ -50,7 +50,8 @@ impl PermissionCatalog {
         let mut catalog = Self {
             entries: Vec::new(),
         };
-        let builtin: [(&str, &[&str], &str, &str); 6] = [
+        let builtin: [(&str, &[&str], &str, &str); 11] = [
+            ("users", &["read", "write"], "系统", "用户管理"),
             (
                 "products:categories",
                 &["read", "write"],
@@ -61,6 +62,20 @@ impl PermissionCatalog {
             ("events", &["read"], "审核", "审核事件"),
             ("systems", &["read", "write"], "门店", "门店体系"),
             ("stores", &["read", "write"], "门店", "门店"),
+            ("customers", &["read", "write"], "销售", "客户"),
+            ("sales:records", &["read", "write"], "销售", "销售记录"),
+            (
+                "sales:operation-counts",
+                &["read", "write"],
+                "销售",
+                "操作次数",
+            ),
+            (
+                "sales:operation-usages",
+                &["read", "write"],
+                "销售",
+                "操作用量",
+            ),
             ("system:permissions", &["read", "write"], "系统", "权限管理"),
         ];
         for (object, actions, group, label) in builtin {

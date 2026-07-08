@@ -2,15 +2,18 @@ use anyhow::{Context, Result};
 use backend::{
     app, config, db,
     repositories::{
-        authz::AuthzRepository, departments::DepartmentRepository, events::EventRepository,
-        product_categories::ProductCategoryRepository, products::ProductRepository,
+        authz::AuthzRepository, customers::CustomerRepository, departments::DepartmentRepository,
+        events::EventRepository, product_categories::ProductCategoryRepository,
+        products::ProductRepository, sales_records::SalesRecordRepository,
         sessions::SessionRepository, stores::StoreRepository, systems::SystemRepository,
-        users::UserRepository,
+        user_profiles::UserProfileRepository, users::UserRepository,
     },
     services::{
         auth::AuthService, authz::AuthzService, authz_catalog::PermissionCatalog,
-        events::EventService, product_categories::ProductCategoryService, products::ProductService,
-        review::ApplierRegistry, stores::StoreService, systems::SystemService, users::UserService,
+        customers::CustomerService, events::EventService,
+        product_categories::ProductCategoryService, products::ProductService,
+        review::ApplierRegistry, sales_records::SalesRecordService, stores::StoreService,
+        systems::SystemService, users::UserService,
     },
     state::AppState,
 };
@@ -33,15 +36,20 @@ async fn main() -> Result<()> {
         .await
         .context("failed to initialize database")?;
     let users = UserRepository::new(db.clone());
+    let profiles = UserProfileRepository::new(db.clone());
     let sessions = SessionRepository::new(db.clone());
     let product_categories = ProductCategoryRepository::new(db.clone());
     let products = ProductRepository::new(db.clone());
     let departments = DepartmentRepository::new(db.clone());
     let systems = SystemRepository::new(db.clone());
     let stores = StoreRepository::new(db.clone());
+    let customers = CustomerRepository::new(db.clone());
+    let sales_records = SalesRecordRepository::new(db.clone());
     let auth = AuthService::new(
         config.dingtalk.clone(),
         users.clone(),
+        profiles.clone(),
+        EventRepository::new(db.clone()),
         sessions.clone(),
         config.session.ttl_seconds,
     );
@@ -62,12 +70,27 @@ async fn main() -> Result<()> {
     let authz = AuthzService::with_catalog(AuthzRepository::new(db.clone()), catalog)
         .await
         .context("failed to initialize authorization service")?;
-    let users = UserService::new(users, sessions);
+    let users_service = UserService::new(users.clone(), profiles, sessions);
     let product_categories_service =
         ProductCategoryService::new(product_categories.clone(), products.clone());
-    let products = ProductService::new(products, product_categories);
+    let products = ProductService::new(products, product_categories.clone());
     let stores_service = StoreService::new(stores.clone(), systems.clone());
-    let systems = SystemService::new(systems, departments, stores);
+    let systems_service = SystemService::new(systems.clone(), departments.clone(), stores.clone());
+    let customers_service = CustomerService::new(
+        customers.clone(),
+        departments.clone(),
+        systems.clone(),
+        stores.clone(),
+    );
+    let sales_records_service = SalesRecordService::new(
+        sales_records,
+        customers,
+        departments,
+        systems,
+        stores,
+        product_categories,
+        users.clone(),
+    );
     let events = EventService::new(
         EventRepository::new(db),
         authz.clone(),
@@ -79,11 +102,13 @@ async fn main() -> Result<()> {
     let app = app::router(AppState::new(
         auth,
         authz,
-        users,
+        users_service,
         product_categories_service,
         products,
-        systems,
+        systems_service,
         stores_service,
+        customers_service,
+        sales_records_service,
         events,
         config.auth.clone(),
         config.session.clone(),

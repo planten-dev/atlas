@@ -62,7 +62,7 @@
         ],
         "summary": "Handle DingTalk login callback",
         "operationId": "handleDingTalkCallback",
-        "description": "Validates OAuth state, exchanges the DingTalk authorization code, maps the DingTalk user to users.dingtalk_user_id, creates a server-side session, and sets atlas_session as an HttpOnly cookie. The response body does not include the session id.",
+        "description": "Validates OAuth state, exchanges the DingTalk authorization code, fetches DingTalk personal information, resolves the real DingTalk contact userid for users.dingtalk_user_id, syncs user_profiles from whitelisted DingTalk fields, writes a sanitized audit event for successful profile syncs, creates a server-side session, and sets atlas_session as an HttpOnly cookie. Organization-detail profile sync failures do not block login. The response body does not include the session id.",
         "security": [],
         "parameters": [
           {
@@ -268,7 +268,7 @@
         ],
         "summary": "List users",
         "operationId": "listUsers",
-        "description": "Lists Atlas users. User records are created only by the DingTalk external login flow; this API only reads existing users.",
+        "description": "Requires permission users:read. Lists Atlas users. User records are created only by the DingTalk external login flow; this API only reads existing users.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -343,7 +343,7 @@
         ],
         "summary": "Get user detail",
         "operationId": "getUserDetail",
-        "description": "Returns one Atlas user by the internal user id.",
+        "description": "Requires permission users:read. Returns one Atlas user by the internal user id.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -390,6 +390,117 @@
         }
       }
     },
+    "/api/v1/users/{user_id}/profile": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Get user profile",
+        "operationId": "getUserProfile",
+        "description": "Returns one user's DingTalk-synced profile. Users may read their own profile without users:read; reading another user's profile requires users:read.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Atlas internal user id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User profile.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProfileResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/profile/sync": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Sync user profile from DingTalk",
+        "operationId": "syncUserProfile",
+        "description": "Manually fetches the user's DingTalk organization details and upserts user_profiles. Users may sync their own profile without users:write; syncing another user's profile requires users:write. The API uses users.dingtalk_user_id as the real DingTalk contact userid, writes a sanitized user_profiles audit event on success, and does not store DingTalk userid, tokens, secrets, session ids, raw profile data, or personal information plaintext in the audit payload.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Atlas internal user id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User profile synced from DingTalk.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProfileResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          }
+        }
+      }
+    },
     "/api/v1/users/update-status/{user_id}": {
       "post": {
         "tags": [
@@ -397,7 +508,7 @@
         ],
         "summary": "Update user status",
         "operationId": "updateUserStatus",
-        "description": "Updates only the Atlas user status. dingtalk_user_id cannot be changed through the user management API. Setting target_status to disabled revokes the user's active sessions; setting it to active does not create a session.",
+        "description": "Requires permission users:write. Updates only the Atlas user status. dingtalk_user_id cannot be changed through the user management API. Setting target_status to disabled revokes the user's active sessions; setting it to active does not create a session.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -461,7 +572,7 @@
         ],
         "summary": "Delete user",
         "operationId": "deleteUser",
-        "description": "Hard deletes one Atlas user record by internal user id. The user's auth_sessions records are deleted first to satisfy current foreign key constraints. User records are still created only by DingTalk external login; after deletion, the same dingtalk_user_id can be recreated by a future DingTalk login.",
+        "description": "Requires permission users:write. Hard deletes one Atlas user record by internal user id. The user's auth_sessions records are deleted first to satisfy current foreign key constraints. User records are still created only by DingTalk external login; after deletion, the same dingtalk_user_id can be recreated by a future DingTalk login.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -2278,6 +2389,1452 @@
         }
       }
     },
+    "/api/v1/customers/list": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "List customers",
+        "operationId": "listCustomers",
+        "description": "Requires permission customers:read. Lists customers with optional status, scope, creator and name keyword filtering plus pagination.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "disabled"
+              ]
+            },
+            "description": "Only return customers with this status."
+          },
+          {
+            "name": "department_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Only return customers owned by this department id."
+          },
+          {
+            "name": "system_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Only return customers owned by this system id."
+          },
+          {
+            "name": "store_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Only return customers owned by this store id."
+          },
+          {
+            "name": "creator_user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Only return customers created by this user id."
+          },
+          {
+            "name": "name_keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Case-sensitive customer name substring filter."
+          },
+          {
+            "name": "page_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Customers page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListCustomersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/customers/detail/{customer_id}": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Get customer detail",
+        "operationId": "getCustomerDetail",
+        "description": "Requires permission customers:read. Returns one customer by id.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Customer id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Customer detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/customers/create": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Create customer",
+        "operationId": "createCustomer",
+        "description": "Requires permission customers:write. Creates a customer. creator_user_id is always taken from the authenticated session. department_id, system_id and store_id must exist and describe one consistent scope.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCustomerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created customer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/customers/update/{customer_id}": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Update customer",
+        "operationId": "updateCustomer",
+        "description": "Requires permission customers:write. Applies a partial update: omitted fields are unchanged; null is rejected for required fields; remark and attachments can be cleared with null. creator_user_id cannot be updated.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Customer id."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCustomerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated customer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/customers/disable/{customer_id}": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Disable customer",
+        "operationId": "disableCustomer",
+        "description": "Requires permission customers:write. Sets customer status to disabled and keeps the customer record.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Customer id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Disabled customer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/customers/delete/{customer_id}": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Delete customer",
+        "operationId": "deleteCustomer",
+        "description": "Requires permission customers:write. Hard deletes one customer record by id. Business delete should normally use disable.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Customer id."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Customer record was deleted."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-records/list": {
+      "get": {
+        "tags": [
+          "Sales Records"
+        ],
+        "summary": "List sales records",
+        "operationId": "listSalesRecords",
+        "description": "Requires permission sales:records:read. Lists sales records with status, group, reference and sale-date filtering plus pagination.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "voided"
+              ]
+            },
+            "description": "Only return sales records with this status."
+          },
+          {
+            "name": "record_group_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Only return records created by the same batch request."
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "department_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "system_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "store_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "handler_user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "content_category_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Product category id used as sales content category."
+          },
+          {
+            "name": "sale_date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Inclusive lower bound for sale_date."
+          },
+          {
+            "name": "sale_date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Inclusive upper bound for sale_date."
+          },
+          {
+            "name": "page_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sales records page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListSalesRecordsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-records/detail/{sales_record_id}": {
+      "get": {
+        "tags": [
+          "Sales Records"
+        ],
+        "summary": "Get sales record detail",
+        "operationId": "getSalesRecordDetail",
+        "description": "Requires permission sales:records:read. Returns one sales record by id, including its operation-count account when one exists.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sales_record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Sales record id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sales record detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SalesRecordResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-records/create-batch": {
+      "post": {
+        "tags": [
+          "Sales Records"
+        ],
+        "summary": "Create sales records in a batch",
+        "operationId": "createSalesRecordBatch",
+        "description": "Requires permission sales:records:write. Creates one or more sales records in a single transaction. All records in the request share one record_group_id; categories requiring operation counts also create an operation-count account.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSalesRecordBatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created sales records.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateSalesRecordBatchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-records/update/{sales_record_id}": {
+      "post": {
+        "tags": [
+          "Sales Records"
+        ],
+        "summary": "Update sales record",
+        "operationId": "updateSalesRecord",
+        "description": "Requires permission sales:records:write. Applies a partial update. Omitted fields are unchanged; required fields reject null. Content category can only switch within the same operation-count requirement type.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sales_record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Sales record id."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSalesRecordRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated sales record.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SalesRecordResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-records/void/{sales_record_id}": {
+      "post": {
+        "tags": [
+          "Sales Records"
+        ],
+        "summary": "Void sales record",
+        "operationId": "voidSalesRecord",
+        "description": "Requires permission sales:records:write. Marks the sales record and its operation-count account as voided. Returns 409 when active operation usages still exist.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sales_record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Sales record id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Voided sales record.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SalesRecordResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-records/delete/{sales_record_id}": {
+      "post": {
+        "tags": [
+          "Sales Records"
+        ],
+        "summary": "Delete sales record",
+        "operationId": "deleteSalesRecord",
+        "description": "Requires permission sales:records:write. Hard deletes one sales record. Returns 409 when active operation usages still exist.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sales_record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Sales record id."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Sales record was deleted."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-record-operation-counts/list": {
+      "get": {
+        "tags": [
+          "Sales Record Operation Counts"
+        ],
+        "summary": "List sales record operation-count accounts",
+        "operationId": "listSalesRecordOperationCounts",
+        "description": "Requires permission sales:operation-counts:read. Lists operation-count accounts with optional status and sales-record filtering plus pagination.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "voided"
+              ]
+            },
+            "description": "Only return operation-count accounts with this status."
+          },
+          {
+            "name": "sales_record_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "page_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operation-count accounts page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListOperationCountsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-record-operation-counts/detail/{sales_record_id}": {
+      "get": {
+        "tags": [
+          "Sales Record Operation Counts"
+        ],
+        "summary": "Get sales record operation-count account",
+        "operationId": "getSalesRecordOperationCountDetail",
+        "description": "Requires permission sales:operation-counts:read. Returns the operation-count account for one sales record.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sales_record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Sales record id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operation-count account detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationCountResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-record-operation-counts/update/{sales_record_id}": {
+      "post": {
+        "tags": [
+          "Sales Record Operation Counts"
+        ],
+        "summary": "Update sales record operation-count account",
+        "operationId": "updateSalesRecordOperationCount",
+        "description": "Requires permission sales:operation-counts:write. Updates total_count while preserving used_count. Returns 409 if total_count would become lower than used_count or the account is voided.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sales_record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Sales record id."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateOperationCountRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated operation-count account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationCountResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-record-operation-usages/list": {
+      "get": {
+        "tags": [
+          "Sales Record Operation Usages"
+        ],
+        "summary": "List operation usage records",
+        "operationId": "listSalesRecordOperationUsages",
+        "description": "Requires permission sales:operation-usages:read. Lists operation usage records with status, sales record, operator, doctor and operated-at filtering plus pagination.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "voided"
+              ]
+            },
+            "description": "Only return operation usage records with this status."
+          },
+          {
+            "name": "sales_record_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "operator_user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "doctor_user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "operated_at_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Inclusive lower bound for operated_at."
+          },
+          {
+            "name": "operated_at_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Inclusive upper bound for operated_at."
+          },
+          {
+            "name": "page_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operation usage records page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListOperationUsagesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-record-operation-usages/detail/{usage_id}": {
+      "get": {
+        "tags": [
+          "Sales Record Operation Usages"
+        ],
+        "summary": "Get operation usage detail",
+        "operationId": "getSalesRecordOperationUsageDetail",
+        "description": "Requires permission sales:operation-usages:read. Returns one operation usage record by id.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "usage_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Operation usage id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operation usage detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationUsageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-record-operation-usages/create": {
+      "post": {
+        "tags": [
+          "Sales Record Operation Usages"
+        ],
+        "summary": "Create operation usage",
+        "operationId": "createSalesRecordOperationUsage",
+        "description": "Requires permission sales:operation-usages:write. Creates an active operation usage and increments the matching operation-count account used_count in the same transaction.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOperationUsageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created operation usage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationUsageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-record-operation-usages/update/{usage_id}": {
+      "post": {
+        "tags": [
+          "Sales Record Operation Usages"
+        ],
+        "summary": "Update operation usage",
+        "operationId": "updateSalesRecordOperationUsage",
+        "description": "Requires permission sales:operation-usages:write. Applies a partial update. Changing operation_count adjusts the matching operation-count account used_count in the same transaction.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "usage_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Operation usage id."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateOperationUsageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated operation usage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationUsageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-record-operation-usages/void/{usage_id}": {
+      "post": {
+        "tags": [
+          "Sales Record Operation Usages"
+        ],
+        "summary": "Void operation usage",
+        "operationId": "voidSalesRecordOperationUsage",
+        "description": "Requires permission sales:operation-usages:write. Marks an active operation usage as voided and subtracts its operation_count from the matching used_count.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "usage_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Operation usage id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Voided operation usage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationUsageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-record-operation-usages/delete/{usage_id}": {
+      "post": {
+        "tags": [
+          "Sales Record Operation Usages"
+        ],
+        "summary": "Delete operation usage",
+        "operationId": "deleteSalesRecordOperationUsage",
+        "description": "Requires permission sales:operation-usages:write. Hard deletes one operation usage. Active usages are subtracted from used_count before deletion.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "usage_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Operation usage id."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Operation usage was deleted."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/v1/permissions/roles": {
       "get": {
         "tags": [
@@ -2980,7 +4537,7 @@
           },
           "dingtalk_user_id": {
             "type": "string",
-            "description": "DingTalk user id used for external login mapping."
+            "description": "Real DingTalk contact userid used for external login mapping. This is not unionId, openId, or uuid."
           },
           "status": {
             "type": "string",
@@ -3002,6 +4559,161 @@
               "string",
               "null"
             ],
+            "format": "date-time"
+          }
+        }
+      },
+      "UserProfileResponse": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "name",
+          "avatar_url",
+          "mobile",
+          "hide_mobile",
+          "telephone",
+          "job_number",
+          "title",
+          "email",
+          "org_email",
+          "work_place",
+          "remark",
+          "department_external_ids",
+          "is_admin",
+          "is_boss",
+          "is_active",
+          "is_senior",
+          "hired_at",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Atlas internal user id. This is also user_profiles.user_id."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mobile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 32,
+            "description": "Personal information. Logs must not output this field in plaintext."
+          },
+          "hide_mobile": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "telephone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 32
+          },
+          "job_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 255,
+            "description": "Personal information. Logs must not output this field in plaintext."
+          },
+          "org_email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 255,
+            "description": "Personal information. Logs must not output this field in plaintext."
+          },
+          "work_place": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 255
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "department_external_ids": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "JSON string containing DingTalk dept_id_list. DingTalk userid is not stored here."
+          },
+          "is_admin": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "is_boss": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "is_active": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "is_senior": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "hired_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
             "format": "date-time"
           }
         }
@@ -3877,6 +5589,998 @@
               "disabled"
             ],
             "description": "Omit to leave unchanged. null is rejected because status is required."
+          }
+        }
+      },
+      "CustomerAttachment": {
+        "type": "object",
+        "required": [
+          "file_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "maxLength": 255,
+            "description": "External file or object-storage identifier for the image."
+          },
+          "file_name": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "mime_type": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^image/",
+            "description": "When present, must be an image MIME type."
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "CustomerResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "creator_user_id",
+          "department_id",
+          "system_id",
+          "store_id",
+          "remark",
+          "status",
+          "attachments",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "creator_user_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User who created this customer. This value is derived from the authenticated session on create and cannot be set by clients."
+          },
+          "department_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "system_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "store_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled"
+            ]
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CustomerAttachment"
+            },
+            "description": "External image attachment metadata. Empty when the customer has no attachments."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ListCustomersResponse": {
+        "type": "object",
+        "required": [
+          "customers",
+          "page_number",
+          "page_size",
+          "total_count"
+        ],
+        "properties": {
+          "customers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CustomerResponse"
+            }
+          },
+          "page_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "total_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "CreateCustomerRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "department_id",
+          "system_id",
+          "store_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "department_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Must reference an existing department id. The system must belong to this department."
+          },
+          "system_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Must reference an existing system id. The store must belong to this system."
+          },
+          "store_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Must reference an existing store id owned by system_id."
+          },
+          "remark": {
+            "type": "string"
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CustomerAttachment"
+            },
+            "description": "External image attachment metadata. The backend stores this as JSON text and does not upload or store image bytes."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled"
+            ],
+            "default": "active"
+          }
+        }
+      },
+      "UpdateCustomerRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "Omit to leave unchanged. null is rejected because name is required."
+          },
+          "department_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Omit to leave unchanged. null is rejected because department_id is required. If changed, the final department/system/store scope must stay consistent."
+          },
+          "system_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Omit to leave unchanged. null is rejected because system_id is required. If changed, the final department/system/store scope must stay consistent."
+          },
+          "store_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Omit to leave unchanged. null is rejected because store_id is required. If changed, the final department/system/store scope must stay consistent."
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Omit to leave unchanged. null clears the customer remark."
+          },
+          "attachments": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CustomerAttachment"
+            },
+            "description": "Omit to leave unchanged. null clears attachments."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled"
+            ],
+            "description": "Omit to leave unchanged. null is rejected because status is required."
+          }
+        }
+      },
+      "OperationCountResponse": {
+        "type": "object",
+        "required": [
+          "sales_record_id",
+          "total_count",
+          "used_count",
+          "remaining_count",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "sales_record_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "total_count": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "used_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "remaining_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "voided"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SalesRecordResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "record_group_id",
+          "customer_id",
+          "department_id",
+          "sale_date",
+          "deal_status",
+          "customer_type",
+          "deal_type",
+          "content_category_id",
+          "handler_user_id",
+          "paid_amount",
+          "unpaid_amount",
+          "system_id",
+          "store_id",
+          "collaboration_type",
+          "expert_user_id",
+          "expert_department_id",
+          "consultant_user_id",
+          "consultant_department_id",
+          "doctor_user_id",
+          "status",
+          "operation_count",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "record_group_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Shared by records created from the same create-batch request."
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "department_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sale_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "deal_status": {
+            "type": "string",
+            "enum": [
+              "closed",
+              "not_closed"
+            ]
+          },
+          "customer_type": {
+            "type": "string",
+            "enum": [
+              "new",
+              "returning"
+            ]
+          },
+          "deal_type": {
+            "type": "string",
+            "enum": [
+              "non_salon",
+              "salon"
+            ]
+          },
+          "content_category_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Product category id used as sales content category."
+          },
+          "handler_user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "paid_amount": {
+            "type": "string",
+            "pattern": "^\\d{1,10}(\\.\\d{2})$",
+            "description": "Decimal amount string returned with exactly two decimal places."
+          },
+          "unpaid_amount": {
+            "type": "string",
+            "pattern": "^\\d{1,10}(\\.\\d{2})$",
+            "description": "Decimal amount string returned with exactly two decimal places."
+          },
+          "system_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "store_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "collaboration_type": {
+            "type": "string",
+            "enum": [
+              "expert_consultation",
+              "self_sale"
+            ]
+          },
+          "expert_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "expert_department_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "consultant_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "consultant_department_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "doctor_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "voided"
+            ]
+          },
+          "operation_count": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OperationCountResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present when the content category requires operation counts."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ListSalesRecordsResponse": {
+        "type": "object",
+        "required": [
+          "sales_records",
+          "page_number",
+          "page_size",
+          "total_count"
+        ],
+        "properties": {
+          "sales_records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SalesRecordResponse"
+            }
+          },
+          "page_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "total_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "CreateSalesRecordBatchResponse": {
+        "type": "object",
+        "required": [
+          "record_group_id",
+          "sales_records"
+        ],
+        "properties": {
+          "record_group_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sales_records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SalesRecordResponse"
+            }
+          }
+        }
+      },
+      "CreateSalesRecordBatchRequest": {
+        "type": "object",
+        "required": [
+          "records"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "records": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/CreateSalesRecordRequest"
+            }
+          }
+        }
+      },
+      "CreateSalesRecordRequest": {
+        "type": "object",
+        "required": [
+          "customer_id",
+          "department_id",
+          "sale_date",
+          "deal_status",
+          "customer_type",
+          "deal_type",
+          "content_category_id",
+          "handler_user_id",
+          "paid_amount",
+          "unpaid_amount",
+          "system_id",
+          "store_id",
+          "collaboration_type"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "department_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Must reference an existing department. The selected system must belong to this department."
+          },
+          "sale_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "deal_status": {
+            "type": "string",
+            "enum": [
+              "closed",
+              "not_closed"
+            ]
+          },
+          "customer_type": {
+            "type": "string",
+            "enum": [
+              "new",
+              "returning"
+            ]
+          },
+          "deal_type": {
+            "type": "string",
+            "enum": [
+              "non_salon",
+              "salon"
+            ]
+          },
+          "content_category_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Must reference an active product category. If the category requires operation counts, operation_total_count is required; otherwise it is not allowed."
+          },
+          "handler_user_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Must reference an active user."
+          },
+          "paid_amount": {
+            "type": "string",
+            "pattern": "^\\d{1,10}(\\.\\d{1,2})?$",
+            "description": "Decimal amount string stored as DECIMAL(12,2)."
+          },
+          "unpaid_amount": {
+            "type": "string",
+            "pattern": "^\\d{1,10}(\\.\\d{1,2})?$",
+            "description": "Decimal amount string stored as DECIMAL(12,2)."
+          },
+          "system_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Must reference an existing system owned by department_id."
+          },
+          "store_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Must reference an existing store owned by system_id."
+          },
+          "collaboration_type": {
+            "type": "string",
+            "enum": [
+              "expert_consultation",
+              "self_sale"
+            ],
+            "description": "expert_consultation requires expert_user_id and expert_department_id; self_sale requires both to be omitted."
+          },
+          "expert_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Required for expert_consultation and not allowed for self_sale."
+          },
+          "expert_department_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Required for expert_consultation and not allowed for self_sale."
+          },
+          "consultant_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "consultant_department_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "doctor_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "operation_total_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "description": "Required when content_category_id.requires_operation_count is true and rejected otherwise."
+          }
+        }
+      },
+      "UpdateSalesRecordRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Omit to leave unchanged. null is rejected because customer_id is required."
+          },
+          "department_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Omit to leave unchanged. null is rejected because department_id is required."
+          },
+          "sale_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Omit to leave unchanged. null is rejected because sale_date is required."
+          },
+          "deal_status": {
+            "type": "string",
+            "enum": [
+              "closed",
+              "not_closed"
+            ],
+            "description": "Omit to leave unchanged. null is rejected because deal_status is required."
+          },
+          "customer_type": {
+            "type": "string",
+            "enum": [
+              "new",
+              "returning"
+            ],
+            "description": "Omit to leave unchanged. null is rejected because customer_type is required."
+          },
+          "deal_type": {
+            "type": "string",
+            "enum": [
+              "non_salon",
+              "salon"
+            ],
+            "description": "Omit to leave unchanged. null is rejected because deal_type is required."
+          },
+          "content_category_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Omit to leave unchanged. null is rejected. The new category must have the same operation-count requirement type as the current record."
+          },
+          "handler_user_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Omit to leave unchanged. null is rejected because handler_user_id is required."
+          },
+          "paid_amount": {
+            "type": "string",
+            "pattern": "^\\d{1,10}(\\.\\d{1,2})?$",
+            "description": "Omit to leave unchanged. null is rejected because paid_amount is required."
+          },
+          "unpaid_amount": {
+            "type": "string",
+            "pattern": "^\\d{1,10}(\\.\\d{1,2})?$",
+            "description": "Omit to leave unchanged. null is rejected because unpaid_amount is required."
+          },
+          "system_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Omit to leave unchanged. null is rejected because system_id is required."
+          },
+          "store_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Omit to leave unchanged. null is rejected because store_id is required."
+          },
+          "collaboration_type": {
+            "type": "string",
+            "enum": [
+              "expert_consultation",
+              "self_sale"
+            ],
+            "description": "Omit to leave unchanged. null is rejected because collaboration_type is required."
+          },
+          "expert_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Omit to leave unchanged. null clears the expert user."
+          },
+          "expert_department_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Omit to leave unchanged. null clears the expert department."
+          },
+          "consultant_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Omit to leave unchanged. null clears the consultant user."
+          },
+          "consultant_department_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Omit to leave unchanged. null clears the consultant department."
+          },
+          "doctor_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Omit to leave unchanged. null clears the doctor user."
+          }
+        }
+      },
+      "ListOperationCountsResponse": {
+        "type": "object",
+        "required": [
+          "operation_counts",
+          "page_number",
+          "page_size",
+          "total_count"
+        ],
+        "properties": {
+          "operation_counts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperationCountResponse"
+            }
+          },
+          "page_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "total_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "UpdateOperationCountRequest": {
+        "type": "object",
+        "required": [
+          "total_count"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "total_count": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Cannot be lower than the current used_count."
+          }
+        }
+      },
+      "OperationUsageResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "sales_record_id",
+          "operated_at",
+          "operator_user_id",
+          "doctor_user_id",
+          "operation_count",
+          "remark",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sales_record_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "operated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "operator_user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "doctor_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "operation_count": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "voided"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ListOperationUsagesResponse": {
+        "type": "object",
+        "required": [
+          "operation_usages",
+          "page_number",
+          "page_size",
+          "total_count"
+        ],
+        "properties": {
+          "operation_usages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperationUsageResponse"
+            }
+          },
+          "page_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "total_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "CreateOperationUsageRequest": {
+        "type": "object",
+        "required": [
+          "sales_record_id",
+          "operated_at",
+          "operator_user_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "sales_record_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "operated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "operator_user_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Must reference an active user."
+          },
+          "doctor_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "When provided, must reference an active user."
+          },
+          "operation_count": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 1
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          }
+        }
+      },
+      "UpdateOperationUsageRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "operated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Omit to leave unchanged. null is rejected because operated_at is required."
+          },
+          "operator_user_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Omit to leave unchanged. null is rejected because operator_user_id is required."
+          },
+          "doctor_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Omit to leave unchanged. null clears the doctor user."
+          },
+          "operation_count": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Omit to leave unchanged. null is rejected because operation_count is required. Increasing this value requires enough remaining_count."
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000,
+            "description": "Omit to leave unchanged. null or an empty string clears the remark."
           }
         }
       },

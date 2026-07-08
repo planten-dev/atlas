@@ -126,6 +126,7 @@ fn status_code(error: &AuthError) -> StatusCode {
         AuthError::MissingCallbackField(_)
         | AuthError::ProviderRejected { .. }
         | AuthError::StateMismatch => StatusCode::BAD_REQUEST,
+        AuthError::UserNotFound => StatusCode::NOT_FOUND,
         AuthError::MissingSession | AuthError::InvalidSession => StatusCode::UNAUTHORIZED,
         AuthError::InvalidSessionTtl => StatusCode::INTERNAL_SERVER_ERROR,
     }

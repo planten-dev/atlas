@@ -7,6 +7,9 @@ mod m20260707_000004_create_departments_table;
 mod m20260707_000005_create_systems_table;
 mod m20260707_000006_create_stores_table;
 mod m20260707_000007_create_events_table;
+mod m20260707_000007_create_user_profiles_table;
+mod m20260707_000008_create_customers_table;
+mod m20260707_000009_create_sales_record_tables;
 
 pub struct Migrator;
 
@@ -21,6 +24,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20260707_000005_create_systems_table::Migration),
             Box::new(m20260707_000006_create_stores_table::Migration),
             Box::new(m20260707_000007_create_events_table::Migration),
+            Box::new(m20260707_000007_create_user_profiles_table::Migration),
+            Box::new(m20260707_000008_create_customers_table::Migration),
+            Box::new(m20260707_000009_create_sales_record_tables::Migration),
         ]
     }
 }

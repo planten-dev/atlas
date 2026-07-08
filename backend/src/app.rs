@@ -22,18 +22,32 @@ pub fn router(state: AppState) -> Router {
             get(handlers::permissions::my_permissions),
         )
         .route("/api/v1/auth/logout", post(handlers::auth::logout))
-        .route("/api/v1/users/list", get(handlers::users::list_users))
+        .route(
+            "/api/v1/users/list",
+            get(handlers::users::list_users.layer(require_permission(&state, "users:read"))),
+        )
         .route(
             "/api/v1/users/detail/{user_id}",
-            get(handlers::users::user_detail),
+            get(handlers::users::user_detail.layer(require_permission(&state, "users:read"))),
+        )
+        .route(
+            "/api/v1/users/{user_id}/profile",
+            get(handlers::users::user_profile),
+        )
+        .route(
+            "/api/v1/users/{user_id}/profile/sync",
+            post(handlers::users::sync_user_profile),
         )
         .route(
             "/api/v1/users/update-status/{user_id}",
-            post(handlers::users::update_user_status),
+            post(
+                handlers::users::update_user_status
+                    .layer(require_permission(&state, "users:write")),
+            ),
         )
         .route(
             "/api/v1/users/delete/{user_id}",
-            post(handlers::users::delete_user),
+            post(handlers::users::delete_user.layer(require_permission(&state, "users:write"))),
         )
         .route(
             "/api/v1/product-categories/list",
@@ -188,6 +202,137 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/stores/delete/{store_id}",
             post(handlers::stores::delete_store.layer(require_permission(&state, "stores:write"))),
+        )
+        .route(
+            "/api/v1/customers/list",
+            get(handlers::customers::list_customers
+                .layer(require_permission(&state, "customers:read"))),
+        )
+        .route(
+            "/api/v1/customers/detail/{customer_id}",
+            get(handlers::customers::customer_detail
+                .layer(require_permission(&state, "customers:read"))),
+        )
+        .route(
+            "/api/v1/customers/create",
+            post(
+                handlers::customers::create_customer
+                    .layer(require_permission(&state, "customers:write")),
+            ),
+        )
+        .route(
+            "/api/v1/customers/update/{customer_id}",
+            post(
+                handlers::customers::update_customer
+                    .layer(require_permission(&state, "customers:write")),
+            ),
+        )
+        .route(
+            "/api/v1/customers/disable/{customer_id}",
+            post(
+                handlers::customers::disable_customer
+                    .layer(require_permission(&state, "customers:write")),
+            ),
+        )
+        .route(
+            "/api/v1/customers/delete/{customer_id}",
+            post(
+                handlers::customers::delete_customer
+                    .layer(require_permission(&state, "customers:write")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-records/list",
+            get(handlers::sales_records::list_sales_records
+                .layer(require_permission(&state, "sales:records:read"))),
+        )
+        .route(
+            "/api/v1/sales-records/detail/{sales_record_id}",
+            get(handlers::sales_records::sales_record_detail
+                .layer(require_permission(&state, "sales:records:read"))),
+        )
+        .route(
+            "/api/v1/sales-records/create-batch",
+            post(
+                handlers::sales_records::create_sales_record_batch
+                    .layer(require_permission(&state, "sales:records:write")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-records/update/{sales_record_id}",
+            post(
+                handlers::sales_records::update_sales_record
+                    .layer(require_permission(&state, "sales:records:write")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-records/void/{sales_record_id}",
+            post(
+                handlers::sales_records::void_sales_record
+                    .layer(require_permission(&state, "sales:records:write")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-records/delete/{sales_record_id}",
+            post(
+                handlers::sales_records::delete_sales_record
+                    .layer(require_permission(&state, "sales:records:write")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-record-operation-counts/list",
+            get(handlers::sales_records::list_operation_counts
+                .layer(require_permission(&state, "sales:operation-counts:read"))),
+        )
+        .route(
+            "/api/v1/sales-record-operation-counts/detail/{sales_record_id}",
+            get(handlers::sales_records::operation_count_detail
+                .layer(require_permission(&state, "sales:operation-counts:read"))),
+        )
+        .route(
+            "/api/v1/sales-record-operation-counts/update/{sales_record_id}",
+            post(
+                handlers::sales_records::update_operation_count
+                    .layer(require_permission(&state, "sales:operation-counts:write")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-record-operation-usages/list",
+            get(handlers::sales_records::list_operation_usages
+                .layer(require_permission(&state, "sales:operation-usages:read"))),
+        )
+        .route(
+            "/api/v1/sales-record-operation-usages/detail/{usage_id}",
+            get(handlers::sales_records::operation_usage_detail
+                .layer(require_permission(&state, "sales:operation-usages:read"))),
+        )
+        .route(
+            "/api/v1/sales-record-operation-usages/create",
+            post(
+                handlers::sales_records::create_operation_usage
+                    .layer(require_permission(&state, "sales:operation-usages:write")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-record-operation-usages/update/{usage_id}",
+            post(
+                handlers::sales_records::update_operation_usage
+                    .layer(require_permission(&state, "sales:operation-usages:write")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-record-operation-usages/void/{usage_id}",
+            post(
+                handlers::sales_records::void_operation_usage
+                    .layer(require_permission(&state, "sales:operation-usages:write")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-record-operation-usages/delete/{usage_id}",
+            post(
+                handlers::sales_records::delete_operation_usage
+                    .layer(require_permission(&state, "sales:operation-usages:write")),
+            ),
         )
         .route(
             "/api/v1/permissions/roles",

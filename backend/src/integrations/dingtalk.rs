@@ -1,5 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 
+use chrono::{DateTime, TimeZone, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -32,6 +33,8 @@ impl DingTalkClient {
             auth_url = %client.config.auth_url,
             token_url = %client.config.token_url,
             user_info_url = %client.config.user_info_url,
+            user_detail_url = %client.config.user_detail_url,
+            getbyunionid_url = %client.config.getbyunionid_url,
             redirect_uri = %client.config.redirect_uri,
             scope = %client.config.scope,
             external_id_field_count = client.config.external_id_fields.len(),
@@ -126,23 +129,27 @@ impl DingTalkClient {
         &self,
         token: DingTalkTokenResponse,
     ) -> Result<DingTalkIdentity, DingTalkError> {
-        let user_info = if token.external_id(&self.config.external_id_fields).is_some() {
-            None
+        let user_info = self.fetch_user_info(&token).await?;
+        let direct_user_id = user_info
+            .provider_user_id()
+            .or_else(|| token.provider_user_id());
+        let union_id = user_info.union_id().or_else(|| token.union_id());
+        let user_id_from_union = if direct_user_id.is_none() {
+            let union_id = union_id.as_deref().ok_or_else(|| {
+                DingTalkError::MissingIdentityField("userId/userid/unionId".to_string())
+            })?;
+            Some(self.fetch_user_id_by_union_id(union_id).await?)
         } else {
-            debug!(
-                provider = PROVIDER,
-                "token response is missing configured external id, fetching user info"
-            );
-            Some(self.fetch_user_info(&token).await?)
+            None
         };
 
-        let identity = resolve_identity(token, user_info, &self.config.external_id_fields)?;
+        let identity = resolve_identity(&token, &user_info, user_id_from_union)?;
         info!(
             provider = PROVIDER,
             has_corp_id = identity.corp_id.is_some() || !self.config.corp_id.trim().is_empty(),
             has_union_id = identity.union_id.is_some(),
             has_open_id = identity.open_id.is_some(),
-            has_provider_user_id = identity.provider_user_id.is_some(),
+            has_direct_user_id = identity.provider_user_id.is_some(),
             "resolved DingTalk identity"
         );
 
@@ -195,6 +202,51 @@ impl DingTalkClient {
             "received DingTalk user info response"
         );
         Ok(DingTalkUserInfoResponse { raw: parsed })
+    }
+
+    #[tracing::instrument(
+        level = "debug",
+        skip(self, union_id),
+        fields(provider = PROVIDER, getbyunionid_url = %self.config.getbyunionid_url)
+    )]
+    pub async fn fetch_user_id_by_union_id(&self, union_id: &str) -> Result<String, DingTalkError> {
+        validate_required("unionid", union_id)?;
+        let access_token = self.fetch_corp_access_token().await?;
+        debug!(provider = PROVIDER, "fetching DingTalk userid by unionid");
+        let response = self
+            .http
+            .post(&self.config.getbyunionid_url)
+            .form(&[
+                ("access_token", access_token.as_str()),
+                ("unionid", union_id.trim()),
+            ])
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body = response.text().await?;
+        let parsed = parse_json_or_raw(body);
+
+        if !status.is_success() {
+            warn!(
+                provider = PROVIDER,
+                status = status.as_u16(),
+                "DingTalk get userid by unionid request returned non-success status"
+            );
+            return Err(DingTalkError::ProviderHttp {
+                operation: "user_getbyunionid",
+                status: status.as_u16(),
+                body: parsed,
+            });
+        }
+
+        check_oapi_errcode("user_getbyunionid", &parsed)?;
+        first_string(&parsed, &["userid", "userId", "user_id"]).ok_or(
+            DingTalkError::MissingResponseField {
+                operation: "user_getbyunionid",
+                field: "userid",
+            },
+        )
     }
 
     #[tracing::instrument(
@@ -311,6 +363,69 @@ impl DingTalkClient {
             .collect())
     }
 
+    #[tracing::instrument(level = "info", skip(self, user_id), fields(provider = PROVIDER))]
+    pub async fn fetch_user_profile(
+        &self,
+        user_id: &str,
+    ) -> Result<DingTalkUserProfile, DingTalkError> {
+        validate_required("userid", user_id)?;
+        let access_token = self.fetch_corp_access_token().await?;
+        self.fetch_user_profile_with_access_token(&access_token, user_id)
+            .await
+    }
+
+    #[tracing::instrument(
+        level = "debug",
+        skip(self, access_token, user_id),
+        fields(provider = PROVIDER, user_detail_url = %self.config.user_detail_url)
+    )]
+    async fn fetch_user_profile_with_access_token(
+        &self,
+        access_token: &str,
+        user_id: &str,
+    ) -> Result<DingTalkUserProfile, DingTalkError> {
+        validate_required("access_token", access_token)?;
+        validate_required("userid", user_id)?;
+
+        debug!(provider = PROVIDER, "fetching DingTalk user detail");
+        let response = self
+            .http
+            .post(&self.config.user_detail_url)
+            .form(&[
+                ("access_token", access_token),
+                ("userid", user_id.trim()),
+                ("language", "zh_CN"),
+            ])
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body = response.text().await?;
+        let parsed = parse_json_or_raw(body);
+
+        if !status.is_success() {
+            warn!(
+                provider = PROVIDER,
+                status = status.as_u16(),
+                "DingTalk user detail request returned non-success status"
+            );
+            return Err(DingTalkError::ProviderHttp {
+                operation: "user_detail",
+                status: status.as_u16(),
+                body: parsed,
+            });
+        }
+
+        check_oapi_errcode("user_detail", &parsed)?;
+        let profile = parse_user_profile_result(&parsed)?;
+        debug!(
+            provider = PROVIDER,
+            status = status.as_u16(),
+            "received DingTalk user detail response"
+        );
+        Ok(profile)
+    }
+
     #[tracing::instrument(level = "info", skip(self), fields(provider = PROVIDER))]
     pub async fn fetch_all_departments(&self) -> Result<Vec<DingTalkDepartment>, DingTalkError> {
         let access_token = self.fetch_corp_access_token().await?;
@@ -350,6 +465,27 @@ pub struct DingTalkDepartment {
     pub parent_id: Option<i64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DingTalkUserProfile {
+    pub name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub mobile: Option<String>,
+    pub hide_mobile: Option<bool>,
+    pub telephone: Option<String>,
+    pub job_number: Option<String>,
+    pub title: Option<String>,
+    pub email: Option<String>,
+    pub org_email: Option<String>,
+    pub work_place: Option<String>,
+    pub remark: Option<String>,
+    pub department_external_ids: Option<String>,
+    pub is_admin: Option<bool>,
+    pub is_boss: Option<bool>,
+    pub is_active: Option<bool>,
+    pub is_senior: Option<bool>,
+    pub hired_at: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Deserialize)]
 struct RawDingTalkDepartment {
     dept_id: i64,
@@ -365,6 +501,7 @@ pub struct DingTalkIdentity {
     pub union_id: Option<String>,
     pub open_id: Option<String>,
     pub provider_user_id: Option<String>,
+    pub profile: DingTalkUserProfile,
 }
 
 #[derive(Debug, Clone)]
@@ -379,10 +516,6 @@ impl DingTalkTokenResponse {
 
     fn access_token(&self) -> Option<String> {
         first_string(&self.raw, &["accessToken", "access_token"])
-    }
-
-    fn external_id(&self, fields: &[String]) -> Option<String> {
-        first_string_dynamic(&self.raw, fields)
     }
 
     fn corp_id(&self) -> Option<String> {
@@ -408,10 +541,6 @@ struct DingTalkUserInfoResponse {
 }
 
 impl DingTalkUserInfoResponse {
-    fn external_id(&self, fields: &[String]) -> Option<String> {
-        first_string_dynamic(&self.raw, fields)
-    }
-
     fn corp_id(&self) -> Option<String> {
         first_string(&self.raw, &["corpId", "corp_id"])
     }
@@ -460,13 +589,13 @@ pub enum DingTalkError {
 
 pub fn resolve_identity_from_values(
     token: Value,
-    user_info: Option<Value>,
-    external_id_fields: &[String],
+    user_info: Value,
+    user_id_from_union: Option<String>,
 ) -> Result<DingTalkIdentity, DingTalkError> {
     resolve_identity(
-        DingTalkTokenResponse::from_value(token),
-        user_info.map(|raw| DingTalkUserInfoResponse { raw }),
-        external_id_fields,
+        &DingTalkTokenResponse::from_value(token),
+        &DingTalkUserInfoResponse { raw: user_info },
+        user_id_from_union,
     )
 }
 
@@ -476,34 +605,25 @@ pub fn sanitize_token_response(mut value: Value) -> Value {
 }
 
 fn resolve_identity(
-    token: DingTalkTokenResponse,
-    user_info: Option<DingTalkUserInfoResponse>,
-    external_id_fields: &[String],
+    token: &DingTalkTokenResponse,
+    user_info: &DingTalkUserInfoResponse,
+    user_id_from_union: Option<String>,
 ) -> Result<DingTalkIdentity, DingTalkError> {
-    let dingtalk_user_id = user_info
-        .as_ref()
-        .and_then(|user_info| user_info.external_id(external_id_fields))
-        .or_else(|| token.external_id(external_id_fields))
-        .ok_or_else(|| DingTalkError::MissingIdentityField(external_id_fields.join(",")))?;
+    let provider_user_id = user_info
+        .provider_user_id()
+        .or_else(|| token.provider_user_id());
+    let dingtalk_user_id = provider_user_id
+        .clone()
+        .or(user_id_from_union)
+        .ok_or_else(|| DingTalkError::MissingIdentityField("userId/userid".to_string()))?;
 
     Ok(DingTalkIdentity {
         dingtalk_user_id,
-        corp_id: user_info
-            .as_ref()
-            .and_then(DingTalkUserInfoResponse::corp_id)
-            .or_else(|| token.corp_id()),
-        union_id: user_info
-            .as_ref()
-            .and_then(DingTalkUserInfoResponse::union_id)
-            .or_else(|| token.union_id()),
-        open_id: user_info
-            .as_ref()
-            .and_then(DingTalkUserInfoResponse::open_id)
-            .or_else(|| token.open_id()),
-        provider_user_id: user_info
-            .as_ref()
-            .and_then(DingTalkUserInfoResponse::provider_user_id)
-            .or_else(|| token.provider_user_id()),
+        corp_id: user_info.corp_id().or_else(|| token.corp_id()),
+        union_id: user_info.union_id().or_else(|| token.union_id()),
+        open_id: user_info.open_id().or_else(|| token.open_id()),
+        provider_user_id,
+        profile: parse_user_info_profile(&user_info.raw),
     })
 }
 
@@ -516,6 +636,8 @@ fn validate_config(config: &DingTalkConfig) -> Result<(), DingTalkError> {
     validate_config_value("user_info_url", &config.user_info_url)?;
     validate_config_value("corp_token_url", &config.corp_token_url)?;
     validate_config_value("department_listsub_url", &config.department_listsub_url)?;
+    validate_config_value("user_detail_url", &config.user_detail_url)?;
+    validate_config_value("getbyunionid_url", &config.getbyunionid_url)?;
     validate_config_value("scope", &config.scope)?;
 
     if config.external_id_fields.is_empty() {
@@ -573,15 +695,117 @@ fn check_oapi_errcode(operation: &'static str, value: &Value) -> Result<(), Ding
     Ok(())
 }
 
-fn first_string(value: &Value, keys: &[&str]) -> Option<String> {
-    keys.iter()
-        .find_map(|key| first_string_by_key(value, key))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
+fn parse_user_profile_result(value: &Value) -> Result<DingTalkUserProfile, DingTalkError> {
+    let result = value
+        .get("result")
+        .ok_or(DingTalkError::MissingResponseField {
+            operation: "user_detail",
+            field: "result",
+        })?;
+
+    Ok(parse_user_profile_source(result))
 }
 
-fn first_string_dynamic(value: &Value, keys: &[String]) -> Option<String> {
+fn parse_user_info_profile(value: &Value) -> DingTalkUserProfile {
+    parse_user_profile_source(profile_source(value))
+}
+
+fn parse_user_profile_source(result: &Value) -> DingTalkUserProfile {
+    DingTalkUserProfile {
+        name: clean_string_field(result, &["name", "nick", "nickName"], 128),
+        avatar_url: clean_string_field(result, &["avatar", "avatarUrl", "avatar_url"], 2048),
+        mobile: clean_string_field(result, &["mobile"], 32),
+        hide_mobile: bool_field(result, &["hide_mobile", "hideMobile"]),
+        telephone: clean_string_field(result, &["telephone"], 32),
+        job_number: clean_string_field(result, &["job_number", "jobNumber"], 64),
+        title: clean_string_field(result, &["title"], 128),
+        email: clean_string_field(result, &["email"], 255),
+        org_email: clean_string_field(result, &["org_email", "orgEmail"], 255),
+        work_place: clean_string_field(result, &["work_place", "workPlace"], 255),
+        remark: clean_string_field(result, &["remark"], 4096),
+        department_external_ids: department_ids_json(result.get("dept_id_list")),
+        is_admin: bool_field(result, &["admin", "is_admin", "isAdmin"]),
+        is_boss: bool_field(result, &["boss", "is_boss", "isBoss"]),
+        is_active: bool_field(result, &["active", "is_active", "isActive"]),
+        is_senior: bool_field(result, &["senior", "is_senior", "isSenior"]),
+        hired_at: timestamp_millis_field(result, &["hired_date", "hiredDate"]),
+    }
+}
+
+fn profile_source(value: &Value) -> &Value {
+    value
+        .get("result")
+        .or_else(|| value.get("data"))
+        .or_else(|| value.get("user"))
+        .or_else(|| value.get("userInfo"))
+        .unwrap_or(value)
+}
+
+fn clean_string_field(value: &Value, keys: &[&str], max_chars: usize) -> Option<String> {
+    keys.iter()
+        .find_map(|key| value.get(key))
+        .and_then(value_to_string)
+        .and_then(|value| clean_string(&value, max_chars))
+}
+
+fn value_to_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn clean_string(value: &str, max_chars: usize) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(trimmed.chars().take(max_chars).collect())
+}
+
+fn department_ids_json(value: Option<&Value>) -> Option<String> {
+    match value {
+        Some(Value::Array(_)) => value.and_then(|value| serde_json::to_string(value).ok()),
+        Some(Value::String(value)) => clean_string(value, 4096),
+        _ => None,
+    }
+}
+
+fn bool_field(value: &Value, keys: &[&str]) -> Option<bool> {
+    keys.iter().find_map(|key| {
+        let value = value.get(key)?;
+        match value {
+            Value::Bool(value) => Some(*value),
+            Value::Number(value) => value.as_i64().and_then(|value| match value {
+                0 => Some(false),
+                1 => Some(true),
+                _ => None,
+            }),
+            Value::String(value) => match value.trim().to_ascii_lowercase().as_str() {
+                "true" | "1" => Some(true),
+                "false" | "0" => Some(false),
+                _ => None,
+            },
+            _ => None,
+        }
+    })
+}
+
+fn timestamp_millis_field(value: &Value, keys: &[&str]) -> Option<DateTime<Utc>> {
+    keys.iter().find_map(|key| {
+        let value = value.get(key)?;
+        let millis = match value {
+            Value::Number(value) => value.as_i64(),
+            Value::String(value) => value.trim().parse::<i64>().ok(),
+            _ => None,
+        }?;
+        Utc.timestamp_millis_opt(millis).single()
+    })
+}
+
+fn first_string(value: &Value, keys: &[&str]) -> Option<String> {
     keys.iter()
         .find_map(|key| first_string_by_key(value, key))
         .map(str::trim)
@@ -647,13 +871,14 @@ mod tests {
             corp_token_url: "https://oapi.dingtalk.com/gettoken".to_string(),
             department_listsub_url: "https://oapi.dingtalk.com/topapi/v2/department/listsub"
                 .to_string(),
+            user_detail_url: "https://oapi.dingtalk.com/topapi/v2/user/get".to_string(),
+            getbyunionid_url: "https://oapi.dingtalk.com/topapi/user/getbyunionid".to_string(),
             scope: "openid corpid".to_string(),
             corp_id: "corp-id".to_string(),
             external_id_fields: vec![
                 "userId".to_string(),
-                "unionId".to_string(),
-                "openId".to_string(),
-                "uuid".to_string(),
+                "userid".to_string(),
+                "user_id".to_string(),
             ],
         }
     }
@@ -703,56 +928,151 @@ mod tests {
     }
 
     #[test]
-    fn resolves_identity_from_token_using_configured_field_priority() {
-        let fields = vec![
-            "userId".to_string(),
-            "unionId".to_string(),
-            "openId".to_string(),
-            "uuid".to_string(),
-        ];
+    fn resolves_identity_from_userid_without_treating_union_as_userid() {
         let token = json!({
             "unionId": "union-id",
             "openId": "open-id",
             "userId": "user-id",
             "corpId": "corp-id"
         });
+        let user_info = json!({
+            "result": {
+                "unionId": "nested-union-id",
+                "openId": "nested-open-id",
+                "userId": "nested-user-id",
+                "nick": "张三",
+                "avatarUrl": "https://example.test/avatar.png"
+            }
+        });
 
         let identity =
-            resolve_identity_from_values(token, None, &fields).expect("identity should resolve");
+            resolve_identity_from_values(token, user_info, None).expect("identity should resolve");
 
-        assert_eq!(identity.dingtalk_user_id, "user-id");
-        assert_eq!(identity.provider_user_id.as_deref(), Some("user-id"));
-        assert_eq!(identity.union_id.as_deref(), Some("union-id"));
-        assert_eq!(identity.open_id.as_deref(), Some("open-id"));
+        assert_eq!(identity.dingtalk_user_id, "nested-user-id");
+        assert_eq!(identity.provider_user_id.as_deref(), Some("nested-user-id"));
+        assert_eq!(identity.union_id.as_deref(), Some("nested-union-id"));
+        assert_eq!(identity.open_id.as_deref(), Some("nested-open-id"));
         assert_eq!(identity.corp_id.as_deref(), Some("corp-id"));
+        assert_eq!(identity.profile.name.as_deref(), Some("张三"));
+        assert_eq!(
+            identity.profile.avatar_url.as_deref(),
+            Some("https://example.test/avatar.png")
+        );
     }
 
     #[test]
-    fn resolves_identity_from_nested_user_info_when_token_lacks_identity() {
-        let fields = vec!["userId".to_string(), "unionId".to_string()];
+    fn resolves_identity_from_unionid_when_userid_was_fetched() {
         let token = json!({ "accessToken": "secret-token" });
         let user_info = json!({
             "result": {
-                "userId": "nested-user-id",
                 "unionId": "nested-union-id"
             }
         });
 
-        let identity = resolve_identity_from_values(token, Some(user_info), &fields)
-            .expect("identity should resolve from user info");
+        let identity =
+            resolve_identity_from_values(token, user_info, Some("fetched-user-id".to_string()))
+                .expect("identity should resolve from user info");
 
-        assert_eq!(identity.dingtalk_user_id, "nested-user-id");
+        assert_eq!(identity.dingtalk_user_id, "fetched-user-id");
         assert_eq!(identity.union_id.as_deref(), Some("nested-union-id"));
     }
 
     #[test]
     fn reports_missing_identity_field() {
-        let fields = vec!["userId".to_string(), "unionId".to_string()];
-
-        let error = resolve_identity_from_values(json!({}), None, &fields)
+        let error = resolve_identity_from_values(json!({}), json!({}), None)
             .expect_err("missing identity should fail");
 
         assert!(matches!(error, DingTalkError::MissingIdentityField(_)));
+    }
+
+    #[tokio::test]
+    async fn identity_from_token_exchanges_unionid_for_real_userid() {
+        use axum::{
+            Form, Json, Router,
+            extract::Query,
+            routing::{get, post},
+        };
+        use tokio::net::TcpListener;
+
+        #[derive(serde::Deserialize)]
+        struct GetTokenQuery {
+            appkey: String,
+            appsecret: String,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct GetByUnionIdForm {
+            access_token: String,
+            unionid: String,
+        }
+
+        async fn me() -> Json<Value> {
+            Json(json!({
+                "result": {
+                    "unionId": "union-id",
+                    "openId": "open-id",
+                    "nick": "张三",
+                    "mobile": "13800000000"
+                }
+            }))
+        }
+
+        let gettoken = |Query(query): Query<GetTokenQuery>| async move {
+            assert_eq!(query.appkey, "client-id");
+            assert_eq!(query.appsecret, "client-secret");
+            Json(json!({
+                "errcode": 0,
+                "errmsg": "ok",
+                "access_token": "corp-token"
+            }))
+        };
+
+        let getbyunionid = |Form(form): Form<GetByUnionIdForm>| async move {
+            assert_eq!(form.access_token, "corp-token");
+            assert_eq!(form.unionid, "union-id");
+            Json(json!({
+                "errcode": 0,
+                "errmsg": "ok",
+                "result": {
+                    "userid": "real-userid"
+                }
+            }))
+        };
+
+        let app = Router::new()
+            .route("/me", get(me))
+            .route("/gettoken", get(gettoken))
+            .route("/getbyunionid", post(getbyunionid));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("mock DingTalk listener should bind");
+        let addr = listener.local_addr().expect("mock address should be known");
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("mock DingTalk server should run");
+        });
+
+        let mut config = test_config();
+        let base_url = format!("http://{addr}");
+        config.user_info_url = format!("{base_url}/me");
+        config.corp_token_url = format!("{base_url}/gettoken");
+        config.getbyunionid_url = format!("{base_url}/getbyunionid");
+        let client = DingTalkClient::new(config).expect("config should be valid");
+
+        let identity = client
+            .identity_from_token(DingTalkTokenResponse::from_value(json!({
+                "accessToken": "provider-token"
+            })))
+            .await
+            .expect("identity should resolve");
+
+        assert_eq!(identity.dingtalk_user_id, "real-userid");
+        assert_eq!(identity.provider_user_id, None);
+        assert_eq!(identity.union_id.as_deref(), Some("union-id"));
+        assert_eq!(identity.open_id.as_deref(), Some("open-id"));
+        assert_eq!(identity.profile.name.as_deref(), Some("张三"));
+        assert_eq!(identity.profile.mobile.as_deref(), Some("13800000000"));
     }
 
     #[test]
@@ -781,6 +1101,63 @@ mod tests {
             percent_encode("abc XYZ-_.~/"),
             "abc%20XYZ-_.~%2F".to_string()
         );
+    }
+
+    #[test]
+    fn parses_clean_user_profile_from_dingtalk_result() {
+        let profile = parse_user_profile_result(&json!({
+            "errcode": 0,
+            "errmsg": "ok",
+            "result": {
+                "userid": "must-not-be-stored",
+                "name": " 张三 ",
+                "avatar": "https://example.test/avatar.png",
+                "mobile": "13800000000",
+                "hide_mobile": true,
+                "telephone": " 010-1234 ",
+                "job_number": "A001",
+                "title": "工程师",
+                "email": "user@example.test",
+                "org_email": "user@corp.example.test",
+                "work_place": "上海",
+                "remark": "备注",
+                "dept_id_list": [10, 20],
+                "admin": false,
+                "boss": false,
+                "active": true,
+                "senior": false,
+                "hired_date": 1767225600000i64,
+                "access_token": "must-not-be-stored"
+            }
+        }))
+        .expect("profile should parse");
+
+        assert_eq!(profile.name.as_deref(), Some("张三"));
+        assert_eq!(profile.telephone.as_deref(), Some("010-1234"));
+        assert_eq!(profile.department_external_ids.as_deref(), Some("[10,20]"));
+        assert_eq!(profile.hide_mobile, Some(true));
+        assert_eq!(profile.is_active, Some(true));
+        assert_eq!(
+            profile.hired_at,
+            Some(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap())
+        );
+    }
+
+    #[test]
+    fn parses_user_profile_with_missing_optional_fields() {
+        let profile = parse_user_profile_result(&json!({
+            "errcode": 0,
+            "errmsg": "ok",
+            "result": {
+                "name": "张三"
+            }
+        }))
+        .expect("profile should parse");
+
+        assert_eq!(profile.name.as_deref(), Some("张三"));
+        assert!(profile.mobile.is_none());
+        assert!(profile.email.is_none());
+        assert!(profile.avatar_url.is_none());
     }
 
     mod department_api {
