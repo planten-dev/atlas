@@ -1,5 +1,4 @@
 use chrono::Utc;
-use serde_json::{Value, json};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -10,7 +9,6 @@ use crate::{
         PatchField, ProductCategoryResponse, ProductCategoryStatus,
         ProductCategoryStatusParseError, UpdateProductCategoryRequest,
     },
-    entities::product_category,
     repositories::{
         RepositoryError,
         product_categories::{
@@ -18,7 +16,6 @@ use crate::{
         },
         products::ProductRepository,
     },
-    services::audit::AuditService,
 };
 
 const DEFAULT_PAGE_NUMBER: u64 = 1;
@@ -31,7 +28,6 @@ const MAX_CATEGORY_NAME_LENGTH: usize = 128;
 pub struct ProductCategoryService {
     categories: ProductCategoryRepository,
     products: ProductRepository,
-    audit: Option<AuditService>,
 }
 
 impl ProductCategoryService {
@@ -39,34 +35,12 @@ impl ProductCategoryService {
         Self {
             categories,
             products,
-            audit: None,
-        }
-    }
-
-    pub fn with_audit(
-        categories: ProductCategoryRepository,
-        products: ProductRepository,
-        audit: AuditService,
-    ) -> Self {
-        Self {
-            categories,
-            products,
-            audit: Some(audit),
         }
     }
 
     #[tracing::instrument(level = "info", skip(self, request))]
     pub async fn create_category(
         &self,
-        request: CreateProductCategoryRequest,
-    ) -> Result<ProductCategoryResponse, ProductCategoryError> {
-        self.create_category_as(None, request).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self, request))]
-    pub async fn create_category_as(
-        &self,
-        actor_user_id: Option<Uuid>,
         request: CreateProductCategoryRequest,
     ) -> Result<ProductCategoryResponse, ProductCategoryError> {
         let status = match request.status {
@@ -87,28 +61,10 @@ impl ProductCategoryService {
             status: status.as_str().to_string(),
         };
 
-        let now = Utc::now();
-        let category = if let Some(audit) = &self.audit {
-            let tx = audit.begin().await?;
-            let category = self
-                .categories
-                .create_category_in(&tx, category, now)
-                .await?;
-            audit
-                .record_create(
-                    &tx,
-                    "product_categories",
-                    category.id,
-                    actor_user_id,
-                    category_audit_value(&category),
-                    now,
-                )
-                .await?;
-            tx.commit().await.map_err(RepositoryError::from)?;
-            category
-        } else {
-            self.categories.create_category(category, now).await?
-        };
+        let category = self
+            .categories
+            .create_category(category, Utc::now())
+            .await?;
         info!(category_id = %category.id, "created product category through service");
         Ok(ProductCategoryResponse::from(category))
     }
@@ -174,16 +130,6 @@ impl ProductCategoryService {
         category_id: Uuid,
         request: UpdateProductCategoryRequest,
     ) -> Result<ProductCategoryResponse, ProductCategoryError> {
-        self.update_category_as(None, category_id, request).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self, request))]
-    pub async fn update_category_as(
-        &self,
-        actor_user_id: Option<Uuid>,
-        category_id: Uuid,
-        request: UpdateProductCategoryRequest,
-    ) -> Result<ProductCategoryResponse, ProductCategoryError> {
         let category = self
             .categories
             .find_by_id(category_id)
@@ -214,32 +160,10 @@ impl ProductCategoryService {
             return Ok(ProductCategoryResponse::from(category));
         }
 
-        let old_value = category_audit_value(&category);
-        let now = Utc::now();
-        let category = if let Some(audit) = &self.audit {
-            let tx = audit.begin().await?;
-            let category = self
-                .categories
-                .update_category_in(&tx, &category, changes, now)
-                .await?;
-            audit
-                .record_update(
-                    &tx,
-                    "product_categories",
-                    category.id,
-                    actor_user_id,
-                    old_value,
-                    category_audit_value(&category),
-                    now,
-                )
-                .await?;
-            tx.commit().await.map_err(RepositoryError::from)?;
-            category
-        } else {
-            self.categories
-                .update_category(&category, changes, now)
-                .await?
-        };
+        let category = self
+            .categories
+            .update_category(&category, changes, Utc::now())
+            .await?;
         info!(%category_id, "updated product category through service");
         Ok(ProductCategoryResponse::from(category))
     }
@@ -249,51 +173,19 @@ impl ProductCategoryService {
         &self,
         category_id: Uuid,
     ) -> Result<ProductCategoryResponse, ProductCategoryError> {
-        self.disable_category_as(None, category_id).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self))]
-    pub async fn disable_category_as(
-        &self,
-        actor_user_id: Option<Uuid>,
-        category_id: Uuid,
-    ) -> Result<ProductCategoryResponse, ProductCategoryError> {
         let category = self
             .categories
             .find_by_id(category_id)
             .await?
             .ok_or(ProductCategoryError::CategoryNotFound)?;
-        let old_value = category_audit_value(&category);
-        let now = Utc::now();
-        let category = if let Some(audit) = &self.audit {
-            let tx = audit.begin().await?;
-            let category = self
-                .categories
-                .update_status_in(
-                    &tx,
-                    &category,
-                    ProductCategoryStatus::Disabled.as_str(),
-                    now,
-                )
-                .await?;
-            audit
-                .record_update(
-                    &tx,
-                    "product_categories",
-                    category.id,
-                    actor_user_id,
-                    old_value,
-                    category_audit_value(&category),
-                    now,
-                )
-                .await?;
-            tx.commit().await.map_err(RepositoryError::from)?;
-            category
-        } else {
-            self.categories
-                .update_status(&category, ProductCategoryStatus::Disabled.as_str(), now)
-                .await?
-        };
+        let category = self
+            .categories
+            .update_status(
+                &category,
+                ProductCategoryStatus::Disabled.as_str(),
+                Utc::now(),
+            )
+            .await?;
 
         info!(%category_id, "disabled product category through service");
         Ok(ProductCategoryResponse::from(category))
@@ -301,47 +193,15 @@ impl ProductCategoryService {
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn delete_category(&self, category_id: Uuid) -> Result<(), ProductCategoryError> {
-        self.delete_category_as(None, category_id).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self))]
-    pub async fn delete_category_as(
-        &self,
-        actor_user_id: Option<Uuid>,
-        category_id: Uuid,
-    ) -> Result<(), ProductCategoryError> {
-        let category = self
-            .categories
-            .find_by_id(category_id)
-            .await?
-            .ok_or(ProductCategoryError::CategoryNotFound)?;
+        if self.categories.find_by_id(category_id).await?.is_none() {
+            return Err(ProductCategoryError::CategoryNotFound);
+        }
         if self.products.count_by_category_id(category_id).await? > 0 {
             warn!(%category_id, "rejected product category delete because products still reference it");
             return Err(ProductCategoryError::CategoryHasProducts);
         }
 
-        let old_value = category_audit_value(&category);
-        let deleted = if let Some(audit) = &self.audit {
-            let now = Utc::now();
-            let tx = audit.begin().await?;
-            let deleted = self.categories.delete_by_id_in(&tx, category_id).await?;
-            if deleted {
-                audit
-                    .record_delete(
-                        &tx,
-                        "product_categories",
-                        category_id,
-                        actor_user_id,
-                        old_value,
-                        now,
-                    )
-                    .await?;
-            }
-            tx.commit().await.map_err(RepositoryError::from)?;
-            deleted
-        } else {
-            self.categories.delete_by_id(category_id).await?
-        };
+        let deleted = self.categories.delete_by_id(category_id).await?;
         if !deleted {
             warn!(%category_id, "product category disappeared before delete completed");
             return Err(ProductCategoryError::CategoryNotFound);
@@ -369,17 +229,6 @@ impl ProductCategoryService {
 
         Ok(())
     }
-}
-
-fn category_audit_value(category: &product_category::Model) -> Value {
-    json!({
-        "id": category.id,
-        "category_name": category.category_name,
-        "requires_operation_count": category.requires_operation_count,
-        "status": category.status,
-        "created_at": category.created_at,
-        "updated_at": category.updated_at,
-    })
 }
 
 #[derive(Debug, Error)]

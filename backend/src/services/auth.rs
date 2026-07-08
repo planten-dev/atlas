@@ -10,9 +10,8 @@ use crate::{
     config::DingTalkConfig,
     dto::users::{UserProfileResponse, UserResponse},
     entities::{
-        auth_sessions,
         events::{ApprovalStatus, EventType},
-        oauth_login_states, user_profiles, users,
+        user_profiles,
     },
     integrations::dingtalk::{
         DingTalkClient, DingTalkError, DingTalkIdentity, DingTalkUserProfile,
@@ -24,7 +23,6 @@ use crate::{
         user_profiles::{UserProfileRepository, UserProfileUpsert},
         users::UserRepository,
     },
-    services::audit::AuditService,
 };
 
 const PROVIDER_DINGTALK: &str = "dingtalk";
@@ -36,7 +34,6 @@ pub struct AuthService {
     users: UserRepository,
     profiles: UserProfileRepository,
     events: EventRepository,
-    audit: AuditService,
     sessions: SessionRepository,
     session_ttl_seconds: u64,
 }
@@ -54,7 +51,6 @@ impl AuthService {
             dingtalk_config,
             users,
             profiles,
-            audit: AuditService::new(events.clone()),
             events,
             sessions,
             session_ttl_seconds,
@@ -66,26 +62,17 @@ impl AuthService {
         let now = Utc::now();
         let state = generate_secret();
         let state_hash = hash_secret(&state);
-        let client = DingTalkClient::new(self.dingtalk_config.clone())?;
-        let url = client.build_authorization_url(&state)?;
-        let expires_at = now + Duration::minutes(OAUTH_STATE_TTL_MINUTES);
-        let tx = self.audit.begin().await?;
-        let oauth_state = self
-            .sessions
-            .create_oauth_state_in(&tx, PROVIDER_DINGTALK, &state_hash, now, expires_at)
-            .await?;
-        self.audit
-            .record_create(
-                &tx,
-                "oauth_login_states",
-                oauth_state.id,
-                None,
-                oauth_state_audit_value(&oauth_state),
+        self.sessions
+            .create_oauth_state(
+                PROVIDER_DINGTALK,
+                &state_hash,
                 now,
+                now + Duration::minutes(OAUTH_STATE_TTL_MINUTES),
             )
             .await?;
-        tx.commit().await.map_err(RepositoryError::from)?;
 
+        let client = DingTalkClient::new(self.dingtalk_config.clone())?;
+        let url = client.build_authorization_url(&state)?;
         info!(
             provider = PROVIDER_DINGTALK,
             "created DingTalk login redirect"
@@ -119,7 +106,10 @@ impl AuthService {
             .or(input.code)
             .ok_or(AuthError::MissingCallbackField("code/authCode"))?;
         let now = Utc::now();
-        let state_consumed = self.consume_oauth_state_with_audit(&state, now).await?;
+        let state_consumed = self
+            .sessions
+            .consume_oauth_state(PROVIDER_DINGTALK, &hash_secret(&state), now)
+            .await?;
 
         if !state_consumed {
             warn!(
@@ -133,7 +123,8 @@ impl AuthService {
         let token = client.exchange_code_for_token(&code).await?;
         let identity = client.identity_from_token(token).await?;
         let user = self
-            .find_or_create_user_for_login_with_audit(&identity.dingtalk_user_id, now)
+            .users
+            .find_or_create_for_login(&identity.dingtalk_user_id, now)
             .await?;
 
         if let Err(error) = self
@@ -168,7 +159,8 @@ impl AuthService {
         let session_token = generate_secret();
         let expires_at = now + session_ttl(self.session_ttl_seconds)?;
         let session = self
-            .create_session_with_audit(user.id, &session_token, now, expires_at)
+            .sessions
+            .create_session(user.id, &hash_secret(&session_token), now, expires_at)
             .await?;
 
         info!(
@@ -182,115 +174,6 @@ impl AuthService {
             session_token,
             expires_at,
         })
-    }
-
-    async fn consume_oauth_state_with_audit(
-        &self,
-        state: &str,
-        now: DateTime<Utc>,
-    ) -> Result<bool, AuthError> {
-        let tx = self.audit.begin().await?;
-        let consumed = self
-            .sessions
-            .consume_oauth_state_in(&tx, PROVIDER_DINGTALK, &hash_secret(state), now)
-            .await?;
-        let Some(consumed) = consumed else {
-            tx.rollback().await.map_err(RepositoryError::from)?;
-            return Ok(false);
-        };
-
-        self.audit
-            .record_update(
-                &tx,
-                "oauth_login_states",
-                consumed.state.id,
-                None,
-                oauth_state_audit_value(&consumed.old_state),
-                oauth_state_audit_value(&consumed.state),
-                now,
-            )
-            .await?;
-        tx.commit().await.map_err(RepositoryError::from)?;
-        Ok(true)
-    }
-
-    async fn find_or_create_user_for_login_with_audit(
-        &self,
-        dingtalk_user_id: &str,
-        now: DateTime<Utc>,
-    ) -> Result<users::Model, AuthError> {
-        if let Some(user) = self
-            .users
-            .find_by_dingtalk_user_id(dingtalk_user_id)
-            .await?
-        {
-            if user.status == "disabled" {
-                warn!(user_id = %user.id, "blocked login for disabled user");
-                return Err(RepositoryError::DisabledUser.into());
-            }
-
-            let old_value = user_audit_value(&user);
-            let tx = self.audit.begin().await?;
-            let user = self.users.touch_login_in(&tx, &user, now).await?;
-            self.audit
-                .record_update(
-                    &tx,
-                    "users",
-                    user.id,
-                    Some(user.id),
-                    old_value,
-                    user_audit_value(&user),
-                    now,
-                )
-                .await?;
-            tx.commit().await.map_err(RepositoryError::from)?;
-            info!(user_id = %user.id, "reused existing user for login");
-            return Ok(user);
-        }
-
-        let tx = self.audit.begin().await?;
-        let user = self
-            .users
-            .create_for_login_in(&tx, dingtalk_user_id, now)
-            .await?;
-        self.audit
-            .record_create(
-                &tx,
-                "users",
-                user.id,
-                Some(user.id),
-                user_audit_value(&user),
-                now,
-            )
-            .await?;
-        tx.commit().await.map_err(RepositoryError::from)?;
-        Ok(user)
-    }
-
-    async fn create_session_with_audit(
-        &self,
-        user_id: Uuid,
-        session_token: &str,
-        now: DateTime<Utc>,
-        expires_at: DateTime<Utc>,
-    ) -> Result<auth_sessions::Model, AuthError> {
-        let tx = self.audit.begin().await?;
-        let session = self
-            .sessions
-            .create_session_in(&tx, user_id, &hash_secret(session_token), now, expires_at)
-            .await?;
-        self.audit
-            .record_create(
-                &tx,
-                "auth_sessions",
-                session.id,
-                Some(user_id),
-                auth_session_audit_value(&session),
-                now,
-            )
-            .await?;
-        tx.commit().await.map_err(RepositoryError::from)?;
-        Ok(session)
     }
 
     async fn sync_dingtalk_personal_profile(
@@ -466,48 +349,14 @@ impl AuthService {
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn logout(&self, session_id: Uuid) -> Result<(), AuthError> {
-        self.logout_as(None, session_id).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self))]
-    pub async fn logout_as(
-        &self,
-        actor_user_id: Option<Uuid>,
-        session_id: Uuid,
-    ) -> Result<(), AuthError> {
-        let now = Utc::now();
-        let tx = self.audit.begin().await?;
-        let old_session = self.sessions.find_session_by_id_in(&tx, session_id).await?;
         let revoked = self
             .sessions
-            .revoke_session_by_id_in(&tx, session_id, now)
+            .revoke_session_by_id(session_id, Utc::now())
             .await?;
 
         if !revoked {
             return Err(AuthError::InvalidSession);
         }
-
-        let session = self
-            .sessions
-            .find_session_by_id_in(&tx, session_id)
-            .await?
-            .ok_or(AuthError::InvalidSession)?;
-        let actor_user_id = actor_user_id.or(Some(session.user_id));
-        self.audit
-            .record_update(
-                &tx,
-                "auth_sessions",
-                session_id,
-                actor_user_id,
-                old_session
-                    .as_ref()
-                    .map(auth_session_audit_value)
-                    .unwrap_or_else(|| json!({ "id": session_id, "present": false })),
-                auth_session_audit_value(&session),
-                now,
-            )
-            .await?;
-        tx.commit().await.map_err(RepositoryError::from)?;
 
         info!(session_id = %session_id, "logged out current session");
         Ok(())
@@ -695,38 +544,6 @@ fn profile_audit_value(
         value["updated_fields"] = json!(updated_fields);
     }
     value
-}
-
-fn user_audit_value(user: &users::Model) -> Value {
-    json!({
-        "id": user.id,
-        "dingtalk_user_id_present": !user.dingtalk_user_id.is_empty(),
-        "status": user.status,
-        "created_at": user.created_at,
-        "updated_at": user.updated_at,
-        "last_login_at": user.last_login_at,
-    })
-}
-
-fn auth_session_audit_value(session: &auth_sessions::Model) -> Value {
-    json!({
-        "id": session.id,
-        "user_id": session.user_id,
-        "created_at": session.created_at,
-        "last_seen_at": session.last_seen_at,
-        "expires_at": session.expires_at,
-        "revoked_at": session.revoked_at,
-    })
-}
-
-fn oauth_state_audit_value(state: &oauth_login_states::Model) -> Value {
-    json!({
-        "id": state.id,
-        "provider": state.provider,
-        "created_at": state.created_at,
-        "expires_at": state.expires_at,
-        "consumed_at": state.consumed_at,
-    })
 }
 
 #[derive(Debug, Clone)]

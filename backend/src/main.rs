@@ -9,8 +9,8 @@ use backend::{
         user_profiles::UserProfileRepository, users::UserRepository,
     },
     services::{
-        audit::AuditService, auth::AuthService, authz::AuthzService,
-        authz_catalog::PermissionCatalog, customers::CustomerService, events::EventService,
+        auth::AuthService, authz::AuthzService, authz_catalog::PermissionCatalog,
+        customers::CustomerService, events::EventService,
         product_categories::ProductCategoryService, products::ProductService,
         review::ApplierRegistry, sales_records::SalesRecordService, stores::StoreService,
         systems::SystemService, users::UserService,
@@ -48,7 +48,6 @@ async fn main() -> Result<()> {
     let stores = StoreRepository::new(db.clone());
     let customers = CustomerRepository::new(db.clone());
     let sales_records = SalesRecordRepository::new(db.clone());
-    let audit = AuditService::new(EventRepository::new(db.clone()));
     let auth = AuthService::new(
         config.dingtalk.clone(),
         users.clone(),
@@ -71,35 +70,22 @@ async fn main() -> Result<()> {
     for (resource_type, object, action) in registry.approval_permissions() {
         catalog.add_permission(object, action, "审核", resource_type);
     }
-    let authz = AuthzService::with_catalog_and_audit(
-        AuthzRepository::new(db.clone()),
-        catalog,
-        audit.clone(),
-    )
-    .await
-    .context("failed to initialize authorization service")?;
-    let users_service = UserService::with_audit(users.clone(), profiles, sessions, audit.clone());
-    let product_categories_service = ProductCategoryService::with_audit(
-        product_categories.clone(),
-        products.clone(),
-        audit.clone(),
-    );
-    let products = ProductService::with_audit(products, product_categories.clone(), audit.clone());
-    let stores_service = StoreService::with_audit(stores.clone(), systems.clone(), audit.clone());
-    let systems_service = SystemService::with_audit(
-        systems.clone(),
-        departments.clone(),
-        stores.clone(),
-        audit.clone(),
-    );
-    let customers_service = CustomerService::with_audit(
+    let authz = AuthzService::with_catalog(AuthzRepository::new(db.clone()), catalog)
+        .await
+        .context("failed to initialize authorization service")?;
+    let users_service = UserService::new(users.clone(), profiles, sessions);
+    let product_categories_service =
+        ProductCategoryService::new(product_categories.clone(), products.clone());
+    let products = ProductService::new(products, product_categories.clone());
+    let stores_service = StoreService::new(stores.clone(), systems.clone());
+    let systems_service = SystemService::new(systems.clone(), departments.clone(), stores.clone());
+    let customers_service = CustomerService::new(
         customers.clone(),
         departments.clone(),
         systems.clone(),
         stores.clone(),
-        audit.clone(),
     );
-    let sales_records_service = SalesRecordService::with_audit(
+    let sales_records_service = SalesRecordService::new(
         sales_records,
         customers,
         departments,
@@ -107,7 +93,6 @@ async fn main() -> Result<()> {
         stores,
         product_categories,
         users.clone(),
-        audit,
     );
     let events = EventService::new(
         EventRepository::new(db),
