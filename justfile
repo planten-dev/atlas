@@ -1,7 +1,7 @@
 set shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 
 backend_manifest := "backend/Cargo.toml"
-sqlite_file := "backend/data/atlas-dev.sqlite"
+sqlite_file := "data/atlas-dev.sqlite"
 
 default: list
 
