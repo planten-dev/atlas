@@ -266,6 +266,69 @@ CREATE TABLE departments (
 - `name` 不要求全局唯一。
 - 门店相关 API 使用 `stores:read` 和 `stores:write` 权限控制访问；权限策略仍由权限管理接口维护，不在 `stores` 表中存储权限关系。
 
+## customers 表
+
+`customers` 表用于存储客户基础信息。当前阶段客户资料以门店、体系和部门为归属范围维护，并记录创建人、备注、附件和状态等基础字段。
+
+客户附件字段只保存附件元数据或访问标识，不直接保存文件二进制内容。实际文件存储位置和访问权限由后续文件服务或对象存储设计承载。
+
+### 表结构示例
+
+```sql
+CREATE TABLE customers (
+    id UUID PRIMARY KEY,
+    name VARCHAR(128) NOT NULL,
+    creator_user_id UUID NOT NULL REFERENCES users (id),
+    department_id UUID NOT NULL REFERENCES departments (id),
+    system_id UUID NOT NULL REFERENCES systems (id),
+    store_id UUID NOT NULL REFERENCES stores (id),
+    remark TEXT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'active',
+    attachments TEXT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT customers_status_check CHECK (status IN ('active', 'disabled'))
+);
+
+CREATE INDEX idx_customers_status ON customers (status);
+CREATE INDEX idx_customers_creator_user_id ON customers (creator_user_id);
+CREATE INDEX idx_customers_department_id ON customers (department_id);
+CREATE INDEX idx_customers_system_id ON customers (system_id);
+CREATE INDEX idx_customers_store_id ON customers (store_id);
+CREATE INDEX idx_customers_created_at ON customers (created_at);
+CREATE INDEX idx_customers_name ON customers (name);
+```
+
+### 字段说明
+
+| 字段 | 类型示例 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `UUID` | 是 | 客户唯一标识，作为 `customers` 表主键。 |
+| `name` | `VARCHAR(128)` | 是 | 客户姓名。写入前应去除首尾空格，不能为空字符串。 |
+| `creator_user_id` | `UUID` | 是 | 创建人，关联 `users.id`。展示创建人姓名、头像等信息时通过 `user_profiles` 查询。 |
+| `department_id` | `UUID` | 是 | 客户所属部门，关联 `departments.id`。 |
+| `system_id` | `UUID` | 是 | 客户所属体系，关联 `systems.id`。 |
+| `store_id` | `UUID` | 是 | 客户所属门店，关联 `stores.id`。 |
+| `remark` | `TEXT` | 否 | 客户备注，允许为空。 |
+| `status` | `VARCHAR(32)` | 是 | 客户状态，允许 `active`、`disabled`，默认 `active`。 |
+| `attachments` | `TEXT` | 否 | 客户附件元数据，由应用层保存为 JSON 字符串。当前 API 接收图片附件元数据数组，例如外部文件 ID、名称、MIME 类型、大小和访问标识；不直接保存图片二进制内容。 |
+| `created_at` | `TIMESTAMPTZ` | 是 | 客户记录创建时间。 |
+| `updated_at` | `TIMESTAMPTZ` | 是 | 客户记录最后更新时间。 |
+
+### 设计原则
+
+- `id` 是系统内部唯一客户标识，也是 `customers` 表的主键。
+- `name` 是客户姓名，不允许为空；当前阶段不要求全局唯一，也不要求在同一门店内唯一。
+- 创建人字段统一关联 `users.id`；展示姓名、头像等信息时通过 `user_profiles` 查询。
+- `department_id`、`system_id` 和 `store_id` 用于记录客户归属范围，均不允许为空。
+- `store_id` 必须属于 `system_id`，`system_id` 应与 `department_id` 的业务归属保持一致，该类跨表业务一致性建议由服务层校验。
+- `attachments` 仅保存外部图片存储返回的附件元数据或访问标识，不保存文件二进制内容、访问密钥或临时签名 URL；如后续需要复杂附件权限、版本或审计能力，再拆分独立附件表。
+- 客户 API 中附件使用结构化数组表达，每个附件至少包含 `file_id`；`file_name`、`mime_type` 和 `size_bytes` 可选，提供 `mime_type` 时必须为 `image/*`。
+- `remark` 和 `attachments` 可能包含客户相关敏感信息，日志中不应输出明文内容。
+- 客户记录业务删除以软删除为主，需要停用时通过 `status = 'disabled'` 表示；硬删除接口仅作为管理清理能力保留。
+- `created_at` 创建后不应被应用逻辑主动修改；`updated_at` 在客户记录或状态变更时同步更新。
+- 客户相关 API 使用 `customers:read` 和 `customers:write` 权限控制访问；权限策略仍由权限管理接口维护，不在 `customers` 表中存储权限关系。
+
 ## products 表
 
 `products` 表用于存储产品基础信息。产品类别通过 `category_id` 关联 `product_category.id`，系列、品牌、规格和单位当前阶段不单独建表，直接在产品记录中保存文本值。
@@ -329,3 +392,214 @@ CREATE TABLE departments (
 - 默认初始化四个类别：`产品` 不需要操作次数，`医疗`、`仪器`、`卡项` 需要操作次数。
 - 产品类别被产品引用时允许停用，但不允许物理删除。
 - `created_at` 创建后不应被应用逻辑主动修改；`updated_at` 在产品类别记录或状态变更时同步更新。
+
+## sales_records 表
+
+`sales_records` 表用于存储具体销售成交事实。一条销售记录只对应一种销售内容类型；由前端拆分为多条销售记录，并可通过同一个 `record_group_id` 表示它们来自同一次录入。
+
+销售内容类型复用 `product_category.id`，不在销售记录中重复维护“产品、医疗、仪器、卡项”等枚举。是否需要可操作次数由 `product_category.requires_operation_count` 控制，具体次数不直接保存在 `sales_records` 表中。
+
+### 表结构示例
+
+```sql
+CREATE TABLE sales_records (
+    id UUID PRIMARY KEY,
+    record_group_id UUID NULL,
+    customer_id UUID NOT NULL REFERENCES customers (id),
+    department_id UUID NOT NULL REFERENCES departments (id),
+    sale_date DATE NOT NULL,
+    deal_status VARCHAR(32) NOT NULL,
+    customer_type VARCHAR(32) NOT NULL,
+    deal_type VARCHAR(32) NOT NULL,
+    content_category_id UUID NOT NULL REFERENCES product_category (id),
+    handler_user_id UUID NOT NULL REFERENCES users (id),
+    paid_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    unpaid_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    system_id UUID NOT NULL REFERENCES systems (id),
+    store_id UUID NOT NULL REFERENCES stores (id),
+    collaboration_type VARCHAR(32) NOT NULL,
+    expert_user_id UUID NULL REFERENCES users (id),
+    expert_department_id UUID NULL REFERENCES departments (id),
+    consultant_user_id UUID NULL REFERENCES users (id),
+    consultant_department_id UUID NULL REFERENCES departments (id),
+    doctor_user_id UUID NULL REFERENCES users (id),
+    status VARCHAR(32) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT sales_records_deal_status_check CHECK (deal_status IN ('closed', 'not_closed')),
+    CONSTRAINT sales_records_customer_type_check CHECK (customer_type IN ('new', 'returning')),
+    CONSTRAINT sales_records_deal_type_check CHECK (deal_type IN ('non_salon', 'salon')),
+    CONSTRAINT sales_records_collaboration_type_check CHECK (collaboration_type IN ('expert_consultation', 'self_sale')),
+    CONSTRAINT sales_records_status_check CHECK (status IN ('active', 'voided')),
+    CONSTRAINT sales_records_paid_amount_check CHECK (paid_amount >= 0),
+    CONSTRAINT sales_records_unpaid_amount_check CHECK (unpaid_amount >= 0),
+    CONSTRAINT sales_records_expert_consultation_check
+        CHECK (
+            (
+                collaboration_type = 'expert_consultation'
+                AND expert_user_id IS NOT NULL
+                AND expert_department_id IS NOT NULL
+            )
+            OR
+            (
+                collaboration_type = 'self_sale'
+                AND expert_user_id IS NULL
+                AND expert_department_id IS NULL
+            )
+        )
+);
+```
+
+### 字段说明
+
+| 字段 | 类型示例 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `UUID` | 是 | 销售记录唯一标识，作为 `sales_records` 表主键。 |
+| `record_group_id` | `UUID` | 否 | 同一次录入拆分出的多条销售记录可共用该 ID，便于后续按录入批次查询或追踪。 |
+| `customer_id` | `UUID` | 是 | 客户 ID，关联 `customers.id`。客户姓名、备注和附件等基础资料通过 `customers` 表查询。 |
+| `department_id` | `UUID` | 是 | 成交归属部门，关联 `departments.id`。 |
+| `sale_date` | `DATE` | 是 | 销售成交日期。 |
+| `deal_status` | `VARCHAR(32)` | 是 | 成交状态，建议值为 `closed`、`not_closed`。 |
+| `customer_type` | `VARCHAR(32)` | 是 | 客户类型，建议值为 `new`、`returning`。 |
+| `deal_type` | `VARCHAR(32)` | 是 | 成交类型，建议值为 `non_salon`、`salon`。 |
+| `content_category_id` | `UUID` | 是 | 销售内容类型，关联 `product_category.id`，对应产品、医疗、仪器、卡项等类别。 |
+| `handler_user_id` | `UUID` | 是 | 本条销售记录处理人，关联 `users.id`。展示姓名、头像等信息时通过 `user_profiles` 查询。 |
+| `paid_amount` | `DECIMAL(12,2)` | 是 | 已支付金额，默认 `0.00`，不允许为负数。 |
+| `unpaid_amount` | `DECIMAL(12,2)` | 是 | 未支付金额，默认 `0.00`，不允许为负数。 |
+| `system_id` | `UUID` | 是 | 成交所属体系，关联 `systems.id`。 |
+| `store_id` | `UUID` | 是 | 成交所属门店，关联 `stores.id`。 |
+| `collaboration_type` | `VARCHAR(32)` | 是 | 协作类型，建议值为 `expert_consultation`、`self_sale`，分别表示专家诊和自销。 |
+| `expert_user_id` | `UUID` | 否 | 专家用户，关联 `users.id`。仅专家诊场景必填，自销场景应为空。 |
+| `expert_department_id` | `UUID` | 否 | 专家所属部门，关联 `departments.id`。仅专家诊场景必填，自销场景应为空。 |
+| `consultant_user_id` | `UUID` | 否 | 咨询师用户，关联 `users.id`，专家诊和自销场景均允许为空。 |
+| `consultant_department_id` | `UUID` | 否 | 咨询师部门，关联 `departments.id`，允许为空。 |
+| `doctor_user_id` | `UUID` | 否 | 医生用户，关联 `users.id`，允许为空。 |
+| `status` | `VARCHAR(32)` | 是 | 销售记录状态，建议值为 `active`、`voided`，默认 `active`。 |
+| `created_at` | `TIMESTAMPTZ` | 是 | 销售记录创建时间。 |
+| `updated_at` | `TIMESTAMPTZ` | 是 | 销售记录最后更新时间。 |
+
+### 设计原则
+
+- `sales_records` 只记录销售成交事实，不保存操作消耗明细。
+- 客户字段统一关联 `customers.id`，不在销售记录中重复保存客户姓名。
+- 一条销售记录只允许一个 `content_category_id`；一次录入多个销售内容类型时，应拆分为多条销售记录。
+- 销售内容类型复用 `product_category`，不重新维护“产品、医疗、仪器、卡项”枚举。
+- 人员字段统一关联 `users.id`；展示姓名、头像等信息时通过 `user_profiles` 查询。
+- `collaboration_type` 用于区分专家诊和自销。
+- 专家和专家部门只在专家诊场景下存在；当 `collaboration_type = 'expert_consultation'` 时，`expert_user_id` 和 `expert_department_id` 必填。
+- 当 `collaboration_type = 'self_sale'` 时，`expert_user_id` 和 `expert_department_id` 应为空。
+- 专家与专家部门的归属一致性建议由服务层校验。
+- 咨询师不是必填项，`consultant_user_id` 和 `consultant_department_id` 均允许为空。
+- 咨询师字段不受 `collaboration_type` 约束；专家诊和自销都可以没有咨询师。
+- 医疗、仪器、卡项等附带可操作次数的内容，不直接在 `sales_records` 中保存次数。
+- 是否需要可操作次数由 `product_category.requires_operation_count` 控制。
+- `paid_amount` 和 `unpaid_amount` 不允许为负数。
+- `store_id` 必须属于 `system_id`，该业务一致性建议由服务层校验。
+- 销售记录默认不物理删除，通过 `status = 'voided'` 表示作废。
+
+## sales_record_operation_counts 表
+
+`sales_record_operation_counts` 表用于保存某条销售记录生成的可操作次数账户。只有 `product_category.requires_operation_count = true` 的销售记录才需要创建该表记录，例如医疗、仪器、卡项等需要后续操作消耗的销售内容。
+
+### 表结构示例
+
+```sql
+CREATE TABLE sales_record_operation_counts (
+    sales_record_id UUID PRIMARY KEY REFERENCES sales_records (id) ON DELETE CASCADE,
+    total_count INTEGER NOT NULL,
+    used_count INTEGER NOT NULL DEFAULT 0,
+    status VARCHAR(32) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT sales_record_operation_counts_total_count_check CHECK (total_count > 0),
+    CONSTRAINT sales_record_operation_counts_used_count_check CHECK (used_count >= 0 AND used_count <= total_count),
+    CONSTRAINT sales_record_operation_counts_status_check CHECK (status IN ('active', 'voided'))
+);
+```
+
+### 字段说明
+
+| 字段 | 类型示例 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `sales_record_id` | `UUID` | 是 | 对应销售记录 ID，作为本表主键并关联 `sales_records.id`。 |
+| `total_count` | `INTEGER` | 是 | 销售记录产生的总可操作次数，必须大于 `0`。 |
+| `used_count` | `INTEGER` | 是 | 已使用次数，默认 `0`，不得小于 `0`，也不得超过 `total_count`。 |
+| `status` | `VARCHAR(32)` | 是 | 次数账户状态，建议值为 `active`、`voided`，默认 `active`。 |
+| `created_at` | `TIMESTAMPTZ` | 是 | 次数账户创建时间。 |
+| `updated_at` | `TIMESTAMPTZ` | 是 | 次数账户最后更新时间。 |
+
+### 设计原则
+
+- `sales_record_operation_counts` 与 `sales_records` 是一对零或一关系。
+- 产品类销售记录通常不创建次数账户。
+- 医疗、仪器、卡项等需要操作次数的销售记录，服务层应要求填写 `total_count`。
+- `used_count` 是由有效操作记录汇总维护的冗余计数字段，用于快速查询剩余次数。
+- 剩余次数不单独落库，由 `total_count - used_count` 计算。
+- 销售记录作废时，相关次数账户也应同步作废。
+- `sales_record_id` 建议使用 `ON DELETE CASCADE`，用于在销售记录被物理删除时清理对应次数账户；正常业务仍应优先通过状态作废处理。
+
+## sales_record_operation_usages 表
+
+`sales_record_operation_usages` 表用于记录每一次实际操作消耗。每新增一条有效操作记录，服务层应同步增加 `sales_record_operation_counts.used_count`，从而减少剩余可操作次数。
+
+### 表结构示例
+
+```sql
+CREATE TABLE sales_record_operation_usages (
+    id UUID PRIMARY KEY,
+    sales_record_id UUID NOT NULL REFERENCES sales_records (id),
+    operated_at TIMESTAMPTZ NOT NULL,
+    operator_user_id UUID NOT NULL REFERENCES users (id),
+    doctor_user_id UUID NULL REFERENCES users (id),
+    operation_count INTEGER NOT NULL DEFAULT 1,
+    remark TEXT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT sales_record_operation_usages_operation_count_check CHECK (operation_count > 0),
+    CONSTRAINT sales_record_operation_usages_status_check CHECK (status IN ('active', 'voided'))
+);
+```
+
+### 字段说明
+
+| 字段 | 类型示例 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `UUID` | 是 | 操作消耗记录唯一标识，作为 `sales_record_operation_usages` 表主键。 |
+| `sales_record_id` | `UUID` | 是 | 对应销售记录 ID，关联 `sales_records.id`。 |
+| `operated_at` | `TIMESTAMPTZ` | 是 | 实际操作发生时间。 |
+| `operator_user_id` | `UUID` | 是 | 本次操作记录处理人，关联 `users.id`。 |
+| `doctor_user_id` | `UUID` | 否 | 本次操作医生，关联 `users.id`，允许为空。 |
+| `operation_count` | `INTEGER` | 是 | 本次消耗的操作次数，默认 `1`，必须大于 `0`。 |
+| `remark` | `TEXT` | 否 | 操作备注，允许为空。 |
+| `status` | `VARCHAR(32)` | 是 | 操作消耗记录状态，建议值为 `active`、`voided`，默认 `active`。 |
+| `created_at` | `TIMESTAMPTZ` | 是 | 操作消耗记录创建时间。 |
+| `updated_at` | `TIMESTAMPTZ` | 是 | 操作消耗记录最后更新时间。 |
+
+### 设计原则
+
+- 每次实际操作都必须写入 `sales_record_operation_usages`，不能只修改剩余次数。
+- 新增操作记录前必须校验剩余次数是否足够。
+- 新增操作记录成功后，同步增加 `sales_record_operation_counts.used_count`。
+- `used_count + operation_count` 不得超过 `total_count`。
+- 作废操作记录时，应同步回退 `sales_record_operation_counts.used_count`。
+- 操作记录默认不物理删除，通过 `status = 'voided'` 表示作废。
+- 创建操作记录和更新 `used_count` 必须在同一个数据库事务中完成，避免并发下次数被超用。
+
+## 销售记录相关索引建议
+
+销售记录后续常见查询会围绕成交日期、客户、组织归属、门店体系、处理人、销售内容类型和操作消耗明细展开。建议在实现迁移时至少考虑以下索引：
+
+```sql
+CREATE INDEX idx_sales_records_sale_date ON sales_records (sale_date);
+CREATE INDEX idx_sales_records_customer_id ON sales_records (customer_id);
+CREATE INDEX idx_sales_records_department_id ON sales_records (department_id);
+CREATE INDEX idx_sales_records_system_id ON sales_records (system_id);
+CREATE INDEX idx_sales_records_store_id ON sales_records (store_id);
+CREATE INDEX idx_sales_records_handler_user_id ON sales_records (handler_user_id);
+CREATE INDEX idx_sales_records_content_category_id ON sales_records (content_category_id);
+CREATE INDEX idx_sales_records_record_group_id ON sales_records (record_group_id);
+CREATE INDEX idx_sales_record_operation_usages_sales_record_id ON sales_record_operation_usages (sales_record_id);
+CREATE INDEX idx_sales_record_operation_usages_operated_at ON sales_record_operation_usages (operated_at);
+CREATE INDEX idx_sales_record_operation_usages_operator_user_id ON sales_record_operation_usages (operator_user_id);
+```
