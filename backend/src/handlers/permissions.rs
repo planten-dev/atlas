@@ -1,6 +1,6 @@
 use axum::{
-    Json,
-    extract::{Extension, Path, Query, State},
+    Extension, Json,
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -60,6 +60,7 @@ pub async fn permission_catalog(State(state): State<AppState>) -> Response {
 /// with one enforcer reload — the bulk save behind the permission panel.
 pub async fn replace_subject_policies(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     Path((subject_kind, subject_id)): Path<(String, Uuid)>,
     Json(request): Json<ReplaceSubjectPoliciesRequest>,
 ) -> Response {
@@ -75,7 +76,12 @@ pub async fn replace_subject_policies(
 
     match state
         .authz
-        .replace_subject_policies(subject_kind.clone(), subject_id, policies)
+        .replace_subject_policies_as(
+            Some(current_session.user.id),
+            subject_kind.clone(),
+            subject_id,
+            policies,
+        )
         .await
     {
         Ok(created) => (
@@ -107,11 +113,18 @@ pub async fn list_roles(State(state): State<AppState>) -> Response {
 
 pub async fn create_role(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     Json(request): Json<CreateRoleRequest>,
 ) -> Response {
     match state
         .authz
-        .create_role(request.code, request.name, request.kind, request.priority)
+        .create_role_as(
+            Some(current_session.user.id),
+            request.code,
+            request.name,
+            request.kind,
+            request.priority,
+        )
         .await
     {
         Ok(role) => (StatusCode::CREATED, Json(RoleResponse::from_model(role))).into_response(),
@@ -135,12 +148,18 @@ pub async fn get_role(State(state): State<AppState>, Path(role_id): Path<Uuid>) 
 
 pub async fn update_role(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     Path(role_id): Path<Uuid>,
     Json(request): Json<UpdateRoleRequest>,
 ) -> Response {
     match state
         .authz
-        .update_role(role_id, request.name, request.priority)
+        .update_role_as(
+            Some(current_session.user.id),
+            role_id,
+            request.name,
+            request.priority,
+        )
         .await
     {
         Ok(role) => (StatusCode::OK, Json(RoleResponse::from_model(role))).into_response(),
@@ -148,8 +167,16 @@ pub async fn update_role(
     }
 }
 
-pub async fn delete_role(State(state): State<AppState>, Path(role_id): Path<Uuid>) -> Response {
-    match state.authz.delete_role(role_id).await {
+pub async fn delete_role(
+    State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
+    Path(role_id): Path<Uuid>,
+) -> Response {
+    match state
+        .authz
+        .delete_role_as(Some(current_session.user.id), role_id)
+        .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => authz_error_response(error),
     }
@@ -157,12 +184,17 @@ pub async fn delete_role(State(state): State<AppState>, Path(role_id): Path<Uuid
 
 pub async fn set_role_parents(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     Path(role_id): Path<Uuid>,
     Json(request): Json<SetRoleParentsRequest>,
 ) -> Response {
     match state
         .authz
-        .set_role_parents(role_id, request.parent_role_ids)
+        .set_role_parents_as(
+            Some(current_session.user.id),
+            role_id,
+            request.parent_role_ids,
+        )
         .await
     {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
@@ -186,10 +218,15 @@ pub async fn list_user_roles(State(state): State<AppState>, Path(user_id): Path<
 
 pub async fn set_user_roles(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     Path(user_id): Path<Uuid>,
     Json(request): Json<SetUserRolesRequest>,
 ) -> Response {
-    match state.authz.set_user_roles(user_id, request.role_ids).await {
+    match state
+        .authz
+        .set_user_roles_as(Some(current_session.user.id), user_id, request.role_ids)
+        .await
+    {
         Ok(roles) => (
             StatusCode::OK,
             Json(UserRolesResponse {
@@ -224,11 +261,13 @@ pub async fn list_policies(
 
 pub async fn create_policy(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     Json(request): Json<CreatePolicyRequest>,
 ) -> Response {
     match state
         .authz
-        .create_policy(
+        .create_policy_as(
+            Some(current_session.user.id),
             request.subject_kind,
             request.subject_id,
             request.object,
@@ -246,8 +285,16 @@ pub async fn create_policy(
     }
 }
 
-pub async fn delete_policy(State(state): State<AppState>, Path(policy_id): Path<Uuid>) -> Response {
-    match state.authz.delete_policy(policy_id).await {
+pub async fn delete_policy(
+    State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
+    Path(policy_id): Path<Uuid>,
+) -> Response {
+    match state
+        .authz
+        .delete_policy_as(Some(current_session.user.id), policy_id)
+        .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => authz_error_response(error),
     }

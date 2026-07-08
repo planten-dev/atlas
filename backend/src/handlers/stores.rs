@@ -1,5 +1,5 @@
 use axum::{
-    Json,
+    Extension, Json,
     extract::{
         Path, Query, State,
         rejection::{JsonRejection, PathRejection, QueryRejection},
@@ -16,7 +16,7 @@ use crate::{
         stores::{CreateStoreRequest, ListStoresQuery, UpdateStoreRequest},
     },
     repositories::RepositoryError,
-    services::stores::StoreError,
+    services::{auth::CurrentSession, stores::StoreError},
     state::AppState,
 };
 
@@ -52,6 +52,7 @@ pub async fn store_detail(
 
 pub async fn create_store(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     request: Result<Json<CreateStoreRequest>, JsonRejection>,
 ) -> Response {
     let request = match request {
@@ -59,7 +60,11 @@ pub async fn create_store(
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
-    match state.stores.create_store(request).await {
+    match state
+        .stores
+        .create_store_as(Some(current_session.user.id), request)
+        .await
+    {
         Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
         Err(error) => store_error_response(error),
     }
@@ -67,6 +72,7 @@ pub async fn create_store(
 
 pub async fn update_store(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
     request: Result<Json<UpdateStoreRequest>, JsonRejection>,
 ) -> Response {
@@ -79,7 +85,11 @@ pub async fn update_store(
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
-    match state.stores.update_store(store_id, request).await {
+    match state
+        .stores
+        .update_store_as(Some(current_session.user.id), store_id, request)
+        .await
+    {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => store_error_response(error),
     }
@@ -87,6 +97,7 @@ pub async fn update_store(
 
 pub async fn disable_store(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let store_id = match path {
@@ -94,7 +105,11 @@ pub async fn disable_store(
         Err(error) => return validation_error_response("invalid store_id path parameter", error),
     };
 
-    match state.stores.disable_store(store_id).await {
+    match state
+        .stores
+        .disable_store_as(Some(current_session.user.id), store_id)
+        .await
+    {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => store_error_response(error),
     }
@@ -102,6 +117,7 @@ pub async fn disable_store(
 
 pub async fn delete_store(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let store_id = match path {
@@ -109,7 +125,11 @@ pub async fn delete_store(
         Err(error) => return validation_error_response("invalid store_id path parameter", error),
     };
 
-    match state.stores.delete_store(store_id).await {
+    match state
+        .stores
+        .delete_store_as(Some(current_session.user.id), store_id)
+        .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => store_error_response(error),
     }

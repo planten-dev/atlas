@@ -1,4 +1,5 @@
 use chrono::Utc;
+use serde_json::{Value, json};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -9,6 +10,7 @@ use crate::{
         CustomerStatusParseError, ListCustomersQuery, ListCustomersResponse, PatchField,
         UpdateCustomerRequest,
     },
+    entities::customers,
     repositories::{
         RepositoryError,
         customers::{CustomerChanges, CustomerFilters, CustomerRepository, NewCustomer},
@@ -16,6 +18,7 @@ use crate::{
         stores::StoreRepository,
         systems::SystemRepository,
     },
+    services::audit::AuditService,
 };
 
 const DEFAULT_PAGE_NUMBER: u64 = 1;
@@ -33,6 +36,7 @@ pub struct CustomerService {
     departments: DepartmentRepository,
     systems: SystemRepository,
     stores: StoreRepository,
+    audit: Option<AuditService>,
 }
 
 impl CustomerService {
@@ -47,6 +51,23 @@ impl CustomerService {
             departments,
             systems,
             stores,
+            audit: None,
+        }
+    }
+
+    pub fn with_audit(
+        customers: CustomerRepository,
+        departments: DepartmentRepository,
+        systems: SystemRepository,
+        stores: StoreRepository,
+        audit: AuditService,
+    ) -> Self {
+        Self {
+            customers,
+            departments,
+            systems,
+            stores,
+            audit: Some(audit),
         }
     }
 
@@ -77,7 +98,28 @@ impl CustomerService {
             attachments,
         };
 
-        let customer = self.customers.create_customer(customer, Utc::now()).await?;
+        let now = Utc::now();
+        let customer = if let Some(audit) = &self.audit {
+            let tx = audit.begin().await?;
+            let customer = self
+                .customers
+                .create_customer_in(&tx, customer, now)
+                .await?;
+            audit
+                .record_create(
+                    &tx,
+                    "customers",
+                    customer.id,
+                    Some(actor_user_id),
+                    customer_audit_value(&customer),
+                    now,
+                )
+                .await?;
+            tx.commit().await.map_err(RepositoryError::from)?;
+            customer
+        } else {
+            self.customers.create_customer(customer, now).await?
+        };
         info!(customer_id = %customer.id, "created customer through service");
         Ok(CustomerResponse::from(customer))
     }
@@ -148,6 +190,16 @@ impl CustomerService {
         customer_id: Uuid,
         request: UpdateCustomerRequest,
     ) -> Result<CustomerResponse, CustomerError> {
+        self.update_customer_as(None, customer_id, request).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, request))]
+    pub async fn update_customer_as(
+        &self,
+        actor_user_id: Option<Uuid>,
+        customer_id: Uuid,
+        request: UpdateCustomerRequest,
+    ) -> Result<CustomerResponse, CustomerError> {
         let customer = self
             .customers
             .find_by_id(customer_id)
@@ -181,10 +233,32 @@ impl CustomerService {
             return Ok(CustomerResponse::from(customer));
         }
 
-        let customer = self
-            .customers
-            .update_customer(&customer, changes, Utc::now())
-            .await?;
+        let old_value = customer_audit_value(&customer);
+        let now = Utc::now();
+        let customer = if let Some(audit) = &self.audit {
+            let tx = audit.begin().await?;
+            let customer = self
+                .customers
+                .update_customer_in(&tx, &customer, changes, now)
+                .await?;
+            audit
+                .record_update(
+                    &tx,
+                    "customers",
+                    customer.id,
+                    actor_user_id,
+                    old_value,
+                    customer_audit_value(&customer),
+                    now,
+                )
+                .await?;
+            tx.commit().await.map_err(RepositoryError::from)?;
+            customer
+        } else {
+            self.customers
+                .update_customer(&customer, changes, now)
+                .await?
+        };
         info!(%customer_id, "updated customer through service");
         Ok(CustomerResponse::from(customer))
     }
@@ -194,15 +268,46 @@ impl CustomerService {
         &self,
         customer_id: Uuid,
     ) -> Result<CustomerResponse, CustomerError> {
+        self.disable_customer_as(None, customer_id).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn disable_customer_as(
+        &self,
+        actor_user_id: Option<Uuid>,
+        customer_id: Uuid,
+    ) -> Result<CustomerResponse, CustomerError> {
         let customer = self
             .customers
             .find_by_id(customer_id)
             .await?
             .ok_or(CustomerError::CustomerNotFound)?;
-        let customer = self
-            .customers
-            .update_status(&customer, CustomerStatus::Disabled.as_str(), Utc::now())
-            .await?;
+        let old_value = customer_audit_value(&customer);
+        let now = Utc::now();
+        let customer = if let Some(audit) = &self.audit {
+            let tx = audit.begin().await?;
+            let customer = self
+                .customers
+                .update_status_in(&tx, &customer, CustomerStatus::Disabled.as_str(), now)
+                .await?;
+            audit
+                .record_update(
+                    &tx,
+                    "customers",
+                    customer.id,
+                    actor_user_id,
+                    old_value,
+                    customer_audit_value(&customer),
+                    now,
+                )
+                .await?;
+            tx.commit().await.map_err(RepositoryError::from)?;
+            customer
+        } else {
+            self.customers
+                .update_status(&customer, CustomerStatus::Disabled.as_str(), now)
+                .await?
+        };
 
         info!(%customer_id, "disabled customer through service");
         Ok(CustomerResponse::from(customer))
@@ -210,11 +315,36 @@ impl CustomerService {
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn delete_customer(&self, customer_id: Uuid) -> Result<(), CustomerError> {
-        if self.customers.find_by_id(customer_id).await?.is_none() {
-            return Err(CustomerError::CustomerNotFound);
-        }
+        self.delete_customer_as(None, customer_id).await
+    }
 
-        let deleted = self.customers.delete_by_id(customer_id).await?;
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn delete_customer_as(
+        &self,
+        actor_user_id: Option<Uuid>,
+        customer_id: Uuid,
+    ) -> Result<(), CustomerError> {
+        let customer = self
+            .customers
+            .find_by_id(customer_id)
+            .await?
+            .ok_or(CustomerError::CustomerNotFound)?;
+        let old_value = customer_audit_value(&customer);
+
+        let deleted = if let Some(audit) = &self.audit {
+            let now = Utc::now();
+            let tx = audit.begin().await?;
+            let deleted = self.customers.delete_by_id_in(&tx, customer_id).await?;
+            if deleted {
+                audit
+                    .record_delete(&tx, "customers", customer_id, actor_user_id, old_value, now)
+                    .await?;
+            }
+            tx.commit().await.map_err(RepositoryError::from)?;
+            deleted
+        } else {
+            self.customers.delete_by_id(customer_id).await?
+        };
         if !deleted {
             warn!(%customer_id, "customer disappeared before delete completed");
             return Err(CustomerError::CustomerNotFound);
@@ -265,6 +395,75 @@ impl CustomerService {
 
         Ok(())
     }
+}
+
+fn customer_audit_value(customer: &customers::Model) -> Value {
+    json!({
+        "id": customer.id,
+        "name": customer.name,
+        "creator_user_id": customer.creator_user_id,
+        "department_id": customer.department_id,
+        "system_id": customer.system_id,
+        "store_id": customer.store_id,
+        "remark": text_summary(customer.remark.as_deref()),
+        "status": customer.status,
+        "attachments": attachments_summary(customer.attachments.as_deref()),
+        "created_at": customer.created_at,
+        "updated_at": customer.updated_at,
+    })
+}
+
+fn text_summary(value: Option<&str>) -> Value {
+    match value {
+        Some(value) => json!({
+            "present": true,
+            "length": value.chars().count(),
+        }),
+        None => json!({
+            "present": false,
+            "length": 0,
+        }),
+    }
+}
+
+fn attachments_summary(value: Option<&str>) -> Value {
+    let Some(value) = value else {
+        return json!({
+            "present": false,
+            "count": 0,
+        });
+    };
+    let Ok(attachments) = serde_json::from_str::<Vec<CustomerAttachment>>(value) else {
+        return json!({
+            "present": true,
+            "parseable": false,
+        });
+    };
+
+    let file_name_count = attachments
+        .iter()
+        .filter(|attachment| attachment.file_name.is_some())
+        .count();
+    let mime_type_count = attachments
+        .iter()
+        .filter(|attachment| attachment.mime_type.is_some())
+        .count();
+    let size_bytes_count = attachments
+        .iter()
+        .filter(|attachment| attachment.size_bytes.is_some())
+        .count();
+
+    json!({
+        "present": !attachments.is_empty(),
+        "parseable": true,
+        "count": attachments.len(),
+        "fields": {
+            "file_id": attachments.len(),
+            "file_name": file_name_count,
+            "mime_type": mime_type_count,
+            "size_bytes": size_bytes_count,
+        },
+    })
 }
 
 #[derive(Debug, Error)]
@@ -550,13 +749,17 @@ mod tests {
     use crate::{
         config::{DatabaseConfig, DatabaseKind},
         db,
+        entities::events,
         repositories::{
+            events::EventRepository,
             stores::{NewStore, StoreRepository},
             systems::{NewSystem, SystemRepository},
             users::UserRepository,
         },
+        services::audit::AuditService,
     };
-    use serde_json::json;
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    use serde_json::{Value, json};
     use std::path::PathBuf;
 
     fn sqlite_memory_config() -> DatabaseConfig {
@@ -589,6 +792,33 @@ mod tests {
             stores.clone(),
         );
         (users, departments, systems, stores, service)
+    }
+
+    async fn audited_services() -> (
+        UserRepository,
+        DepartmentRepository,
+        SystemRepository,
+        StoreRepository,
+        CustomerService,
+        EventRepository,
+    ) {
+        let db = db::connect_and_migrate(&sqlite_memory_config())
+            .await
+            .expect("sqlite memory database should initialize");
+        let users = UserRepository::new(db.clone());
+        let departments = DepartmentRepository::new(db.clone());
+        let systems = SystemRepository::new(db.clone());
+        let stores = StoreRepository::new(db.clone());
+        let customers = CustomerRepository::new(db.clone());
+        let events = EventRepository::new(db.clone());
+        let service = CustomerService::with_audit(
+            customers,
+            departments.clone(),
+            systems.clone(),
+            stores.clone(),
+            AuditService::new(EventRepository::new(db)),
+        );
+        (users, departments, systems, stores, service, events)
     }
 
     async fn user(repository: &UserRepository, dingtalk_id: &str) -> Uuid {
@@ -883,5 +1113,50 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[tokio::test]
+    async fn customer_audit_payload_summarizes_sensitive_fields() {
+        let (users, departments, systems, stores, service, events_repo) = audited_services().await;
+        let actor = user(&users, "ding-user-1").await;
+        let (department_id, system_id, store_id) =
+            scope(&departments, &systems, &stores, "scope-a").await;
+
+        let mut request = create_request("Alice", department_id, system_id, store_id);
+        request.remark = Some("secret customer note".to_string());
+        request.attachments = Some(vec![CustomerAttachment {
+            file_id: "sensitive-file-id".to_string(),
+            file_name: Some("sensitive-photo.png".to_string()),
+            mime_type: Some("image/png".to_string()),
+            size_bytes: Some(2048),
+        }]);
+        let created = service
+            .create_customer(actor, request)
+            .await
+            .expect("customer should be created");
+
+        let row = events::Entity::find()
+            .filter(events::Column::ResourceType.eq("customers"))
+            .filter(events::Column::ResourceId.eq(created.id))
+            .one(&events_repo.db)
+            .await
+            .expect("audit event should load")
+            .expect("customer audit should exist");
+        let payload = row.new_value.expect("new value should be stored");
+        let serialized = serde_json::to_string(&payload).expect("payload should serialize");
+
+        assert_eq!(
+            payload.pointer("/remark/present").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            payload
+                .pointer("/attachments/count")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert!(!serialized.contains("secret customer note"));
+        assert!(!serialized.contains("sensitive-file-id"));
+        assert!(!serialized.contains("sensitive-photo.png"));
     }
 }

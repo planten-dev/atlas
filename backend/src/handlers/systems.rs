@@ -1,5 +1,5 @@
 use axum::{
-    Json,
+    Extension, Json,
     extract::{
         Path, Query, State,
         rejection::{JsonRejection, PathRejection, QueryRejection},
@@ -16,7 +16,7 @@ use crate::{
         systems::{CreateSystemRequest, ListSystemsQuery, UpdateSystemRequest},
     },
     repositories::RepositoryError,
-    services::systems::SystemError,
+    services::{auth::CurrentSession, systems::SystemError},
     state::AppState,
 };
 
@@ -52,6 +52,7 @@ pub async fn system_detail(
 
 pub async fn create_system(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     request: Result<Json<CreateSystemRequest>, JsonRejection>,
 ) -> Response {
     let request = match request {
@@ -59,7 +60,11 @@ pub async fn create_system(
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
-    match state.systems.create_system(request).await {
+    match state
+        .systems
+        .create_system_as(Some(current_session.user.id), request)
+        .await
+    {
         Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
         Err(error) => system_error_response(error),
     }
@@ -67,6 +72,7 @@ pub async fn create_system(
 
 pub async fn update_system(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
     request: Result<Json<UpdateSystemRequest>, JsonRejection>,
 ) -> Response {
@@ -79,7 +85,11 @@ pub async fn update_system(
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
-    match state.systems.update_system(system_id, request).await {
+    match state
+        .systems
+        .update_system_as(Some(current_session.user.id), system_id, request)
+        .await
+    {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => system_error_response(error),
     }
@@ -87,6 +97,7 @@ pub async fn update_system(
 
 pub async fn disable_system(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let system_id = match path {
@@ -94,7 +105,11 @@ pub async fn disable_system(
         Err(error) => return validation_error_response("invalid system_id path parameter", error),
     };
 
-    match state.systems.disable_system(system_id).await {
+    match state
+        .systems
+        .disable_system_as(Some(current_session.user.id), system_id)
+        .await
+    {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => system_error_response(error),
     }
@@ -102,6 +117,7 @@ pub async fn disable_system(
 
 pub async fn delete_system(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let system_id = match path {
@@ -109,7 +125,11 @@ pub async fn delete_system(
         Err(error) => return validation_error_response("invalid system_id path parameter", error),
     };
 
-    match state.systems.delete_system(system_id).await {
+    match state
+        .systems
+        .delete_system_as(Some(current_session.user.id), system_id)
+        .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => system_error_response(error),
     }

@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
-    TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
+    EntityTrait, QueryFilter, QueryOrder, Set, TransactionTrait,
 };
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -52,6 +52,14 @@ pub struct AuthzSnapshot {
     pub policies: Vec<PolicyRow>,
 }
 
+#[derive(Debug, Clone)]
+pub struct DeletedRoleRows {
+    pub role: roles::Model,
+    pub policy_ids: Vec<Uuid>,
+    pub inheritances: Vec<(Uuid, Uuid)>,
+    pub user_ids: Vec<Uuid>,
+}
+
 #[derive(Clone)]
 pub struct AuthzRepository {
     pub(crate) db: DatabaseConnection,
@@ -60,6 +68,10 @@ pub struct AuthzRepository {
 impl AuthzRepository {
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
+    }
+
+    pub async fn begin(&self) -> Result<DatabaseTransaction, RepositoryError> {
+        Ok(self.db.begin().await?)
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
@@ -154,6 +166,20 @@ impl AuthzRepository {
         priority: i32,
         now: DateTime<Utc>,
     ) -> Result<roles::Model, RepositoryError> {
+        self.create_role_in(&self.db, code, name, kind, priority, now)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn), fields(code = %code, kind = %kind))]
+    pub async fn create_role_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        code: &str,
+        name: &str,
+        kind: &str,
+        priority: i32,
+        now: DateTime<Utc>,
+    ) -> Result<roles::Model, RepositoryError> {
         let role = roles::ActiveModel {
             id: Set(Uuid::new_v4()),
             code: Set(code.to_string()),
@@ -163,7 +189,7 @@ impl AuthzRepository {
             created_at: Set(now),
             updated_at: Set(now),
         }
-        .insert(&self.db)
+        .insert(conn)
         .await?;
 
         info!(role_id = %role.id, "created role");
@@ -178,7 +204,19 @@ impl AuthzRepository {
         priority: Option<i32>,
         now: DateTime<Utc>,
     ) -> Result<Option<roles::Model>, RepositoryError> {
-        let Some(role) = roles::Entity::find_by_id(id).one(&self.db).await? else {
+        self.update_role_in(&self.db, id, name, priority, now).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn), fields(role_id = %id))]
+    pub async fn update_role_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        id: Uuid,
+        name: Option<String>,
+        priority: Option<i32>,
+        now: DateTime<Utc>,
+    ) -> Result<Option<roles::Model>, RepositoryError> {
+        let Some(role) = roles::Entity::find_by_id(id).one(conn).await? else {
             return Ok(None);
         };
 
@@ -190,7 +228,7 @@ impl AuthzRepository {
             active.priority = Set(priority);
         }
         active.updated_at = Set(now);
-        let role = active.update(&self.db).await?;
+        let role = active.update(conn).await?;
 
         info!("updated role");
         Ok(Some(role))
@@ -203,15 +241,56 @@ impl AuthzRepository {
     pub async fn delete_role(&self, id: Uuid) -> Result<bool, RepositoryError> {
         let tx = self.db.begin().await?;
 
-        let Some(role) = roles::Entity::find_by_id(id).one(&tx).await? else {
+        let Some(_) = self.delete_role_in(&tx, id).await? else {
             tx.rollback().await?;
             return Ok(false);
         };
+        tx.commit().await?;
+        info!("deleted role and its dependent rows");
+        Ok(true)
+    }
+
+    #[tracing::instrument(level = "info", skip(self, tx), fields(role_id = %id))]
+    pub async fn delete_role_in(
+        &self,
+        tx: &DatabaseTransaction,
+        id: Uuid,
+    ) -> Result<Option<DeletedRoleRows>, RepositoryError> {
+        let Some(role) = roles::Entity::find_by_id(id).one(tx).await? else {
+            return Ok(None);
+        };
+
+        let policy_ids: Vec<Uuid> = permission_policies::Entity::find()
+            .filter(permission_policies::Column::SubjectKind.eq(SUBJECT_KIND_ROLE))
+            .filter(permission_policies::Column::SubjectId.eq(id))
+            .all(tx)
+            .await?
+            .into_iter()
+            .map(|policy| policy.id)
+            .collect();
+        let inheritances: Vec<(Uuid, Uuid)> = role_inheritances::Entity::find()
+            .filter(
+                role_inheritances::Column::ChildRoleId
+                    .eq(id)
+                    .or(role_inheritances::Column::ParentRoleId.eq(id)),
+            )
+            .all(tx)
+            .await?
+            .into_iter()
+            .map(|link| (link.child_role_id, link.parent_role_id))
+            .collect();
+        let user_ids: Vec<Uuid> = user_roles::Entity::find()
+            .filter(user_roles::Column::RoleId.eq(id))
+            .all(tx)
+            .await?
+            .into_iter()
+            .map(|link| link.user_id)
+            .collect();
 
         permission_policies::Entity::delete_many()
             .filter(permission_policies::Column::SubjectKind.eq(SUBJECT_KIND_ROLE))
             .filter(permission_policies::Column::SubjectId.eq(id))
-            .exec(&tx)
+            .exec(tx)
             .await?;
         role_inheritances::Entity::delete_many()
             .filter(
@@ -219,17 +298,21 @@ impl AuthzRepository {
                     .eq(id)
                     .or(role_inheritances::Column::ParentRoleId.eq(id)),
             )
-            .exec(&tx)
+            .exec(tx)
             .await?;
         user_roles::Entity::delete_many()
             .filter(user_roles::Column::RoleId.eq(id))
-            .exec(&tx)
+            .exec(tx)
             .await?;
-        roles::Entity::delete_by_id(role.id).exec(&tx).await?;
+        roles::Entity::delete_by_id(role.id).exec(tx).await?;
 
-        tx.commit().await?;
         info!("deleted role and its dependent rows");
-        Ok(true)
+        Ok(Some(DeletedRoleRows {
+            role,
+            policy_ids,
+            inheritances,
+            user_ids,
+        }))
     }
 
     #[tracing::instrument(level = "debug", skip(self), fields(role_id = %id))]
@@ -302,9 +385,31 @@ impl AuthzRepository {
     ) -> Result<(), RepositoryError> {
         let tx = self.db.begin().await?;
 
+        self.set_role_parents_in(&tx, child, parents, now).await?;
+        tx.commit().await?;
+        info!("replaced role parents");
+        Ok(())
+    }
+
+    #[tracing::instrument(level = "info", skip(self, tx, parents), fields(child_role_id = %child, parent_count = parents.len()))]
+    pub async fn set_role_parents_in(
+        &self,
+        tx: &DatabaseTransaction,
+        child: Uuid,
+        parents: &[Uuid],
+        now: DateTime<Utc>,
+    ) -> Result<Vec<Uuid>, RepositoryError> {
+        let old_parents = role_inheritances::Entity::find()
+            .filter(role_inheritances::Column::ChildRoleId.eq(child))
+            .all(tx)
+            .await?
+            .into_iter()
+            .map(|link| link.parent_role_id)
+            .collect();
+
         role_inheritances::Entity::delete_many()
             .filter(role_inheritances::Column::ChildRoleId.eq(child))
-            .exec(&tx)
+            .exec(tx)
             .await?;
 
         for parent in parents {
@@ -313,13 +418,12 @@ impl AuthzRepository {
                 parent_role_id: Set(*parent),
                 created_at: Set(now),
             }
-            .insert(&tx)
+            .insert(tx)
             .await?;
         }
 
-        tx.commit().await?;
         info!("replaced role parents");
-        Ok(())
+        Ok(old_parents)
     }
 
     // --- user role assignment ---
@@ -359,9 +463,31 @@ impl AuthzRepository {
     ) -> Result<(), RepositoryError> {
         let tx = self.db.begin().await?;
 
+        self.set_user_roles_in(&tx, user_id, role_ids, now).await?;
+        tx.commit().await?;
+        info!("replaced user roles");
+        Ok(())
+    }
+
+    #[tracing::instrument(level = "info", skip(self, tx, role_ids), fields(user_id = %user_id, role_count = role_ids.len()))]
+    pub async fn set_user_roles_in(
+        &self,
+        tx: &DatabaseTransaction,
+        user_id: Uuid,
+        role_ids: &[Uuid],
+        now: DateTime<Utc>,
+    ) -> Result<Vec<Uuid>, RepositoryError> {
+        let old_role_ids = user_roles::Entity::find()
+            .filter(user_roles::Column::UserId.eq(user_id))
+            .all(tx)
+            .await?
+            .into_iter()
+            .map(|link| link.role_id)
+            .collect();
+
         user_roles::Entity::delete_many()
             .filter(user_roles::Column::UserId.eq(user_id))
-            .exec(&tx)
+            .exec(tx)
             .await?;
 
         for role_id in role_ids {
@@ -370,13 +496,12 @@ impl AuthzRepository {
                 role_id: Set(*role_id),
                 created_at: Set(now),
             }
-            .insert(&tx)
+            .insert(tx)
             .await?;
         }
 
-        tx.commit().await?;
         info!("replaced user roles");
-        Ok(())
+        Ok(old_role_ids)
     }
 
     #[tracing::instrument(level = "debug", skip(self), fields(user_id = %user_id))]
@@ -403,6 +528,33 @@ impl AuthzRepository {
         effect: &str,
         now: DateTime<Utc>,
     ) -> Result<permission_policies::Model, RepositoryError> {
+        self.create_policy_in(
+            &self.db,
+            subject_kind,
+            subject_id,
+            object,
+            action,
+            effect,
+            now,
+        )
+        .await
+    }
+
+    #[tracing::instrument(
+        level = "info",
+        skip(self, conn),
+        fields(subject_kind = %subject_kind, subject_id = %subject_id, object = %object, action = %action, effect = %effect)
+    )]
+    pub async fn create_policy_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        subject_kind: &str,
+        subject_id: Uuid,
+        object: &str,
+        action: &str,
+        effect: &str,
+        now: DateTime<Utc>,
+    ) -> Result<permission_policies::Model, RepositoryError> {
         let policy = permission_policies::ActiveModel {
             id: Set(Uuid::new_v4()),
             subject_kind: Set(subject_kind.to_string()),
@@ -412,7 +564,7 @@ impl AuthzRepository {
             effect: Set(effect.to_string()),
             created_at: Set(now),
         }
-        .insert(&self.db)
+        .insert(conn)
         .await?;
 
         info!(policy_id = %policy.id, "created permission policy");
@@ -434,11 +586,33 @@ impl AuthzRepository {
         now: DateTime<Utc>,
     ) -> Result<Vec<permission_policies::Model>, RepositoryError> {
         let tx = self.db.begin().await?;
+        let created = self
+            .replace_subject_policies_in(&tx, subject_kind, subject_id, policies, now)
+            .await?;
+        tx.commit().await?;
+        Ok(created)
+    }
 
+    /// Delete-then-insert of one subject's policy set on the given
+    /// connection; callers own transactionality (the audit path shares a
+    /// transaction with the audit event insert).
+    #[tracing::instrument(
+        level = "info",
+        skip(self, conn, policies),
+        fields(subject_kind = %subject_kind, subject_id = %subject_id, policy_count = policies.len())
+    )]
+    pub async fn replace_subject_policies_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        subject_kind: &str,
+        subject_id: Uuid,
+        policies: &[NewPolicy],
+        now: DateTime<Utc>,
+    ) -> Result<Vec<permission_policies::Model>, RepositoryError> {
         permission_policies::Entity::delete_many()
             .filter(permission_policies::Column::SubjectKind.eq(subject_kind))
             .filter(permission_policies::Column::SubjectId.eq(subject_id))
-            .exec(&tx)
+            .exec(conn)
             .await?;
 
         let mut created = Vec::with_capacity(policies.len());
@@ -452,24 +626,40 @@ impl AuthzRepository {
                 effect: Set(policy.effect.clone()),
                 created_at: Set(now),
             }
-            .insert(&tx)
+            .insert(conn)
             .await?;
             created.push(row);
         }
 
-        tx.commit().await?;
         info!("replaced subject policies");
         Ok(created)
     }
 
     #[tracing::instrument(level = "info", skip(self), fields(policy_id = %id))]
     pub async fn delete_policy(&self, id: Uuid) -> Result<bool, RepositoryError> {
-        let result = permission_policies::Entity::delete_by_id(id)
-            .exec(&self.db)
-            .await?;
-        let deleted = result.rows_affected > 0;
+        let deleted = self.delete_policy_in(&self.db, id).await?.is_some();
         info!(deleted, "deleted permission policy");
         Ok(deleted)
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn), fields(policy_id = %id))]
+    pub async fn delete_policy_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        id: Uuid,
+    ) -> Result<Option<permission_policies::Model>, RepositoryError> {
+        let Some(policy) = permission_policies::Entity::find_by_id(id)
+            .one(conn)
+            .await?
+        else {
+            info!(deleted = false, "deleted permission policy");
+            return Ok(None);
+        };
+        permission_policies::Entity::delete_by_id(id)
+            .exec(conn)
+            .await?;
+        info!(deleted = true, "deleted permission policy");
+        Ok(Some(policy))
     }
 
     #[tracing::instrument(level = "debug", skip(self))]

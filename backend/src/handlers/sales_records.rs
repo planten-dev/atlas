@@ -1,5 +1,5 @@
 use axum::{
-    Json,
+    Extension, Json,
     extract::{
         Path, Query, State,
         rejection::{JsonRejection, PathRejection, QueryRejection},
@@ -20,7 +20,7 @@ use crate::{
         },
     },
     repositories::RepositoryError,
-    services::sales_records::SalesRecordError,
+    services::{auth::CurrentSession, sales_records::SalesRecordError},
     state::AppState,
 };
 
@@ -62,6 +62,7 @@ pub async fn sales_record_detail(
 
 pub async fn create_sales_record_batch(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     request: Result<Json<CreateSalesRecordBatchRequest>, JsonRejection>,
 ) -> Response {
     let request = match request {
@@ -69,7 +70,11 @@ pub async fn create_sales_record_batch(
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
-    match state.sales_records.create_sales_record_batch(request).await {
+    match state
+        .sales_records
+        .create_sales_record_batch_as(Some(current_session.user.id), request)
+        .await
+    {
         Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
         Err(error) => sales_record_error_response(error),
     }
@@ -77,6 +82,7 @@ pub async fn create_sales_record_batch(
 
 pub async fn update_sales_record(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
     request: Result<Json<UpdateSalesRecordRequest>, JsonRejection>,
 ) -> Response {
@@ -93,7 +99,7 @@ pub async fn update_sales_record(
 
     match state
         .sales_records
-        .update_sales_record(sales_record_id, request)
+        .update_sales_record_as(Some(current_session.user.id), sales_record_id, request)
         .await
     {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
@@ -103,23 +109,7 @@ pub async fn update_sales_record(
 
 pub async fn void_sales_record(
     State(state): State<AppState>,
-    path: Result<Path<Uuid>, PathRejection>,
-) -> Response {
-    let sales_record_id = match path {
-        Ok(Path(sales_record_id)) => sales_record_id,
-        Err(error) => {
-            return validation_error_response("invalid sales_record_id path parameter", error);
-        }
-    };
-
-    match state.sales_records.void_sales_record(sales_record_id).await {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(error) => sales_record_error_response(error),
-    }
-}
-
-pub async fn delete_sales_record(
-    State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let sales_record_id = match path {
@@ -131,7 +121,29 @@ pub async fn delete_sales_record(
 
     match state
         .sales_records
-        .delete_sales_record(sales_record_id)
+        .void_sales_record_as(Some(current_session.user.id), sales_record_id)
+        .await
+    {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => sales_record_error_response(error),
+    }
+}
+
+pub async fn delete_sales_record(
+    State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
+    path: Result<Path<Uuid>, PathRejection>,
+) -> Response {
+    let sales_record_id = match path {
+        Ok(Path(sales_record_id)) => sales_record_id,
+        Err(error) => {
+            return validation_error_response("invalid sales_record_id path parameter", error);
+        }
+    };
+
+    match state
+        .sales_records
+        .delete_sales_record_as(Some(current_session.user.id), sales_record_id)
         .await
     {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
@@ -177,6 +189,7 @@ pub async fn operation_count_detail(
 
 pub async fn update_operation_count(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
     request: Result<Json<UpdateOperationCountRequest>, JsonRejection>,
 ) -> Response {
@@ -193,7 +206,7 @@ pub async fn update_operation_count(
 
     match state
         .sales_records
-        .update_operation_count(sales_record_id, request)
+        .update_operation_count_as(Some(current_session.user.id), sales_record_id, request)
         .await
     {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
@@ -233,6 +246,7 @@ pub async fn operation_usage_detail(
 
 pub async fn create_operation_usage(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     request: Result<Json<CreateOperationUsageRequest>, JsonRejection>,
 ) -> Response {
     let request = match request {
@@ -240,7 +254,11 @@ pub async fn create_operation_usage(
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
-    match state.sales_records.create_operation_usage(request).await {
+    match state
+        .sales_records
+        .create_operation_usage_as(Some(current_session.user.id), request)
+        .await
+    {
         Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
         Err(error) => sales_record_error_response(error),
     }
@@ -248,6 +266,7 @@ pub async fn create_operation_usage(
 
 pub async fn update_operation_usage(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
     request: Result<Json<UpdateOperationUsageRequest>, JsonRejection>,
 ) -> Response {
@@ -262,7 +281,7 @@ pub async fn update_operation_usage(
 
     match state
         .sales_records
-        .update_operation_usage(usage_id, request)
+        .update_operation_usage_as(Some(current_session.user.id), usage_id, request)
         .await
     {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
@@ -272,6 +291,7 @@ pub async fn update_operation_usage(
 
 pub async fn void_operation_usage(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let usage_id = match path {
@@ -279,7 +299,11 @@ pub async fn void_operation_usage(
         Err(error) => return validation_error_response("invalid usage_id path parameter", error),
     };
 
-    match state.sales_records.void_operation_usage(usage_id).await {
+    match state
+        .sales_records
+        .void_operation_usage_as(Some(current_session.user.id), usage_id)
+        .await
+    {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => sales_record_error_response(error),
     }
@@ -287,6 +311,7 @@ pub async fn void_operation_usage(
 
 pub async fn delete_operation_usage(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let usage_id = match path {
@@ -294,7 +319,11 @@ pub async fn delete_operation_usage(
         Err(error) => return validation_error_response("invalid usage_id path parameter", error),
     };
 
-    match state.sales_records.delete_operation_usage(usage_id).await {
+    match state
+        .sales_records
+        .delete_operation_usage_as(Some(current_session.user.id), usage_id)
+        .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => sales_record_error_response(error),
     }

@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait,
+    PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use tracing::{debug, info};
 use uuid::Uuid;
@@ -80,6 +80,27 @@ impl CustomerRepository {
         customer: NewCustomer,
         now: DateTime<Utc>,
     ) -> Result<customers::Model, RepositoryError> {
+        self.create_customer_in(&self.db, customer, now).await
+    }
+
+    #[tracing::instrument(
+        level = "info",
+        skip(self, conn, customer),
+        fields(
+            name = %customer.name,
+            creator_user_id = %customer.creator_user_id,
+            department_id = %customer.department_id,
+            system_id = %customer.system_id,
+            store_id = %customer.store_id,
+            status = %customer.status
+        )
+    )]
+    pub async fn create_customer_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        customer: NewCustomer,
+        now: DateTime<Utc>,
+    ) -> Result<customers::Model, RepositoryError> {
         validate_required("name", &customer.name)?;
         validate_required("status", &customer.status)?;
 
@@ -96,7 +117,7 @@ impl CustomerRepository {
             created_at: Set(now),
             updated_at: Set(now),
         }
-        .insert(&self.db)
+        .insert(conn)
         .await?;
 
         info!(customer_id = %customer.id, "created customer");
@@ -166,6 +187,18 @@ impl CustomerRepository {
         changes: CustomerChanges,
         now: DateTime<Utc>,
     ) -> Result<customers::Model, RepositoryError> {
+        self.update_customer_in(&self.db, customer, changes, now)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn, customer, changes), fields(customer_id = %customer.id))]
+    pub async fn update_customer_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        customer: &customers::Model,
+        changes: CustomerChanges,
+        now: DateTime<Utc>,
+    ) -> Result<customers::Model, RepositoryError> {
         let mut active: customers::ActiveModel = customer.clone().into();
 
         if let Some(name) = changes.name {
@@ -193,7 +226,7 @@ impl CustomerRepository {
         }
         active.updated_at = Set(now);
 
-        let customer = active.update(&self.db).await?;
+        let customer = active.update(conn).await?;
         info!(customer_id = %customer.id, "updated customer");
         Ok(customer)
     }
@@ -205,12 +238,23 @@ impl CustomerRepository {
         status: &str,
         now: DateTime<Utc>,
     ) -> Result<customers::Model, RepositoryError> {
+        self.update_status_in(&self.db, customer, status, now).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn), fields(customer_id = %customer.id, status = %status))]
+    pub async fn update_status_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        customer: &customers::Model,
+        status: &str,
+        now: DateTime<Utc>,
+    ) -> Result<customers::Model, RepositoryError> {
         validate_required("status", status)?;
 
         let mut active: customers::ActiveModel = customer.clone().into();
         active.status = Set(status.trim().to_string());
         active.updated_at = Set(now);
-        let customer = active.update(&self.db).await?;
+        let customer = active.update(conn).await?;
 
         info!(customer_id = %customer.id, status = %customer.status, "updated customer status");
         Ok(customer)
@@ -218,8 +262,17 @@ impl CustomerRepository {
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn delete_by_id(&self, customer_id: Uuid) -> Result<bool, RepositoryError> {
+        self.delete_by_id_in(&self.db, customer_id).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn))]
+    pub async fn delete_by_id_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        customer_id: Uuid,
+    ) -> Result<bool, RepositoryError> {
         let result = customers::Entity::delete_by_id(customer_id)
-            .exec(&self.db)
+            .exec(conn)
             .await?;
         let deleted = result.rows_affected > 0;
 

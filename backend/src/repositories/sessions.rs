@@ -1,5 +1,8 @@
 use chrono::{DateTime, Utc};
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    Set,
+};
 use sha2::{Digest, Sha256};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -20,6 +23,12 @@ pub struct AuthenticatedSessionRecord {
     pub user: users::Model,
 }
 
+#[derive(Debug, Clone)]
+pub struct ConsumedOauthState {
+    pub old_state: oauth_login_states::Model,
+    pub state: oauth_login_states::Model,
+}
+
 impl SessionRepository {
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
@@ -28,6 +37,19 @@ impl SessionRepository {
     #[tracing::instrument(level = "info", skip(self, session_token_hash), fields(user_id = %user_id))]
     pub async fn create_session(
         &self,
+        user_id: Uuid,
+        session_token_hash: &str,
+        now: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> Result<auth_sessions::Model, RepositoryError> {
+        self.create_session_in(&self.db, user_id, session_token_hash, now, expires_at)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn, session_token_hash), fields(user_id = %user_id))]
+    pub async fn create_session_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
         user_id: Uuid,
         session_token_hash: &str,
         now: DateTime<Utc>,
@@ -44,7 +66,7 @@ impl SessionRepository {
             expires_at: Set(expires_at),
             revoked_at: Set(None),
         }
-        .insert(&self.db)
+        .insert(conn)
         .await?;
 
         info!(session_id = %session.id, "created auth session");
@@ -67,6 +89,20 @@ impl SessionRepository {
             .await?;
 
         debug!(found = session.is_some(), "looked up valid auth session");
+        Ok(session)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self, conn))]
+    pub async fn find_session_by_id_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        session_id: Uuid,
+    ) -> Result<Option<auth_sessions::Model>, RepositoryError> {
+        let session = auth_sessions::Entity::find_by_id(session_id)
+            .one(conn)
+            .await?;
+
+        debug!(found = session.is_some(), %session_id, "looked up auth session by id");
         Ok(session)
     }
 
@@ -140,10 +176,21 @@ impl SessionRepository {
         session_id: Uuid,
         now: DateTime<Utc>,
     ) -> Result<bool, RepositoryError> {
+        self.revoke_session_by_id_in(&self.db, session_id, now)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn))]
+    pub async fn revoke_session_by_id_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        session_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<bool, RepositoryError> {
         let session = auth_sessions::Entity::find_by_id(session_id)
             .filter(auth_sessions::Column::RevokedAt.is_null())
             .filter(auth_sessions::Column::ExpiresAt.gt(now))
-            .one(&self.db)
+            .one(conn)
             .await?;
 
         let Some(session) = session else {
@@ -153,7 +200,7 @@ impl SessionRepository {
 
         let mut active: auth_sessions::ActiveModel = session.into();
         active.revoked_at = Set(Some(now));
-        active.update(&self.db).await?;
+        active.update(conn).await?;
 
         info!(session_id = %session_id, "revoked auth session");
         Ok(true)
@@ -165,18 +212,29 @@ impl SessionRepository {
         user_id: Uuid,
         now: DateTime<Utc>,
     ) -> Result<u64, RepositoryError> {
+        self.revoke_active_sessions_for_user_in(&self.db, user_id, now)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn), fields(user_id = %user_id))]
+    pub async fn revoke_active_sessions_for_user_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        user_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<u64, RepositoryError> {
         let sessions = auth_sessions::Entity::find()
             .filter(auth_sessions::Column::UserId.eq(user_id))
             .filter(auth_sessions::Column::RevokedAt.is_null())
             .filter(auth_sessions::Column::ExpiresAt.gt(now))
-            .all(&self.db)
+            .all(conn)
             .await?;
         let count = sessions.len() as u64;
 
         for session in sessions {
             let mut active: auth_sessions::ActiveModel = session.into();
             active.revoked_at = Set(Some(now));
-            active.update(&self.db).await?;
+            active.update(conn).await?;
         }
 
         info!(user_id = %user_id, revoked_count = count, "revoked active sessions for user");
@@ -185,9 +243,18 @@ impl SessionRepository {
 
     #[tracing::instrument(level = "info", skip(self), fields(user_id = %user_id))]
     pub async fn delete_sessions_for_user(&self, user_id: Uuid) -> Result<u64, RepositoryError> {
+        self.delete_sessions_for_user_in(&self.db, user_id).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn), fields(user_id = %user_id))]
+    pub async fn delete_sessions_for_user_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        user_id: Uuid,
+    ) -> Result<u64, RepositoryError> {
         let result = auth_sessions::Entity::delete_many()
             .filter(auth_sessions::Column::UserId.eq(user_id))
-            .exec(&self.db)
+            .exec(conn)
             .await?;
 
         info!(
@@ -206,6 +273,19 @@ impl SessionRepository {
         now: DateTime<Utc>,
         expires_at: DateTime<Utc>,
     ) -> Result<oauth_login_states::Model, RepositoryError> {
+        self.create_oauth_state_in(&self.db, provider, state_hash, now, expires_at)
+            .await
+    }
+
+    #[tracing::instrument(level = "debug", skip(self, conn, state_hash), fields(provider = %provider))]
+    pub async fn create_oauth_state_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        provider: &str,
+        state_hash: &str,
+        now: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> Result<oauth_login_states::Model, RepositoryError> {
         validate_required("provider", provider)?;
         validate_required("state_hash", state_hash)?;
 
@@ -217,7 +297,7 @@ impl SessionRepository {
             expires_at: Set(expires_at),
             consumed_at: Set(None),
         }
-        .insert(&self.db)
+        .insert(conn)
         .await?;
 
         debug!(state_id = %state.id, "created oauth state");
@@ -231,6 +311,20 @@ impl SessionRepository {
         state_hash: &str,
         now: DateTime<Utc>,
     ) -> Result<bool, RepositoryError> {
+        Ok(self
+            .consume_oauth_state_in(&self.db, provider, state_hash, now)
+            .await?
+            .is_some())
+    }
+
+    #[tracing::instrument(level = "debug", skip(self, conn, state_hash), fields(provider = %provider))]
+    pub async fn consume_oauth_state_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        provider: &str,
+        state_hash: &str,
+        now: DateTime<Utc>,
+    ) -> Result<Option<ConsumedOauthState>, RepositoryError> {
         validate_required("provider", provider)?;
         validate_required("state_hash", state_hash)?;
 
@@ -239,21 +333,22 @@ impl SessionRepository {
             .filter(oauth_login_states::Column::StateHash.eq(state_hash.trim()))
             .filter(oauth_login_states::Column::ConsumedAt.is_null())
             .filter(oauth_login_states::Column::ExpiresAt.gt(now))
-            .one(&self.db)
+            .one(conn)
             .await?;
 
         let Some(state) = state else {
             debug!("oauth state was not found, already consumed, or expired");
-            return Ok(false);
+            return Ok(None);
         };
 
+        let old_state = state.clone();
         let state_id = state.id;
         let mut active: oauth_login_states::ActiveModel = state.into();
         active.consumed_at = Set(Some(now));
-        active.update(&self.db).await?;
+        let state = active.update(conn).await?;
 
         debug!(state_id = %state_id, "consumed oauth state");
-        Ok(true)
+        Ok(Some(ConsumedOauthState { old_state, state }))
     }
 }
 

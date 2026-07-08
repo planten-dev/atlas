@@ -1,4 +1,5 @@
 use chrono::Utc;
+use serde_json::{Value, json};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -8,11 +9,13 @@ use crate::{
         CreateStoreRequest, ListStoresQuery, ListStoresResponse, PatchField, StoreResponse,
         StoreStatus, StoreStatusParseError, UpdateStoreRequest,
     },
+    entities::stores,
     repositories::{
         RepositoryError,
         stores::{NewStore, StoreChanges, StoreRepository},
         systems::SystemRepository,
     },
+    services::audit::AuditService,
 };
 
 const DEFAULT_PAGE_NUMBER: u64 = 1;
@@ -25,16 +28,42 @@ const MAX_NAME_LENGTH: usize = 128;
 pub struct StoreService {
     stores: StoreRepository,
     systems: SystemRepository,
+    audit: Option<AuditService>,
 }
 
 impl StoreService {
     pub fn new(stores: StoreRepository, systems: SystemRepository) -> Self {
-        Self { stores, systems }
+        Self {
+            stores,
+            systems,
+            audit: None,
+        }
+    }
+
+    pub fn with_audit(
+        stores: StoreRepository,
+        systems: SystemRepository,
+        audit: AuditService,
+    ) -> Self {
+        Self {
+            stores,
+            systems,
+            audit: Some(audit),
+        }
     }
 
     #[tracing::instrument(level = "info", skip(self, request))]
     pub async fn create_store(
         &self,
+        request: CreateStoreRequest,
+    ) -> Result<StoreResponse, StoreError> {
+        self.create_store_as(None, request).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, request))]
+    pub async fn create_store_as(
+        &self,
+        actor_user_id: Option<Uuid>,
         request: CreateStoreRequest,
     ) -> Result<StoreResponse, StoreError> {
         let status = match request.status {
@@ -51,7 +80,25 @@ impl StoreService {
             status: status.as_str().to_string(),
         };
 
-        let store = self.stores.create_store(store, Utc::now()).await?;
+        let now = Utc::now();
+        let store = if let Some(audit) = &self.audit {
+            let tx = audit.begin().await?;
+            let store = self.stores.create_store_in(&tx, store, now).await?;
+            audit
+                .record_create(
+                    &tx,
+                    "stores",
+                    store.id,
+                    actor_user_id,
+                    store_audit_value(&store),
+                    now,
+                )
+                .await?;
+            tx.commit().await.map_err(RepositoryError::from)?;
+            store
+        } else {
+            self.stores.create_store(store, now).await?
+        };
         info!(store_id = %store.id, "created store through service");
         Ok(StoreResponse::from(store))
     }
@@ -111,6 +158,16 @@ impl StoreService {
         store_id: Uuid,
         request: UpdateStoreRequest,
     ) -> Result<StoreResponse, StoreError> {
+        self.update_store_as(None, store_id, request).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, request))]
+    pub async fn update_store_as(
+        &self,
+        actor_user_id: Option<Uuid>,
+        store_id: Uuid,
+        request: UpdateStoreRequest,
+    ) -> Result<StoreResponse, StoreError> {
         let store = self
             .stores
             .find_by_id(store_id)
@@ -132,25 +189,76 @@ impl StoreService {
             return Ok(StoreResponse::from(store));
         }
 
-        let store = self
-            .stores
-            .update_store(&store, changes, Utc::now())
-            .await?;
+        let old_value = store_audit_value(&store);
+        let now = Utc::now();
+        let store = if let Some(audit) = &self.audit {
+            let tx = audit.begin().await?;
+            let store = self
+                .stores
+                .update_store_in(&tx, &store, changes, now)
+                .await?;
+            audit
+                .record_update(
+                    &tx,
+                    "stores",
+                    store.id,
+                    actor_user_id,
+                    old_value,
+                    store_audit_value(&store),
+                    now,
+                )
+                .await?;
+            tx.commit().await.map_err(RepositoryError::from)?;
+            store
+        } else {
+            self.stores.update_store(&store, changes, now).await?
+        };
         info!(%store_id, "updated store through service");
         Ok(StoreResponse::from(store))
     }
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn disable_store(&self, store_id: Uuid) -> Result<StoreResponse, StoreError> {
+        self.disable_store_as(None, store_id).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn disable_store_as(
+        &self,
+        actor_user_id: Option<Uuid>,
+        store_id: Uuid,
+    ) -> Result<StoreResponse, StoreError> {
         let store = self
             .stores
             .find_by_id(store_id)
             .await?
             .ok_or(StoreError::StoreNotFound)?;
-        let store = self
-            .stores
-            .update_status(&store, StoreStatus::Disabled.as_str(), Utc::now())
-            .await?;
+        let old_value = store_audit_value(&store);
+        let now = Utc::now();
+        let store = if let Some(audit) = &self.audit {
+            let tx = audit.begin().await?;
+            let store = self
+                .stores
+                .update_status_in(&tx, &store, StoreStatus::Disabled.as_str(), now)
+                .await?;
+            audit
+                .record_update(
+                    &tx,
+                    "stores",
+                    store.id,
+                    actor_user_id,
+                    old_value,
+                    store_audit_value(&store),
+                    now,
+                )
+                .await?;
+            tx.commit().await.map_err(RepositoryError::from)?;
+            store
+        } else {
+            self.stores
+                .update_status(&store, StoreStatus::Disabled.as_str(), now)
+                .await?
+        };
 
         info!(%store_id, "disabled store through service");
         Ok(StoreResponse::from(store))
@@ -158,11 +266,36 @@ impl StoreService {
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn delete_store(&self, store_id: Uuid) -> Result<(), StoreError> {
-        if self.stores.find_by_id(store_id).await?.is_none() {
-            return Err(StoreError::StoreNotFound);
-        }
+        self.delete_store_as(None, store_id).await
+    }
 
-        let deleted = self.stores.delete_by_id(store_id).await?;
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn delete_store_as(
+        &self,
+        actor_user_id: Option<Uuid>,
+        store_id: Uuid,
+    ) -> Result<(), StoreError> {
+        let store = self
+            .stores
+            .find_by_id(store_id)
+            .await?
+            .ok_or(StoreError::StoreNotFound)?;
+        let old_value = store_audit_value(&store);
+
+        let deleted = if let Some(audit) = &self.audit {
+            let now = Utc::now();
+            let tx = audit.begin().await?;
+            let deleted = self.stores.delete_by_id_in(&tx, store_id).await?;
+            if deleted {
+                audit
+                    .record_delete(&tx, "stores", store_id, actor_user_id, old_value, now)
+                    .await?;
+            }
+            tx.commit().await.map_err(RepositoryError::from)?;
+            deleted
+        } else {
+            self.stores.delete_by_id(store_id).await?
+        };
         if !deleted {
             warn!(%store_id, "store disappeared before delete completed");
             return Err(StoreError::StoreNotFound);
@@ -179,6 +312,17 @@ impl StoreService {
 
         Ok(())
     }
+}
+
+fn store_audit_value(store: &stores::Model) -> Value {
+    json!({
+        "id": store.id,
+        "name": store.name,
+        "system_id": store.system_id,
+        "status": store.status,
+        "created_at": store.created_at,
+        "updated_at": store.updated_at,
+    })
 }
 
 #[derive(Debug, Error)]

@@ -1,5 +1,6 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use sea_orm::entity::prelude::Decimal;
+use serde_json::{Value, json};
 use std::{collections::HashMap, str::FromStr};
 use thiserror::Error;
 use tracing::{debug, info, warn};
@@ -15,7 +16,10 @@ use crate::{
         UpdateSalesRecordRequest, parse_collaboration_type, parse_customer_type, parse_deal_status,
         parse_deal_type, parse_status,
     },
-    entities::{product_category, sales_record_operation_counts, sales_records},
+    entities::{
+        product_category, sales_record_operation_counts, sales_record_operation_usages,
+        sales_records,
+    },
     repositories::{
         RepositoryError,
         customers::CustomerRepository,
@@ -30,6 +34,7 @@ use crate::{
         systems::SystemRepository,
         users::UserRepository,
     },
+    services::audit::AuditService,
 };
 
 const DEFAULT_PAGE_NUMBER: u64 = 1;
@@ -47,6 +52,7 @@ pub struct SalesRecordService {
     stores: StoreRepository,
     categories: ProductCategoryRepository,
     users: UserRepository,
+    audit: Option<AuditService>,
 }
 
 impl SalesRecordService {
@@ -67,12 +73,44 @@ impl SalesRecordService {
             stores,
             categories,
             users,
+            audit: None,
+        }
+    }
+
+    pub fn with_audit(
+        sales_records: SalesRecordRepository,
+        customers: CustomerRepository,
+        departments: DepartmentRepository,
+        systems: SystemRepository,
+        stores: StoreRepository,
+        categories: ProductCategoryRepository,
+        users: UserRepository,
+        audit: AuditService,
+    ) -> Self {
+        Self {
+            sales_records,
+            customers,
+            departments,
+            systems,
+            stores,
+            categories,
+            users,
+            audit: Some(audit),
         }
     }
 
     #[tracing::instrument(level = "info", skip(self, request))]
     pub async fn create_sales_record_batch(
         &self,
+        request: CreateSalesRecordBatchRequest,
+    ) -> Result<CreateSalesRecordBatchResponse, SalesRecordError> {
+        self.create_sales_record_batch_as(None, request).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, request))]
+    pub async fn create_sales_record_batch_as(
+        &self,
+        actor_user_id: Option<Uuid>,
         request: CreateSalesRecordBatchRequest,
     ) -> Result<CreateSalesRecordBatchResponse, SalesRecordError> {
         if request.records.is_empty() {
@@ -94,9 +132,22 @@ impl SalesRecordService {
                 .sales_records
                 .insert_sales_record(&tx, record, now)
                 .await?;
+            if let Some(audit) = &self.audit {
+                audit
+                    .record_create(
+                        &tx,
+                        "sales_records",
+                        record.id,
+                        actor_user_id,
+                        sales_record_audit_value(&record),
+                        now,
+                    )
+                    .await?;
+            }
             let count = match operation_total_count {
-                Some(total_count) => Some(
-                    self.sales_records
+                Some(total_count) => {
+                    let count = self
+                        .sales_records
                         .insert_operation_count(
                             &tx,
                             NewOperationCount {
@@ -107,8 +158,21 @@ impl SalesRecordService {
                             },
                             now,
                         )
-                        .await?,
-                ),
+                        .await?;
+                    if let Some(audit) = &self.audit {
+                        audit
+                            .record_create(
+                                &tx,
+                                "sales_record_operation_counts",
+                                count.sales_record_id,
+                                actor_user_id,
+                                operation_count_audit_value(&count),
+                                now,
+                            )
+                            .await?;
+                    }
+                    Some(count)
+                }
                 None => None,
             };
             created.push(SalesRecordResponse::from_model(record, count));
@@ -191,6 +255,17 @@ impl SalesRecordService {
         sales_record_id: Uuid,
         request: UpdateSalesRecordRequest,
     ) -> Result<SalesRecordResponse, SalesRecordError> {
+        self.update_sales_record_as(None, sales_record_id, request)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, request))]
+    pub async fn update_sales_record_as(
+        &self,
+        actor_user_id: Option<Uuid>,
+        sales_record_id: Uuid,
+        request: UpdateSalesRecordRequest,
+    ) -> Result<SalesRecordResponse, SalesRecordError> {
         let record = self
             .sales_records
             .find_sales_record_by_id(sales_record_id)
@@ -206,10 +281,32 @@ impl SalesRecordService {
             return self.sales_record_response(record).await;
         }
 
-        let record = self
-            .sales_records
-            .update_sales_record(&self.sales_records.db, &record, changes, Utc::now())
-            .await?;
+        let old_value = sales_record_audit_value(&record);
+        let now = Utc::now();
+        let record = if let Some(audit) = &self.audit {
+            let tx = self.sales_records.begin().await?;
+            let record = self
+                .sales_records
+                .update_sales_record(&tx, &record, changes, now)
+                .await?;
+            audit
+                .record_update(
+                    &tx,
+                    "sales_records",
+                    record.id,
+                    actor_user_id,
+                    old_value,
+                    sales_record_audit_value(&record),
+                    now,
+                )
+                .await?;
+            tx.commit().await.map_err(RepositoryError::from)?;
+            record
+        } else {
+            self.sales_records
+                .update_sales_record(&self.sales_records.db, &record, changes, now)
+                .await?
+        };
         info!(%sales_record_id, "updated sales record through service");
         self.sales_record_response(record).await
     }
@@ -217,6 +314,15 @@ impl SalesRecordService {
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn void_sales_record(
         &self,
+        sales_record_id: Uuid,
+    ) -> Result<SalesRecordResponse, SalesRecordError> {
+        self.void_sales_record_as(None, sales_record_id).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn void_sales_record_as(
+        &self,
+        actor_user_id: Option<Uuid>,
         sales_record_id: Uuid,
     ) -> Result<SalesRecordResponse, SalesRecordError> {
         let now = Utc::now();
@@ -233,16 +339,32 @@ impl SalesRecordService {
         }
         self.ensure_no_active_usages(&tx, sales_record_id).await?;
 
+        let old_record_value = sales_record_audit_value(&record);
         let record = self
             .sales_records
             .update_sales_record_status(&tx, &record, "voided", now)
             .await?;
+        if let Some(audit) = &self.audit {
+            audit
+                .record_update(
+                    &tx,
+                    "sales_records",
+                    record.id,
+                    actor_user_id,
+                    old_record_value,
+                    sales_record_audit_value(&record),
+                    now,
+                )
+                .await?;
+        }
         if let Some(count) = self
             .sales_records
             .find_operation_count_for_update(&tx, sales_record_id)
             .await?
         {
-            self.sales_records
+            let old_count_value = operation_count_audit_value(&count);
+            let count = self
+                .sales_records
                 .update_operation_count(
                     &tx,
                     &count,
@@ -253,6 +375,19 @@ impl SalesRecordService {
                     now,
                 )
                 .await?;
+            if let Some(audit) = &self.audit {
+                audit
+                    .record_update(
+                        &tx,
+                        "sales_record_operation_counts",
+                        count.sales_record_id,
+                        actor_user_id,
+                        old_count_value,
+                        operation_count_audit_value(&count),
+                        now,
+                    )
+                    .await?;
+            }
         }
 
         tx.commit().await.map_err(RepositoryError::from)?;
@@ -262,12 +397,29 @@ impl SalesRecordService {
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn delete_sales_record(&self, sales_record_id: Uuid) -> Result<(), SalesRecordError> {
+        self.delete_sales_record_as(None, sales_record_id).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn delete_sales_record_as(
+        &self,
+        actor_user_id: Option<Uuid>,
+        sales_record_id: Uuid,
+    ) -> Result<(), SalesRecordError> {
+        let now = Utc::now();
         let tx = self.sales_records.begin().await?;
-        self.sales_records
+        let record = self
+            .sales_records
             .find_sales_record_by_id_for_update(&tx, sales_record_id)
             .await?
             .ok_or(SalesRecordError::SalesRecordNotFound)?;
         self.ensure_no_active_usages(&tx, sales_record_id).await?;
+        let count = self
+            .sales_records
+            .find_operation_count_for_update(&tx, sales_record_id)
+            .await?;
+        let old_record_value = sales_record_audit_value(&record);
+        let old_count_value = count.as_ref().map(operation_count_audit_value);
 
         let deleted = self
             .sales_records
@@ -275,6 +427,30 @@ impl SalesRecordService {
             .await?;
         if !deleted {
             return Err(SalesRecordError::SalesRecordNotFound);
+        }
+        if let Some(audit) = &self.audit {
+            if let Some(old_count_value) = old_count_value {
+                audit
+                    .record_delete(
+                        &tx,
+                        "sales_record_operation_counts",
+                        sales_record_id,
+                        actor_user_id,
+                        old_count_value,
+                        now,
+                    )
+                    .await?;
+            }
+            audit
+                .record_delete(
+                    &tx,
+                    "sales_records",
+                    sales_record_id,
+                    actor_user_id,
+                    old_record_value,
+                    now,
+                )
+                .await?;
         }
 
         tx.commit().await.map_err(RepositoryError::from)?;
@@ -340,6 +516,17 @@ impl SalesRecordService {
         sales_record_id: Uuid,
         request: UpdateOperationCountRequest,
     ) -> Result<OperationCountResponse, SalesRecordError> {
+        self.update_operation_count_as(None, sales_record_id, request)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, request))]
+    pub async fn update_operation_count_as(
+        &self,
+        actor_user_id: Option<Uuid>,
+        sales_record_id: Uuid,
+        request: UpdateOperationCountRequest,
+    ) -> Result<OperationCountResponse, SalesRecordError> {
         validate_positive_count("total_count", request.total_count)?;
         let now = Utc::now();
         let tx = self.sales_records.begin().await?;
@@ -363,6 +550,7 @@ impl SalesRecordService {
             return Err(SalesRecordError::OperationCountBelowUsed);
         }
 
+        let old_value = operation_count_audit_value(&count);
         let count = self
             .sales_records
             .update_operation_count(
@@ -375,6 +563,19 @@ impl SalesRecordService {
                 now,
             )
             .await?;
+        if let Some(audit) = &self.audit {
+            audit
+                .record_update(
+                    &tx,
+                    "sales_record_operation_counts",
+                    count.sales_record_id,
+                    actor_user_id,
+                    old_value,
+                    operation_count_audit_value(&count),
+                    now,
+                )
+                .await?;
+        }
         tx.commit().await.map_err(RepositoryError::from)?;
         info!(%sales_record_id, "updated operation count through service");
         Ok(OperationCountResponse::from(count))
@@ -441,6 +642,15 @@ impl SalesRecordService {
         &self,
         request: CreateOperationUsageRequest,
     ) -> Result<OperationUsageResponse, SalesRecordError> {
+        self.create_operation_usage_as(None, request).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, request))]
+    pub async fn create_operation_usage_as(
+        &self,
+        actor_user_id: Option<Uuid>,
+        request: CreateOperationUsageRequest,
+    ) -> Result<OperationUsageResponse, SalesRecordError> {
         validate_positive_count("operation_count", request.operation_count)?;
         self.ensure_active_user("operator_user_id", request.operator_user_id)
             .await?;
@@ -457,9 +667,23 @@ impl SalesRecordService {
             .find_operation_count_for_update(&tx, request.sales_record_id)
             .await?
             .ok_or(SalesRecordError::OperationCountNotFound)?;
+        let old_count_value = operation_count_audit_value(&count);
         let count = self
             .apply_usage_delta(&tx, &count, request.operation_count, now)
             .await?;
+        if let Some(audit) = &self.audit {
+            audit
+                .record_update(
+                    &tx,
+                    "sales_record_operation_counts",
+                    count.sales_record_id,
+                    actor_user_id,
+                    old_count_value,
+                    operation_count_audit_value(&count),
+                    now,
+                )
+                .await?;
+        }
 
         let usage = self
             .sales_records
@@ -477,6 +701,18 @@ impl SalesRecordService {
                 now,
             )
             .await?;
+        if let Some(audit) = &self.audit {
+            audit
+                .record_create(
+                    &tx,
+                    "sales_record_operation_usages",
+                    usage.id,
+                    actor_user_id,
+                    operation_usage_audit_value(&usage),
+                    now,
+                )
+                .await?;
+        }
         tx.commit().await.map_err(RepositoryError::from)?;
         info!(
             operation_usage_id = %usage.id,
@@ -490,6 +726,17 @@ impl SalesRecordService {
     #[tracing::instrument(level = "info", skip(self, request))]
     pub async fn update_operation_usage(
         &self,
+        usage_id: Uuid,
+        request: UpdateOperationUsageRequest,
+    ) -> Result<OperationUsageResponse, SalesRecordError> {
+        self.update_operation_usage_as(None, usage_id, request)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, request))]
+    pub async fn update_operation_usage_as(
+        &self,
+        actor_user_id: Option<Uuid>,
         usage_id: Uuid,
         request: UpdateOperationUsageRequest,
     ) -> Result<OperationUsageResponse, SalesRecordError> {
@@ -518,6 +765,7 @@ impl SalesRecordService {
             return Ok(OperationUsageResponse::from(usage));
         }
 
+        let old_usage_value = operation_usage_audit_value(&usage);
         self.ensure_active_sales_record_for_usage(&tx, usage.sales_record_id)
             .await?;
         if let Some(new_count) = changes.operation_count {
@@ -528,7 +776,21 @@ impl SalesRecordService {
                     .find_operation_count_for_update(&tx, usage.sales_record_id)
                     .await?
                     .ok_or(SalesRecordError::OperationCountNotFound)?;
-                self.apply_usage_delta(&tx, &count, delta, now).await?;
+                let old_count_value = operation_count_audit_value(&count);
+                let count = self.apply_usage_delta(&tx, &count, delta, now).await?;
+                if let Some(audit) = &self.audit {
+                    audit
+                        .record_update(
+                            &tx,
+                            "sales_record_operation_counts",
+                            count.sales_record_id,
+                            actor_user_id,
+                            old_count_value,
+                            operation_count_audit_value(&count),
+                            now,
+                        )
+                        .await?;
+                }
             }
         }
 
@@ -536,6 +798,19 @@ impl SalesRecordService {
             .sales_records
             .update_operation_usage(&tx, &usage, changes, now)
             .await?;
+        if let Some(audit) = &self.audit {
+            audit
+                .record_update(
+                    &tx,
+                    "sales_record_operation_usages",
+                    usage.id,
+                    actor_user_id,
+                    old_usage_value,
+                    operation_usage_audit_value(&usage),
+                    now,
+                )
+                .await?;
+        }
         tx.commit().await.map_err(RepositoryError::from)?;
         info!(%usage_id, "updated operation usage through service");
         Ok(OperationUsageResponse::from(usage))
@@ -544,6 +819,15 @@ impl SalesRecordService {
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn void_operation_usage(
         &self,
+        usage_id: Uuid,
+    ) -> Result<OperationUsageResponse, SalesRecordError> {
+        self.void_operation_usage_as(None, usage_id).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn void_operation_usage_as(
+        &self,
+        actor_user_id: Option<Uuid>,
         usage_id: Uuid,
     ) -> Result<OperationUsageResponse, SalesRecordError> {
         let now = Utc::now();
@@ -558,13 +842,29 @@ impl SalesRecordService {
             return Ok(OperationUsageResponse::from(usage));
         }
 
+        let old_usage_value = operation_usage_audit_value(&usage);
         let count = self
             .sales_records
             .find_operation_count_for_update(&tx, usage.sales_record_id)
             .await?
             .ok_or(SalesRecordError::OperationCountNotFound)?;
-        self.apply_usage_delta(&tx, &count, -usage.operation_count, now)
+        let old_count_value = operation_count_audit_value(&count);
+        let count = self
+            .apply_usage_delta(&tx, &count, -usage.operation_count, now)
             .await?;
+        if let Some(audit) = &self.audit {
+            audit
+                .record_update(
+                    &tx,
+                    "sales_record_operation_counts",
+                    count.sales_record_id,
+                    actor_user_id,
+                    old_count_value,
+                    operation_count_audit_value(&count),
+                    now,
+                )
+                .await?;
+        }
         let usage = self
             .sales_records
             .update_operation_usage(
@@ -577,6 +877,19 @@ impl SalesRecordService {
                 now,
             )
             .await?;
+        if let Some(audit) = &self.audit {
+            audit
+                .record_update(
+                    &tx,
+                    "sales_record_operation_usages",
+                    usage.id,
+                    actor_user_id,
+                    old_usage_value,
+                    operation_usage_audit_value(&usage),
+                    now,
+                )
+                .await?;
+        }
         tx.commit().await.map_err(RepositoryError::from)?;
         info!(%usage_id, "voided operation usage through service");
         Ok(OperationUsageResponse::from(usage))
@@ -584,6 +897,15 @@ impl SalesRecordService {
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn delete_operation_usage(&self, usage_id: Uuid) -> Result<(), SalesRecordError> {
+        self.delete_operation_usage_as(None, usage_id).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn delete_operation_usage_as(
+        &self,
+        actor_user_id: Option<Uuid>,
+        usage_id: Uuid,
+    ) -> Result<(), SalesRecordError> {
         let now = Utc::now();
         let tx = self.sales_records.begin().await?;
         let usage = self
@@ -591,14 +913,30 @@ impl SalesRecordService {
             .find_operation_usage_by_id_for_update(&tx, usage_id)
             .await?
             .ok_or(SalesRecordError::OperationUsageNotFound)?;
+        let old_usage_value = operation_usage_audit_value(&usage);
         if usage.status == "active" {
             let count = self
                 .sales_records
                 .find_operation_count_for_update(&tx, usage.sales_record_id)
                 .await?
                 .ok_or(SalesRecordError::OperationCountNotFound)?;
-            self.apply_usage_delta(&tx, &count, -usage.operation_count, now)
+            let old_count_value = operation_count_audit_value(&count);
+            let count = self
+                .apply_usage_delta(&tx, &count, -usage.operation_count, now)
                 .await?;
+            if let Some(audit) = &self.audit {
+                audit
+                    .record_update(
+                        &tx,
+                        "sales_record_operation_counts",
+                        count.sales_record_id,
+                        actor_user_id,
+                        old_count_value,
+                        operation_count_audit_value(&count),
+                        now,
+                    )
+                    .await?;
+            }
         }
         let deleted = self
             .sales_records
@@ -606,6 +944,18 @@ impl SalesRecordService {
             .await?;
         if !deleted {
             return Err(SalesRecordError::OperationUsageNotFound);
+        }
+        if let Some(audit) = &self.audit {
+            audit
+                .record_delete(
+                    &tx,
+                    "sales_record_operation_usages",
+                    usage_id,
+                    actor_user_id,
+                    old_usage_value,
+                    now,
+                )
+                .await?;
         }
 
         tx.commit().await.map_err(RepositoryError::from)?;
@@ -1034,6 +1384,74 @@ impl SalesRecordService {
     }
 }
 
+fn sales_record_audit_value(record: &sales_records::Model) -> Value {
+    json!({
+        "id": record.id,
+        "record_group_id": record.record_group_id,
+        "customer_id": record.customer_id,
+        "department_id": record.department_id,
+        "sale_date": record.sale_date,
+        "deal_status": record.deal_status,
+        "customer_type": record.customer_type,
+        "deal_type": record.deal_type,
+        "content_category_id": record.content_category_id,
+        "handler_user_id": record.handler_user_id,
+        "paid_amount": format!("{:.2}", record.paid_amount),
+        "unpaid_amount": format!("{:.2}", record.unpaid_amount),
+        "system_id": record.system_id,
+        "store_id": record.store_id,
+        "collaboration_type": record.collaboration_type,
+        "expert_user_id": record.expert_user_id,
+        "expert_department_id": record.expert_department_id,
+        "consultant_user_id": record.consultant_user_id,
+        "consultant_department_id": record.consultant_department_id,
+        "doctor_user_id": record.doctor_user_id,
+        "status": record.status,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    })
+}
+
+fn operation_count_audit_value(count: &sales_record_operation_counts::Model) -> Value {
+    json!({
+        "sales_record_id": count.sales_record_id,
+        "total_count": count.total_count,
+        "used_count": count.used_count,
+        "remaining_count": count.total_count - count.used_count,
+        "status": count.status,
+        "created_at": count.created_at,
+        "updated_at": count.updated_at,
+    })
+}
+
+fn operation_usage_audit_value(usage: &sales_record_operation_usages::Model) -> Value {
+    json!({
+        "id": usage.id,
+        "sales_record_id": usage.sales_record_id,
+        "operated_at": usage.operated_at,
+        "operator_user_id": usage.operator_user_id,
+        "doctor_user_id": usage.doctor_user_id,
+        "operation_count": usage.operation_count,
+        "remark": text_summary(usage.remark.as_deref()),
+        "status": usage.status,
+        "created_at": usage.created_at,
+        "updated_at": usage.updated_at,
+    })
+}
+
+fn text_summary(value: Option<&str>) -> Value {
+    match value {
+        Some(value) => json!({
+            "present": true,
+            "length": value.chars().count(),
+        }),
+        None => json!({
+            "present": false,
+            "length": 0,
+        }),
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct SalesRecordReferenceInput {
     customer_id: Uuid,
@@ -1394,16 +1812,20 @@ mod tests {
             CreateOperationUsageRequest, CreateSalesRecordRequest, ListOperationCountsQuery,
             ListOperationUsagesQuery, ListSalesRecordsQuery, UpdateOperationCountRequest,
         },
+        entities::events,
         repositories::{
             customers::{CustomerRepository, NewCustomer},
             departments::DepartmentRepository,
+            events::EventRepository,
             product_categories::ProductCategoryRepository,
             stores::{NewStore, StoreRepository},
             systems::{NewSystem, SystemRepository},
             users::UserRepository,
         },
+        services::audit::AuditService,
     };
     use chrono::{TimeZone, Utc};
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -1414,6 +1836,7 @@ mod tests {
         stores: StoreRepository,
         customers: CustomerRepository,
         categories: ProductCategoryRepository,
+        events: EventRepository,
         service: SalesRecordService,
     }
 
@@ -1436,6 +1859,7 @@ mod tests {
             let stores = StoreRepository::new(db.clone());
             let customers = CustomerRepository::new(db.clone());
             let categories = ProductCategoryRepository::new(db.clone());
+            let events = EventRepository::new(db.clone());
             let sales_records = SalesRecordRepository::new(db);
             let service = SalesRecordService::new(
                 sales_records,
@@ -1454,6 +1878,42 @@ mod tests {
                 stores,
                 customers,
                 categories,
+                events,
+                service,
+            }
+        }
+
+        async fn new_with_audit() -> Self {
+            let db = db::connect_and_migrate(&sqlite_memory_config())
+                .await
+                .expect("sqlite memory database should initialize");
+            let users = UserRepository::new(db.clone());
+            let departments = DepartmentRepository::new(db.clone());
+            let systems = SystemRepository::new(db.clone());
+            let stores = StoreRepository::new(db.clone());
+            let customers = CustomerRepository::new(db.clone());
+            let categories = ProductCategoryRepository::new(db.clone());
+            let events = EventRepository::new(db.clone());
+            let sales_records = SalesRecordRepository::new(db.clone());
+            let service = SalesRecordService::with_audit(
+                sales_records,
+                customers.clone(),
+                departments.clone(),
+                systems.clone(),
+                stores.clone(),
+                categories.clone(),
+                users.clone(),
+                AuditService::new(EventRepository::new(db)),
+            );
+
+            Self {
+                users,
+                departments,
+                systems,
+                stores,
+                customers,
+                categories,
+                events,
                 service,
             }
         }
@@ -2003,5 +2463,77 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[tokio::test]
+    async fn operation_usage_audit_includes_linked_count_update() {
+        let h = Harness::new_with_audit().await;
+        let actor = h.user("actor").await;
+        let (department_id, system_id, store_id) = h.scope("scope-a").await;
+        let customer_id = h.customer(actor, department_id, system_id, store_id).await;
+        let category_id = h.category(true).await;
+        let record = h
+            .service
+            .create_sales_record_batch_as(
+                Some(actor),
+                CreateSalesRecordBatchRequest {
+                    records: vec![sales_request(
+                        customer_id,
+                        department_id,
+                        system_id,
+                        store_id,
+                        category_id,
+                        actor,
+                        Some(3),
+                    )],
+                },
+            )
+            .await
+            .expect("sales record should be created")
+            .sales_records[0]
+            .id;
+
+        let usage = h
+            .service
+            .create_operation_usage_as(
+                Some(actor),
+                CreateOperationUsageRequest {
+                    sales_record_id: record,
+                    operated_at: Utc.with_ymd_and_hms(2026, 7, 8, 9, 0, 0).unwrap(),
+                    operator_user_id: actor,
+                    doctor_user_id: None,
+                    operation_count: 1,
+                    remark: Some("sensitive usage remark".to_string()),
+                },
+            )
+            .await
+            .expect("usage should be created");
+
+        let count_events = events::Entity::find()
+            .filter(events::Column::ResourceType.eq("sales_record_operation_counts"))
+            .filter(events::Column::ResourceId.eq(record))
+            .all(&h.events.db)
+            .await
+            .expect("count audit events should load");
+        let usage_event = events::Entity::find()
+            .filter(events::Column::ResourceType.eq("sales_record_operation_usages"))
+            .filter(events::Column::ResourceId.eq(usage.id))
+            .one(&h.events.db)
+            .await
+            .expect("usage audit event should load")
+            .expect("usage audit event should exist");
+        let usage_payload =
+            serde_json::to_string(&usage_event.new_value).expect("payload should serialize");
+
+        assert!(
+            count_events
+                .iter()
+                .any(|event| event.new_value.as_ref().and_then(|value| {
+                    value
+                        .pointer("/used_count")
+                        .and_then(serde_json::Value::as_i64)
+                }) == Some(1))
+        );
+        assert!(!usage_payload.contains("sensitive usage remark"));
     }
 }

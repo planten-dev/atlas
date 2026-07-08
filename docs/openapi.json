@@ -3,7 +3,7 @@
   "info": {
     "title": "Atlas API",
     "version": "0.1.0",
-    "description": "Atlas backend API. Authentication uses a server-side session stored in an HttpOnly cookie named atlas_session. JWT is not used, and session ids are not returned in response bodies."
+    "description": "Atlas backend API. Authentication uses a server-side session stored in an HttpOnly cookie named atlas_session. JWT is not used, and session ids are not returned in response bodies. Successful business, management, and authentication lifecycle mutations write sanitized audit events with approval_status=0 (none) in the same transaction; events table maintenance and auth_sessions.last_seen_at heartbeat updates are not audited."
   },
   "paths": {
     "/health": {
