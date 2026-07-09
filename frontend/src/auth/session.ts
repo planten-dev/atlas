@@ -27,6 +27,16 @@ export function login(): void {
   window.location.href = '/api/v1/auth/login/dingtalk'
 }
 
+/** 钉钉 H5 免登:JSAPI authCode 换会话 cookie(失败不触发 401 跳转,由登录页兜底)。 */
+export async function loginWithDingTalkH5(authCode: string) {
+  return unwrap(
+    await client.POST('/api/v1/auth/login/dingtalk/h5', {
+      body: { authCode },
+      headers: { [SKIP_AUTH_REDIRECT_HEADER]: '1' },
+    }),
+  )
+}
+
 export async function logout(): Promise<void> {
   await client.POST('/api/v1/auth/logout')
 }

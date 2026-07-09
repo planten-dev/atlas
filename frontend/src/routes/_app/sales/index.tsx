@@ -18,7 +18,6 @@ import { DataTableToolbar } from '@/components/data-table/toolbar'
 import { UserName } from '@/components/UserName'
 import { SystemPicker } from '@/components/pickers/SystemPicker'
 import { StorePicker } from '@/components/pickers/StorePicker'
-import { CategoryPicker } from '@/components/pickers/CategoryPicker'
 import { UserPicker } from '@/components/pickers/UserPicker'
 import { CustomerPicker } from '@/components/pickers/CustomerPicker'
 import { DatePicker } from '@/components/pickers/DatePicker'
@@ -26,25 +25,21 @@ import { Guard } from '@/auth/PermissionProvider'
 import { requirePerm } from '@/auth/route-guard'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { salesListOptions, type SalesRecordResponse } from '@/hooks/useSales'
-import { activeCategoriesOptions } from '@/hooks/useCategories'
 import { SalesFormDialog } from './-form/SalesFormDialog'
 import { customerNameCell } from './-form/cells'
 import { formatDate } from '@/lib/date'
 import { formatAmount, sumAmounts } from '@/lib/money'
-import { RECORD_STATUS_LABELS } from '@/lib/labels'
+import { RECORD_STATUS_LABELS, RECORD_TYPE_LABELS } from '@/lib/labels'
 
-/** 11 个筛选参数全部进 URL(设计 §7);category 为业务目录预设(按类别名运行时解析)。 */
 const searchSchema = z.object({
   status_filter: z.enum(['active', 'voided']).optional(),
-  record_group_id: z.string().optional(),
+  record_type: z.enum(['sale', 'service']).optional(),
   customer_id: z.string().optional(),
   system_id: z.string().optional(),
   store_id: z.string().optional(),
   handler_user_id: z.string().optional(),
-  content_category_id: z.string().optional(),
-  category: z.string().optional(),
-  sale_date_from: z.string().optional(),
-  sale_date_to: z.string().optional(),
+  record_date_from: z.string().optional(),
+  record_date_to: z.string().optional(),
   page_number: z.number().int().min(1).default(1),
   page_size: z.number().int().min(1).max(200).default(20),
 })
@@ -60,9 +55,18 @@ export const Route = createFileRoute('/_app/sales/')({
 
 const columns: ColumnDef<SalesRecordResponse>[] = [
   {
-    accessorKey: 'sale_date',
+    accessorKey: 'record_date',
     header: '成交日期',
-    cell: ({ row }) => formatDate(row.original.sale_date),
+    cell: ({ row }) => formatDate(row.original.record_date),
+  },
+  {
+    accessorKey: 'record_type',
+    header: '类型',
+    cell: ({ row }) => (
+      <Badge variant="outline">
+        {RECORD_TYPE_LABELS[row.original.record_type] ?? row.original.record_type}
+      </Badge>
+    ),
   },
   {
     accessorKey: 'customer_id',
@@ -75,6 +79,14 @@ const columns: ColumnDef<SalesRecordResponse>[] = [
     cell: ({ row }) => <UserName userId={row.original.handler_user_id} />,
   },
   {
+    accessorKey: 'receivable_amount',
+    header: '应收',
+    meta: { align: 'right' },
+    cell: ({ row }) => (
+      <span className="tabular-nums">{formatAmount(row.original.receivable_amount)}</span>
+    ),
+  },
+  {
     accessorKey: 'paid_amount',
     header: '已收',
     meta: { align: 'right' },
@@ -83,11 +95,11 @@ const columns: ColumnDef<SalesRecordResponse>[] = [
     ),
   },
   {
-    accessorKey: 'unpaid_amount',
+    accessorKey: 'outstanding_amount',
     header: '未收',
     meta: { align: 'right' },
     cell: ({ row }) => (
-      <span className="tabular-nums">{formatAmount(row.original.unpaid_amount)}</span>
+      <span className="tabular-nums">{formatAmount(row.original.outstanding_amount)}</span>
     ),
   },
   {
@@ -107,19 +119,7 @@ function SalesListPage() {
   const navigate = useNavigate({ from: Route.fullPath })
   const isMobile = useIsMobile()
   const [createOpen, setCreateOpen] = useState(false)
-  // 业务目录 ?category=<类别名> 预设:运行时按名解析为 content_category_id
-  const { data: categories } = useQuery(activeCategoriesOptions)
-  const presetCategoryId = search.category
-    ? categories?.find((c) => c.category_name === search.category)?.id
-    : undefined
-  const { category: _category, ...apiSearch } = search
-  void _category
-  const query = useQuery(
-    salesListOptions({
-      ...apiSearch,
-      content_category_id: search.content_category_id ?? presetCategoryId,
-    }),
-  )
+  const query = useQuery(salesListOptions(search))
   const rows = query.data?.items ?? []
 
   const patchSearch = (patch: Partial<SalesSearch>) => {
@@ -136,12 +136,13 @@ function SalesListPage() {
         exportConfig={{
           filename: `销售记录-${new Date().toISOString().slice(0, 10)}`,
           columns: [
-            { header: '成交日期', value: (r: SalesRecordResponse) => r.sale_date },
+            { header: '成交日期', value: (r: SalesRecordResponse) => r.record_date },
+            { header: '类型', value: (r) => RECORD_TYPE_LABELS[r.record_type] ?? r.record_type },
             { header: '客户ID', value: (r) => r.customer_id },
+            { header: '应收金额', value: (r) => formatAmount(r.receivable_amount) },
             { header: '已收金额', value: (r) => formatAmount(r.paid_amount) },
-            { header: '未收金额', value: (r) => formatAmount(r.unpaid_amount) },
+            { header: '未收金额', value: (r) => formatAmount(r.outstanding_amount) },
             { header: '状态', value: (r) => RECORD_STATUS_LABELS[r.status] ?? r.status },
-            { header: '批次', value: (r) => r.record_group_id },
           ],
           rows,
         }}
@@ -184,23 +185,40 @@ function SalesListPage() {
             onChange={(v) => patchSearch({ handler_user_id: v })}
             placeholder="按处理人筛选"
           />
-          <CategoryPicker
-            value={search.content_category_id}
-            onChange={(v) => patchSearch({ content_category_id: v })}
-            placeholder="按内容类型筛选"
-          />
+          <Select
+            items={[
+              { value: 'all', label: '全部类型' },
+              { value: 'sale', label: '销售' },
+              { value: 'service', label: '服务' },
+            ]}
+            value={search.record_type ?? 'all'}
+            onValueChange={(value) =>
+              patchSearch({
+                record_type: value === 'all' ? undefined : (value as 'sale' | 'service'),
+              })
+            }
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="类型" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部类型</SelectItem>
+              <SelectItem value="sale">销售</SelectItem>
+              <SelectItem value="service">服务</SelectItem>
+            </SelectContent>
+          </Select>
           <div className="flex min-w-0 items-center gap-1">
             <DatePicker
-              value={search.sale_date_from}
-              onChange={(v) => patchSearch({ sale_date_from: v })}
+              value={search.record_date_from}
+              onChange={(v) => patchSearch({ record_date_from: v })}
               placeholder="成交日期起"
               aria-label="成交日期起"
               className="min-w-0 flex-1"
             />
             <span className="shrink-0 text-muted-foreground">~</span>
             <DatePicker
-              value={search.sale_date_to}
-              onChange={(v) => patchSearch({ sale_date_to: v })}
+              value={search.record_date_to}
+              onChange={(v) => patchSearch({ record_date_to: v })}
               placeholder="成交日期止"
               aria-label="成交日期止"
               className="min-w-0 flex-1"
@@ -231,19 +249,6 @@ function SalesListPage() {
         </div>
       </DataTableToolbar>
 
-      {search.record_group_id && (
-        <div className="flex items-center gap-2 rounded-md border bg-muted/50 px-3 py-2 text-sm">
-          正在查看同批次记录
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => patchSearch({ record_group_id: undefined })}
-          >
-            清除
-          </Button>
-        </div>
-      )}
-
       <DataTable
         tableId="sales"
         columns={columns}
@@ -264,8 +269,11 @@ function SalesListPage() {
 
       {rows.length > 0 && (
         <p className="text-right text-sm text-muted-foreground">
-          本页合计:已收 <span className="tabular-nums">{sumAmounts(rows.map((r) => r.paid_amount))}</span>
-          {' · '}未收 <span className="tabular-nums">{sumAmounts(rows.map((r) => r.unpaid_amount))}</span>
+          本页合计:应收{' '}
+          <span className="tabular-nums">{sumAmounts(rows.map((r) => r.receivable_amount))}</span>
+          {' · '}已收 <span className="tabular-nums">{sumAmounts(rows.map((r) => r.paid_amount))}</span>
+          {' · '}未收{' '}
+          <span className="tabular-nums">{sumAmounts(rows.map((r) => r.outstanding_amount))}</span>
         </p>
       )}
     </div>

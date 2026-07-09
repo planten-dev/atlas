@@ -208,11 +208,8 @@ impl SalesRecordService {
         self.ensure_active_user("created_by_user_id", created_by_user_id)
             .await?;
         let scope = self.customer_scope(request.customer_id).await?;
-        let customer_type = optional_enum_text(
-            "customer_type",
-            request.customer_type,
-            parse_customer_type,
-        )?;
+        let customer_type =
+            optional_enum_text("customer_type", request.customer_type, parse_customer_type)?;
         let deal_type = optional_enum_text("deal_type", request.deal_type, parse_deal_type)?;
         let remark = nullable_limited_text("remark", request.remark, MAX_REMARK_LENGTH)?;
         self.ensure_record_users(RecordUserInput {
@@ -435,7 +432,9 @@ impl SalesRecordService {
             return Err(SalesRecordError::CollectionRequiresSaleRecord);
         }
 
-        let remaining = self.sales_record_remaining_amount_in(&tx, record.id).await?;
+        let remaining = self
+            .sales_record_remaining_amount_in(&tx, record.id)
+            .await?;
         if paid_amount > remaining {
             return Err(SalesRecordError::PaymentExceedsOutstanding);
         }
@@ -571,14 +570,29 @@ impl SalesRecordService {
                 OperationCountFilters {
                     status_filter,
                     sales_record_line_id: query.sales_record_line_id,
+                    sales_record_id: query.sales_record_id,
                 },
                 page_number,
                 page_size,
             )
             .await?;
 
+        let record_ids = self
+            .record_ids_by_line_ids(counts.iter().map(|count| count.sales_record_line_id))
+            .await?;
+        let operation_counts = counts
+            .into_iter()
+            .map(|count| {
+                let record_id = record_ids
+                    .get(&count.sales_record_line_id)
+                    .copied()
+                    .ok_or(SalesRecordError::SalesRecordLineNotFound)?;
+                Ok(OperationCountResponse::from_model(count, record_id))
+            })
+            .collect::<Result<Vec<_>, SalesRecordError>>()?;
+
         Ok(ListOperationCountsResponse {
-            operation_counts: counts.into_iter().map(OperationCountResponse::from).collect(),
+            operation_counts,
             page_number,
             page_size,
             total_count,
@@ -595,7 +609,8 @@ impl SalesRecordService {
             .find_operation_count(sales_record_line_id)
             .await?
             .ok_or(SalesRecordError::OperationCountNotFound)?;
-        Ok(OperationCountResponse::from(count))
+        let record_id = self.record_id_for_line(sales_record_line_id).await?;
+        Ok(OperationCountResponse::from_model(count, record_id))
     }
 
     #[tracing::instrument(level = "info", skip(self, request))]
@@ -637,7 +652,10 @@ impl SalesRecordService {
             )
             .await?;
         tx.commit().await.map_err(RepositoryError::from)?;
-        Ok(OperationCountResponse::from(count))
+        Ok(OperationCountResponse::from_model(
+            count,
+            line.sales_record_id,
+        ))
     }
 
     #[tracing::instrument(level = "debug", skip(self, query))]
@@ -661,6 +679,7 @@ impl SalesRecordService {
                 OperationUsageFilters {
                     status_filter,
                     sales_record_line_id: query.sales_record_line_id,
+                    sales_record_id: query.sales_record_id,
                     operator_user_id: query.operator_user_id,
                     doctor_user_id: query.doctor_user_id,
                     operated_at_from: query.operated_at_from,
@@ -671,8 +690,22 @@ impl SalesRecordService {
             )
             .await?;
 
+        let record_ids = self
+            .record_ids_by_line_ids(usages.iter().map(|usage| usage.sales_record_line_id))
+            .await?;
+        let operation_usages = usages
+            .into_iter()
+            .map(|usage| {
+                let record_id = record_ids
+                    .get(&usage.sales_record_line_id)
+                    .copied()
+                    .ok_or(SalesRecordError::SalesRecordLineNotFound)?;
+                Ok(OperationUsageResponse::from_model(usage, record_id))
+            })
+            .collect::<Result<Vec<_>, SalesRecordError>>()?;
+
         Ok(ListOperationUsagesResponse {
-            operation_usages: usages.into_iter().map(OperationUsageResponse::from).collect(),
+            operation_usages,
             page_number,
             page_size,
             total_count,
@@ -689,7 +722,8 @@ impl SalesRecordService {
             .find_operation_usage_by_id(usage_id)
             .await?
             .ok_or(SalesRecordError::OperationUsageNotFound)?;
-        Ok(OperationUsageResponse::from(usage))
+        let record_id = self.record_id_for_line(usage.sales_record_line_id).await?;
+        Ok(OperationUsageResponse::from_model(usage, record_id))
     }
 
     #[tracing::instrument(level = "info", skip(self, request))]
@@ -743,7 +777,10 @@ impl SalesRecordService {
             used_count = count.used_count,
             "created operation usage through service"
         );
-        Ok(OperationUsageResponse::from(usage))
+        Ok(OperationUsageResponse::from_model(
+            usage,
+            line.sales_record_id,
+        ))
     }
 
     #[tracing::instrument(level = "info", skip(self, request))]
@@ -774,7 +811,8 @@ impl SalesRecordService {
         }
         if changes.is_empty() {
             tx.commit().await.map_err(RepositoryError::from)?;
-            return Ok(OperationUsageResponse::from(usage));
+            let record_id = self.record_id_for_line(usage.sales_record_line_id).await?;
+            return Ok(OperationUsageResponse::from_model(usage, record_id));
         }
         let line = self
             .sales_records
@@ -798,7 +836,10 @@ impl SalesRecordService {
             .update_operation_usage(&tx, &usage, changes, now)
             .await?;
         tx.commit().await.map_err(RepositoryError::from)?;
-        Ok(OperationUsageResponse::from(usage))
+        Ok(OperationUsageResponse::from_model(
+            usage,
+            line.sales_record_id,
+        ))
     }
 
     #[tracing::instrument(level = "info", skip(self))]
@@ -815,7 +856,8 @@ impl SalesRecordService {
             .ok_or(SalesRecordError::OperationUsageNotFound)?;
         if usage.status == "voided" {
             tx.commit().await.map_err(RepositoryError::from)?;
-            return Ok(OperationUsageResponse::from(usage));
+            let record_id = self.record_id_for_line(usage.sales_record_line_id).await?;
+            return Ok(OperationUsageResponse::from_model(usage, record_id));
         }
         let count = self
             .sales_records
@@ -837,7 +879,8 @@ impl SalesRecordService {
             )
             .await?;
         tx.commit().await.map_err(RepositoryError::from)?;
-        Ok(OperationUsageResponse::from(usage))
+        let record_id = self.record_id_for_line(usage.sales_record_line_id).await?;
+        Ok(OperationUsageResponse::from_model(usage, record_id))
     }
 
     #[tracing::instrument(level = "info", skip(self))]
@@ -882,7 +925,8 @@ impl SalesRecordService {
         for line in request_lines {
             let product = self.ensure_active_product(line.product_id).await?;
             let category = self.ensure_active_category(product.category_id).await?;
-            let item_name = required_limited_text("item_name", line.item_name, MAX_ITEM_NAME_LENGTH)?;
+            let item_name =
+                required_limited_text("item_name", line.item_name, MAX_ITEM_NAME_LENGTH)?;
             let receivable_amount = parse_money("receivable_amount", Some(line.receivable_amount))?;
             let remark = nullable_limited_text("remark", line.remark, MAX_REMARK_LENGTH)?;
             let operation_total_count = match record_type {
@@ -973,8 +1017,8 @@ impl SalesRecordService {
             if index == last_index {
                 draft.allocated_amount = paid_amount - allocated_total;
             } else {
-                let amount = (paid_amount * draft.allocation_ratio / Decimal::new(100, 0))
-                    .round_dp(2);
+                let amount =
+                    (paid_amount * draft.allocation_ratio / Decimal::new(100, 0)).round_dp(2);
                 draft.allocated_amount = amount;
                 allocated_total += amount;
             }
@@ -1189,7 +1233,10 @@ impl SalesRecordService {
             .sales_records
             .find_payments_by_sales_record_ids(record_ids)
             .await?;
-        let payment_ids = payments.iter().map(|payment| payment.id).collect::<Vec<_>>();
+        let payment_ids = payments
+            .iter()
+            .map(|payment| payment.id)
+            .collect::<Vec<_>>();
         let allocations = self
             .sales_records
             .find_allocations_by_payment_ids(payment_ids)
@@ -1241,7 +1288,10 @@ impl SalesRecordService {
         &self,
         payments: Vec<sales_payments::Model>,
     ) -> Result<Vec<SalesPaymentResponse>, SalesRecordError> {
-        let payment_ids = payments.iter().map(|payment| payment.id).collect::<Vec<_>>();
+        let payment_ids = payments
+            .iter()
+            .map(|payment| payment.id)
+            .collect::<Vec<_>>();
         let allocations = self
             .sales_records
             .find_allocations_by_payment_ids(payment_ids)
@@ -1279,6 +1329,34 @@ impl SalesRecordService {
             return Err(SalesRecordError::SalesRecordHasActiveUsages);
         }
         Ok(())
+    }
+
+    /// 明细行 → 所属销售记录 id(响应回显用)。
+    async fn record_id_for_line(
+        &self,
+        sales_record_line_id: Uuid,
+    ) -> Result<Uuid, SalesRecordError> {
+        let line = self
+            .sales_records
+            .find_line_by_id(sales_record_line_id)
+            .await?
+            .ok_or(SalesRecordError::SalesRecordLineNotFound)?;
+        Ok(line.sales_record_id)
+    }
+
+    async fn record_ids_by_line_ids(
+        &self,
+        line_ids: impl Iterator<Item = Uuid>,
+    ) -> Result<std::collections::HashMap<Uuid, Uuid>, SalesRecordError> {
+        let unique: Vec<Uuid> = line_ids
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        let lines = self.sales_records.find_lines_by_ids(unique).await?;
+        Ok(lines
+            .into_iter()
+            .map(|line| (line.id, line.sales_record_id))
+            .collect())
     }
 
     async fn ensure_active_line_record(
@@ -1970,7 +2048,11 @@ mod tests {
         }
     }
 
-    async fn sale_request(h: &Harness, amount: &str, paid: &str) -> (Uuid, CreateSaleRecordRequest) {
+    async fn sale_request(
+        h: &Harness,
+        amount: &str,
+        paid: &str,
+    ) -> (Uuid, CreateSaleRecordRequest) {
         let actor = h.user("actor").await;
         let guide = h.user("guide").await;
         let (system_id, store_id) = h.scope("scope-a").await;
@@ -1980,7 +2062,10 @@ mod tests {
             actor,
             CreateSaleRecordRequest {
                 customer_id,
-                record_date: Utc.with_ymd_and_hms(2026, 7, 8, 0, 0, 0).unwrap().date_naive(),
+                record_date: Utc
+                    .with_ymd_and_hms(2026, 7, 8, 0, 0, 0)
+                    .unwrap()
+                    .date_naive(),
                 customer_type: "new".to_string(),
                 deal_type: "non_salon".to_string(),
                 handler_user_id: actor,
@@ -2011,12 +2096,18 @@ mod tests {
         assert_eq!(created.outstanding_amount, "200.00");
         assert_eq!(created.lines.len(), 1);
         assert_eq!(
-            created.lines[0].operation_count.as_ref().map(|count| count.total_count),
+            created.lines[0]
+                .operation_count
+                .as_ref()
+                .map(|count| count.total_count),
             Some(3)
         );
         assert_eq!(created.payments.len(), 1);
         assert_eq!(created.payments[0].payment_type, "initial");
-        assert_eq!(created.payments[0].allocations[0].allocated_amount, "100.00");
+        assert_eq!(
+            created.payments[0].allocations[0].allocated_amount,
+            "100.00"
+        );
     }
 
     #[tokio::test]
@@ -2033,7 +2124,10 @@ mod tests {
                 actor,
                 CreateServiceRecordRequest {
                     customer_id,
-                    record_date: Utc.with_ymd_and_hms(2026, 7, 8, 0, 0, 0).unwrap().date_naive(),
+                    record_date: Utc
+                        .with_ymd_and_hms(2026, 7, 8, 0, 0, 0)
+                        .unwrap()
+                        .date_naive(),
                     customer_type: None,
                     deal_type: None,
                     handler_user_id: actor,
@@ -2164,19 +2258,21 @@ mod tests {
             })
             .await
             .expect("usage should be created");
-        assert_eq!(
-            h.service
-                .operation_count_detail(line_id)
-                .await
-                .expect("count should load")
-                .used_count,
-            2
-        );
+        assert_eq!(usage.sales_record_id, created.id);
+        let count_detail = h
+            .service
+            .operation_count_detail(line_id)
+            .await
+            .expect("count should load");
+        assert_eq!(count_detail.used_count, 2);
+        assert_eq!(count_detail.sales_record_id, created.id);
 
-        h.service
+        let voided = h
+            .service
             .void_operation_usage(usage.id)
             .await
             .expect("usage should void");
+        assert_eq!(voided.sales_record_id, created.id);
         assert_eq!(
             h.service
                 .operation_count_detail(line_id)
@@ -2184,6 +2280,66 @@ mod tests {
                 .expect("count should load")
                 .used_count,
             0
+        );
+    }
+
+    #[tokio::test]
+    async fn lists_counts_and_usages_filtered_by_sales_record_id() {
+        let h = Harness::new().await;
+        let (actor, request) = sale_request(&h, "300.00", "100.00").await;
+        let first = h
+            .service
+            .create_sale_record(actor, request.clone())
+            .await
+            .expect("first sale record should be created");
+        let second = h
+            .service
+            .create_sale_record(actor, request)
+            .await
+            .expect("second sale record should be created");
+        let operator = h.user("operator").await;
+        for record in [&first, &second] {
+            h.service
+                .create_operation_usage(CreateOperationUsageRequest {
+                    sales_record_line_id: record.lines[0].id,
+                    operated_at: Utc.with_ymd_and_hms(2026, 7, 9, 9, 0, 0).unwrap(),
+                    operator_user_id: operator,
+                    doctor_user_id: None,
+                    operation_count: 1,
+                    remark: None,
+                })
+                .await
+                .expect("usage should be created");
+        }
+
+        let counts = h
+            .service
+            .list_operation_counts(ListOperationCountsQuery {
+                sales_record_id: Some(first.id),
+                ..ListOperationCountsQuery::default()
+            })
+            .await
+            .expect("counts should list");
+        assert_eq!(counts.total_count, 1);
+        assert_eq!(counts.operation_counts[0].sales_record_id, first.id);
+        assert_eq!(
+            counts.operation_counts[0].sales_record_line_id,
+            first.lines[0].id
+        );
+
+        let usages = h
+            .service
+            .list_operation_usages(ListOperationUsagesQuery {
+                sales_record_id: Some(second.id),
+                ..ListOperationUsagesQuery::default()
+            })
+            .await
+            .expect("usages should list");
+        assert_eq!(usages.total_count, 1);
+        assert_eq!(usages.operation_usages[0].sales_record_id, second.id);
+        assert_eq!(
+            usages.operation_usages[0].sales_record_line_id,
+            second.lines[0].id
         );
     }
 }

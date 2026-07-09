@@ -181,7 +181,9 @@ fn status_code(error: &ProductError) -> StatusCode {
             RepositoryError::MissingRequiredField { .. } => StatusCode::BAD_REQUEST,
             RepositoryError::DisabledUser => StatusCode::FORBIDDEN,
         },
-        ProductError::ProductNotFound | ProductError::ProductCategoryNotFound => StatusCode::NOT_FOUND,
+        ProductError::ProductNotFound | ProductError::ProductCategoryNotFound => {
+            StatusCode::NOT_FOUND
+        }
         ProductError::ProductHasReferences => StatusCode::CONFLICT,
         ProductError::ProductCategoryDisabled
         | ProductError::MissingRequiredField { .. }
@@ -213,7 +215,8 @@ mod tests {
             sessions::SessionRepository,
             stores::{NewStore, StoreRepository},
             systems::{NewSystem, SystemRepository},
-            user_profiles::UserProfileRepository, users::UserRepository,
+            user_profiles::UserProfileRepository,
+            users::UserRepository,
         },
         services::{
             auth::AuthService, authz::AuthzService, customers::CustomerService,
@@ -583,7 +586,9 @@ mod tests {
             Some("skin line")
         );
         assert_eq!(
-            suggestions.pointer("/brand_names/0").and_then(Value::as_str),
+            suggestions
+                .pointer("/brand_names/0")
+                .and_then(Value::as_str),
             Some("atlas lab")
         );
         assert_eq!(
@@ -890,11 +895,7 @@ mod tests {
         }
     }
 
-    async fn create_sales_line_reference(
-        context: &TestContext,
-        user_id: Uuid,
-        product_id: Uuid,
-    ) {
+    async fn create_sales_line_reference(context: &TestContext, user_id: Uuid, product_id: Uuid) {
         let now = chrono::Utc::now();
         let system = context
             .systems

@@ -1,7 +1,14 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { useEffect, useState } from 'react'
+import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
+import { useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
+import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { login, meQueryOptions } from '@/auth/session'
+import { login, loginWithDingTalkH5, meQueryOptions } from '@/auth/session'
+import { fetchDingTalkAuthCode, isDingTalkWebview } from '@/auth/dingtalk'
+import { notify } from '@/lib/notify'
+
+const H5_ATTEMPT_KEY = 'atlas-dd-h5-login-attempted'
 
 export const Route = createFileRoute('/login')({
   validateSearch: z.object({
@@ -20,7 +27,35 @@ export const Route = createFileRoute('/login')({
   component: LoginPage,
 })
 
+function shouldAttemptH5Login(): boolean {
+  const corpId = import.meta.env.VITE_DINGTALK_CORP_ID as string | undefined
+  return Boolean(corpId) && isDingTalkWebview() && !sessionStorage.getItem(H5_ATTEMPT_KEY)
+}
+
 function LoginPage() {
+  const search = Route.useSearch()
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  // 钉钉容器内自动免登:挂载时一次性判定;sessionStorage 标记防 authCode 重试风暴
+  const [h5Pending, setH5Pending] = useState(shouldAttemptH5Login)
+
+  useEffect(() => {
+    if (!h5Pending || sessionStorage.getItem(H5_ATTEMPT_KEY)) return
+    sessionStorage.setItem(H5_ATTEMPT_KEY, '1')
+    const corpId = import.meta.env.VITE_DINGTALK_CORP_ID as string
+    void (async () => {
+      try {
+        const authCode = await fetchDingTalkAuthCode(corpId)
+        await loginWithDingTalkH5(authCode)
+        await queryClient.invalidateQueries({ queryKey: ['auth'] })
+        void navigate({ to: search.redirect ?? '/' })
+      } catch (error) {
+        notify.error(error instanceof Error ? error : '钉钉自动登录失败,请手动登录')
+        setH5Pending(false)
+      }
+    })()
+  }, [h5Pending, navigate, queryClient, search.redirect])
+
   return (
     <div className="flex min-h-svh flex-col items-center justify-center gap-8 bg-background px-6">
       <div className="flex flex-col items-center gap-2">
@@ -30,9 +65,16 @@ function LoginPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Atlas</h1>
         <p className="text-sm text-muted-foreground">销售与耗用管理系统</p>
       </div>
-      <Button size="lg" className="w-full max-w-xs" onClick={login}>
-        使用钉钉登录
-      </Button>
+      {h5Pending ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" />
+          钉钉自动登录中…
+        </div>
+      ) : (
+        <Button size="lg" className="w-full max-w-xs" onClick={login}>
+          使用钉钉登录
+        </Button>
+      )}
     </div>
   )
 }

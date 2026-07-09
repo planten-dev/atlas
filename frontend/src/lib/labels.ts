@@ -16,24 +16,29 @@ export const APPROVAL_STATUS_LABELS: Record<number, string> = {
   3: '已驳回',
 }
 
-export const DEAL_STATUS_LABELS: Record<string, string> = {
-  closed: '已成交',
-  not_closed: '未成交',
-}
-
 export const CUSTOMER_TYPE_LABELS: Record<string, string> = {
   new: '新客',
   returning: '老客',
 }
 
 export const DEAL_TYPE_LABELS: Record<string, string> = {
-  non_salon: '非院装',
-  salon: '院装',
+  non_salon: '非沙龙',
+  salon: '沙龙',
 }
 
-export const COLLABORATION_TYPE_LABELS: Record<string, string> = {
-  expert_consultation: '专家诊',
-  self_sale: '自销',
+export const RECORD_TYPE_LABELS: Record<string, string> = {
+  sale: '销售',
+  service: '服务',
+}
+
+export const PAYMENT_TYPE_LABELS: Record<string, string> = {
+  initial: '首款',
+  collection: '回款',
+}
+
+export const PERFORMANCE_STATUS_LABELS: Record<string, string> = {
+  pending: '待入账',
+  posted: '已入账',
 }
 
 export const RECORD_STATUS_LABELS: Record<string, string> = {
@@ -95,30 +100,45 @@ export const FIELD_LABELS: Record<string, string> = {
   store_id: '门店',
   // 销售
   customer_id: '客户',
-  sale_date: '成交日期',
-  deal_status: '成交状态',
+  record_date: '成交日期',
+  record_type: '记录类型',
   customer_type: '客户类型',
   deal_type: '成交类型',
-  content_category_id: '内容类型',
   handler_user_id: '处理人',
+  receivable_amount: '应收金额',
   paid_amount: '已收金额',
-  unpaid_amount: '未收金额',
-  collaboration_type: '协作类型',
+  outstanding_amount: '未收金额',
   expert_user_id: '专家',
-  expert_department_id: '专家部门',
   consultant_user_id: '咨询师',
-  consultant_department_id: '咨询师部门',
   doctor_user_id: '医生',
-  record_group_id: '批次',
+  product_id: '产品',
+  item_name: '项目名称',
   operation_total_count: '可操作次数',
+  // 付款
+  payment_type: '付款类型',
+  paid_at: '支付时间',
+  performance_status: '业绩状态',
+  guide_user_id: '导购',
+  allocation_ratio: '分配比例',
+  allocated_amount: '分配金额',
   // 次数/耗用
   sales_record_id: '销售记录',
+  sales_record_line_id: '销售明细行',
   total_count: '总次数',
   used_count: '已用次数',
   remaining_count: '剩余次数',
   operated_at: '操作时间',
   operator_user_id: '操作人',
   operation_count: '操作次数',
+  // 历史审计字段(旧销售模型 diff 渲染,勿删)
+  sale_date: '成交日期',
+  deal_status: '成交状态',
+  content_category_id: '内容类型',
+  unpaid_amount: '未收金额',
+  collaboration_type: '协作类型',
+  expert_department_id: '专家部门',
+  consultant_department_id: '咨询师部门',
+  record_group_id: '批次',
   // 用户/部门
   dingtalk_user_id: '钉钉用户ID',
   parent_id: '上级部门',

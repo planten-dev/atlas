@@ -17,6 +17,7 @@ import { Route as App403RouteImport } from './routes/_app/403'
 import { Route as AppUsagesIndexRouteImport } from './routes/_app/usages/index'
 import { Route as AppSalesIndexRouteImport } from './routes/_app/sales/index'
 import { Route as AppProductsIndexRouteImport } from './routes/_app/products/index'
+import { Route as AppPaymentsIndexRouteImport } from './routes/_app/payments/index'
 import { Route as AppCustomersIndexRouteImport } from './routes/_app/customers/index'
 import { Route as AppCountsIndexRouteImport } from './routes/_app/counts/index'
 import { Route as AppApprovalsIndexRouteImport } from './routes/_app/approvals/index'
@@ -33,7 +34,6 @@ import { Route as AppSalesSalesIdIndexRouteImport } from './routes/_app/sales/$s
 import { Route as AppCustomersCustomerIdIndexRouteImport } from './routes/_app/customers/$customerId/index'
 import { Route as AppAdminUsersIndexRouteImport } from './routes/_app/admin/users/index'
 import { Route as AppAdminPermissionsIndexRouteImport } from './routes/_app/admin/permissions/index'
-import { Route as AppSalesSalesIdEditRouteImport } from './routes/_app/sales/$salesId/edit'
 import { Route as AppCustomersCustomerIdEditRouteImport } from './routes/_app/customers/$customerId/edit'
 import { Route as AppAdminUsersUserIdRouteImport } from './routes/_app/admin/users/$userId'
 import { Route as AppAdminPermissionsRolesRoleIdRouteImport } from './routes/_app/admin/permissions/roles/$roleId'
@@ -75,6 +75,11 @@ const AppSalesIndexRoute = AppSalesIndexRouteImport.update({
 const AppProductsIndexRoute = AppProductsIndexRouteImport.update({
   id: '/products/',
   path: '/products/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppPaymentsIndexRoute = AppPaymentsIndexRouteImport.update({
+  id: '/payments/',
+  path: '/payments/',
   getParentRoute: () => AppRoute,
 } as any)
 const AppCustomersIndexRoute = AppCustomersIndexRouteImport.update({
@@ -159,11 +164,6 @@ const AppAdminPermissionsIndexRoute =
     path: '/admin/permissions/',
     getParentRoute: () => AppRoute,
   } as any)
-const AppSalesSalesIdEditRoute = AppSalesSalesIdEditRouteImport.update({
-  id: '/sales/$salesId/edit',
-  path: '/sales/$salesId/edit',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppCustomersCustomerIdEditRoute =
   AppCustomersCustomerIdEditRouteImport.update({
     id: '/customers/$customerId/edit',
@@ -199,12 +199,12 @@ export interface FileRoutesByFullPath {
   '/approvals/': typeof AppApprovalsIndexRoute
   '/counts/': typeof AppCountsIndexRoute
   '/customers/': typeof AppCustomersIndexRoute
+  '/payments/': typeof AppPaymentsIndexRoute
   '/products/': typeof AppProductsIndexRoute
   '/sales/': typeof AppSalesIndexRoute
   '/usages/': typeof AppUsagesIndexRoute
   '/admin/users/$userId': typeof AppAdminUsersUserIdRoute
   '/customers/$customerId/edit': typeof AppCustomersCustomerIdEditRoute
-  '/sales/$salesId/edit': typeof AppSalesSalesIdEditRoute
   '/admin/permissions/': typeof AppAdminPermissionsIndexRoute
   '/admin/users/': typeof AppAdminUsersIndexRoute
   '/customers/$customerId/': typeof AppCustomersCustomerIdIndexRoute
@@ -228,12 +228,12 @@ export interface FileRoutesByTo {
   '/approvals': typeof AppApprovalsIndexRoute
   '/counts': typeof AppCountsIndexRoute
   '/customers': typeof AppCustomersIndexRoute
+  '/payments': typeof AppPaymentsIndexRoute
   '/products': typeof AppProductsIndexRoute
   '/sales': typeof AppSalesIndexRoute
   '/usages': typeof AppUsagesIndexRoute
   '/admin/users/$userId': typeof AppAdminUsersUserIdRoute
   '/customers/$customerId/edit': typeof AppCustomersCustomerIdEditRoute
-  '/sales/$salesId/edit': typeof AppSalesSalesIdEditRoute
   '/admin/permissions': typeof AppAdminPermissionsIndexRoute
   '/admin/users': typeof AppAdminUsersIndexRoute
   '/customers/$customerId': typeof AppCustomersCustomerIdIndexRoute
@@ -259,12 +259,12 @@ export interface FileRoutesById {
   '/_app/approvals/': typeof AppApprovalsIndexRoute
   '/_app/counts/': typeof AppCountsIndexRoute
   '/_app/customers/': typeof AppCustomersIndexRoute
+  '/_app/payments/': typeof AppPaymentsIndexRoute
   '/_app/products/': typeof AppProductsIndexRoute
   '/_app/sales/': typeof AppSalesIndexRoute
   '/_app/usages/': typeof AppUsagesIndexRoute
   '/_app/admin/users/$userId': typeof AppAdminUsersUserIdRoute
   '/_app/customers/$customerId/edit': typeof AppCustomersCustomerIdEditRoute
-  '/_app/sales/$salesId/edit': typeof AppSalesSalesIdEditRoute
   '/_app/admin/permissions/': typeof AppAdminPermissionsIndexRoute
   '/_app/admin/users/': typeof AppAdminUsersIndexRoute
   '/_app/customers/$customerId/': typeof AppCustomersCustomerIdIndexRoute
@@ -290,12 +290,12 @@ export interface FileRouteTypes {
     | '/approvals/'
     | '/counts/'
     | '/customers/'
+    | '/payments/'
     | '/products/'
     | '/sales/'
     | '/usages/'
     | '/admin/users/$userId'
     | '/customers/$customerId/edit'
-    | '/sales/$salesId/edit'
     | '/admin/permissions/'
     | '/admin/users/'
     | '/customers/$customerId/'
@@ -319,12 +319,12 @@ export interface FileRouteTypes {
     | '/approvals'
     | '/counts'
     | '/customers'
+    | '/payments'
     | '/products'
     | '/sales'
     | '/usages'
     | '/admin/users/$userId'
     | '/customers/$customerId/edit'
-    | '/sales/$salesId/edit'
     | '/admin/permissions'
     | '/admin/users'
     | '/customers/$customerId'
@@ -349,12 +349,12 @@ export interface FileRouteTypes {
     | '/_app/approvals/'
     | '/_app/counts/'
     | '/_app/customers/'
+    | '/_app/payments/'
     | '/_app/products/'
     | '/_app/sales/'
     | '/_app/usages/'
     | '/_app/admin/users/$userId'
     | '/_app/customers/$customerId/edit'
-    | '/_app/sales/$salesId/edit'
     | '/_app/admin/permissions/'
     | '/_app/admin/users/'
     | '/_app/customers/$customerId/'
@@ -423,6 +423,13 @@ declare module '@tanstack/react-router' {
       path: '/products'
       fullPath: '/products/'
       preLoaderRoute: typeof AppProductsIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/payments/': {
+      id: '/_app/payments/'
+      path: '/payments'
+      fullPath: '/payments/'
+      preLoaderRoute: typeof AppPaymentsIndexRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/customers/': {
@@ -537,13 +544,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAdminPermissionsIndexRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/sales/$salesId/edit': {
-      id: '/_app/sales/$salesId/edit'
-      path: '/sales/$salesId/edit'
-      fullPath: '/sales/$salesId/edit'
-      preLoaderRoute: typeof AppSalesSalesIdEditRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/customers/$customerId/edit': {
       id: '/_app/customers/$customerId/edit'
       path: '/customers/$customerId/edit'
@@ -584,12 +584,12 @@ interface AppRouteChildren {
   AppApprovalsIndexRoute: typeof AppApprovalsIndexRoute
   AppCountsIndexRoute: typeof AppCountsIndexRoute
   AppCustomersIndexRoute: typeof AppCustomersIndexRoute
+  AppPaymentsIndexRoute: typeof AppPaymentsIndexRoute
   AppProductsIndexRoute: typeof AppProductsIndexRoute
   AppSalesIndexRoute: typeof AppSalesIndexRoute
   AppUsagesIndexRoute: typeof AppUsagesIndexRoute
   AppAdminUsersUserIdRoute: typeof AppAdminUsersUserIdRoute
   AppCustomersCustomerIdEditRoute: typeof AppCustomersCustomerIdEditRoute
-  AppSalesSalesIdEditRoute: typeof AppSalesSalesIdEditRoute
   AppAdminPermissionsIndexRoute: typeof AppAdminPermissionsIndexRoute
   AppAdminUsersIndexRoute: typeof AppAdminUsersIndexRoute
   AppCustomersCustomerIdIndexRoute: typeof AppCustomersCustomerIdIndexRoute
@@ -613,12 +613,12 @@ const AppRouteChildren: AppRouteChildren = {
   AppApprovalsIndexRoute: AppApprovalsIndexRoute,
   AppCountsIndexRoute: AppCountsIndexRoute,
   AppCustomersIndexRoute: AppCustomersIndexRoute,
+  AppPaymentsIndexRoute: AppPaymentsIndexRoute,
   AppProductsIndexRoute: AppProductsIndexRoute,
   AppSalesIndexRoute: AppSalesIndexRoute,
   AppUsagesIndexRoute: AppUsagesIndexRoute,
   AppAdminUsersUserIdRoute: AppAdminUsersUserIdRoute,
   AppCustomersCustomerIdEditRoute: AppCustomersCustomerIdEditRoute,
-  AppSalesSalesIdEditRoute: AppSalesSalesIdEditRoute,
   AppAdminPermissionsIndexRoute: AppAdminPermissionsIndexRoute,
   AppAdminUsersIndexRoute: AppAdminUsersIndexRoute,
   AppCustomersCustomerIdIndexRoute: AppCustomersCustomerIdIndexRoute,

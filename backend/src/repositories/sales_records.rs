@@ -109,6 +109,7 @@ pub struct OperationCountChanges {
 pub struct OperationCountFilters<'a> {
     pub status_filter: Option<&'a str>,
     pub sales_record_line_id: Option<Uuid>,
+    pub sales_record_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone)]
@@ -147,6 +148,7 @@ impl OperationUsageChanges {
 pub struct OperationUsageFilters<'a> {
     pub status_filter: Option<&'a str>,
     pub sales_record_line_id: Option<Uuid>,
+    pub sales_record_id: Option<Uuid>,
     pub operator_user_id: Option<Uuid>,
     pub doctor_user_id: Option<Uuid>,
     pub operated_at_from: Option<DateTime<Utc>>,
@@ -388,7 +390,10 @@ impl SalesRecordRepository {
             .order_by_asc(sales_record_lines::Column::Id)
             .all(&self.db)
             .await?;
-        debug!(count = lines.len(), "looked up sales record lines by record ids");
+        debug!(
+            count = lines.len(),
+            "looked up sales record lines by record ids"
+        );
         Ok(lines)
     }
 
@@ -397,7 +402,8 @@ impl SalesRecordRepository {
         &self,
         sales_record_id: Uuid,
     ) -> Result<Vec<sales_record_lines::Model>, RepositoryError> {
-        self.find_lines_by_sales_record_ids(vec![sales_record_id]).await
+        self.find_lines_by_sales_record_ids(vec![sales_record_id])
+            .await
     }
 
     #[tracing::instrument(level = "debug", skip(self, conn))]
@@ -426,6 +432,22 @@ impl SalesRecordRepository {
             .await?;
         debug!(found = line.is_some(), %sales_record_line_id, "looked up sales record line by id");
         Ok(line)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn find_lines_by_ids(
+        &self,
+        sales_record_line_ids: Vec<Uuid>,
+    ) -> Result<Vec<sales_record_lines::Model>, RepositoryError> {
+        if sales_record_line_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let lines = sales_record_lines::Entity::find()
+            .filter(sales_record_lines::Column::Id.is_in(sales_record_line_ids))
+            .all(&self.db)
+            .await?;
+        debug!(count = lines.len(), "looked up sales record lines by ids");
+        Ok(lines)
     }
 
     #[tracing::instrument(level = "debug", skip(self, tx))]
@@ -472,7 +494,10 @@ impl SalesRecordRepository {
             .order_by_asc(sales_payments::Column::Id)
             .all(&self.db)
             .await?;
-        debug!(count = payments.len(), "looked up sales payments by record ids");
+        debug!(
+            count = payments.len(),
+            "looked up sales payments by record ids"
+        );
         Ok(payments)
     }
 
@@ -481,7 +506,8 @@ impl SalesRecordRepository {
         &self,
         sales_record_id: Uuid,
     ) -> Result<Vec<sales_payments::Model>, RepositoryError> {
-        self.find_payments_by_sales_record_ids(vec![sales_record_id]).await
+        self.find_payments_by_sales_record_ids(vec![sales_record_id])
+            .await
     }
 
     #[tracing::instrument(level = "debug", skip(self, conn))]
@@ -599,7 +625,10 @@ impl SalesRecordRepository {
             .order_by_asc(sales_payment_allocations::Column::Id)
             .all(&self.db)
             .await?;
-        debug!(count = allocations.len(), "looked up sales payment allocations by payment ids");
+        debug!(
+            count = allocations.len(),
+            "looked up sales payment allocations by payment ids"
+        );
         Ok(allocations)
     }
 
@@ -666,7 +695,10 @@ impl SalesRecordRepository {
             )
             .all(&self.db)
             .await?;
-        debug!(count = counts.len(), "looked up operation counts by line ids");
+        debug!(
+            count = counts.len(),
+            "looked up operation counts by line ids"
+        );
         Ok(counts)
     }
 
@@ -686,7 +718,10 @@ impl SalesRecordRepository {
             )
             .all(conn)
             .await?;
-        debug!(count = counts.len(), "looked up operation counts by line ids in connection");
+        debug!(
+            count = counts.len(),
+            "looked up operation counts by line ids in connection"
+        );
         Ok(counts)
     }
 
@@ -708,9 +743,13 @@ impl SalesRecordRepository {
         }
         if let Some(sales_record_line_id) = filters.sales_record_line_id {
             query = query.filter(
-                sales_record_operation_counts::Column::SalesRecordLineId
-                    .eq(sales_record_line_id),
+                sales_record_operation_counts::Column::SalesRecordLineId.eq(sales_record_line_id),
             );
+        }
+        if let Some(sales_record_id) = filters.sales_record_id {
+            query = query
+                .inner_join(sales_record_lines::Entity)
+                .filter(sales_record_lines::Column::SalesRecordId.eq(sales_record_id));
         }
 
         let paginator = query.paginate(&self.db, page_size);
@@ -825,6 +864,11 @@ impl SalesRecordRepository {
                 sales_record_operation_usages::Column::SalesRecordLineId.eq(sales_record_line_id),
             );
         }
+        if let Some(sales_record_id) = filters.sales_record_id {
+            query = query
+                .inner_join(sales_record_lines::Entity)
+                .filter(sales_record_lines::Column::SalesRecordId.eq(sales_record_id));
+        }
         if let Some(operator_user_id) = filters.operator_user_id {
             query = query
                 .filter(sales_record_operation_usages::Column::OperatorUserId.eq(operator_user_id));
@@ -870,7 +914,10 @@ impl SalesRecordRepository {
             .filter(sales_record_operation_usages::Column::Status.eq("active"))
             .count(conn)
             .await?;
-        debug!(count, "counted active operation usages for sales record lines");
+        debug!(
+            count,
+            "counted active operation usages for sales record lines"
+        );
         Ok(count)
     }
 

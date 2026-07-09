@@ -15,6 +15,8 @@ Vite proxy 把 `/api` 转发到后端,HttpOnly cookie(`atlas_session`)同源直�
 
 **钉钉 OAuth 回环(dev)**:登录整页跳转到后端 `/api/v1/auth/login/dingtalk`;钉钉授权后回调直达后端 `127.0.0.1:3000`,cookie 落在主机 `127.0.0.1` 上。因此 **dev 请用 `http://127.0.0.1:5173` 访问前端**(不要用 `localhost:5173` —— 浏览器视其为不同主机,cookie 带不过去,登录后会再次要求登录),后端 `frontend_callback_url` 也已配为 `http://127.0.0.1:5173/`。
 
+**钉钉 H5 免登**:登录页在钉钉容器内(UA 含 DingTalk)且配置了 `VITE_DINGTALK_CORP_ID` 时,自动用 JSAPI `requestAuthCode` 取 authCode 并 POST `/api/v1/auth/login/dingtalk/h5` 完成免登;任何失败回退到 OAuth 按钮。corpId 从 `.env`(见 `.env.example`)读取;sessionStorage 一次性标记避免失败后无限重试。
+
 ## 常用命令
 
 | 命令 | 作用 |

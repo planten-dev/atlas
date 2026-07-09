@@ -24,3 +24,8 @@ export function formatDateTime(value: string | null | undefined): string {
 export function toDateParam(date: Date): string {
   return format(date, 'yyyy-MM-dd')
 }
+
+/** Date → datetime-local 输入值(本地时区,分钟精度)。 */
+export function toLocalDateTimeInput(date: Date): string {
+  return format(date, "yyyy-MM-dd'T'HH:mm")
+}

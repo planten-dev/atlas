@@ -1,9 +1,9 @@
 use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::Decimal;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseBackend,
-    DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select,
-    Set, Statement, Value,
+    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseBackend, DatabaseConnection,
+    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select, Set, Statement,
+    Value,
 };
 use tracing::{debug, info};
 use uuid::Uuid;
@@ -122,7 +122,7 @@ impl ProductRepository {
     ) -> Result<(Vec<products::Model>, u64), RepositoryError> {
         let query = apply_product_filters(
             products::Entity::find()
-            .order_by_asc(products::Column::CreatedAt)
+                .order_by_asc(products::Column::CreatedAt)
                 .order_by_asc(products::Column::Name),
             filters,
         )?;
@@ -261,16 +261,14 @@ impl ProductRepository {
                 vec![Value::Uuid(Some(Box::new(product_id)))],
             ),
             other => {
-                return Err(RepositoryError::Database(sea_orm::DbErr::Custom(
-                    format!("unsupported database backend for product reference check: {other:?}"),
-                )));
+                return Err(RepositoryError::Database(sea_orm::DbErr::Custom(format!(
+                    "unsupported database backend for product reference check: {other:?}"
+                ))));
             }
         };
-        let row = self
-            .db
-            .query_one(statement)
-            .await?
-            .ok_or_else(|| sea_orm::DbErr::Custom("reference count query returned no row".into()))?;
+        let row = self.db.query_one(statement).await?.ok_or_else(|| {
+            sea_orm::DbErr::Custom("reference count query returned no row".into())
+        })?;
         let count: i64 = row.try_get("", "reference_count")?;
         let count = u64::try_from(count).map_err(|error| {
             sea_orm::DbErr::Custom(format!("reference count was negative: {error}"))
@@ -334,9 +332,9 @@ impl ProductRepository {
                 vec![Value::String(Some(Box::new(table_name.to_string())))],
             ),
             other => {
-                return Err(RepositoryError::Database(sea_orm::DbErr::Custom(
-                    format!("unsupported database backend for table existence check: {other:?}"),
-                )));
+                return Err(RepositoryError::Database(sea_orm::DbErr::Custom(format!(
+                    "unsupported database backend for table existence check: {other:?}"
+                ))));
             }
         };
 

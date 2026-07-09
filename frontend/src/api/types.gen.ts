@@ -41,6 +41,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/login/dingtalk/h5": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Complete DingTalk H5 login
+         * @description Accepts a temporary DingTalk H5 logon-free authCode from the frontend, exchanges it server-side for the real DingTalk contact userid, maps or creates the Atlas user, syncs DingTalk organization profile fields, creates a server-side session, and sets atlas_session as an HttpOnly cookie. This flow does not use OAuth state or a callback redirect.
+         */
+        post: operations["completeDingTalkH5Login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/callback/dingtalk": {
         parameters: {
             query?: never;
@@ -370,7 +390,7 @@ export interface paths {
         };
         /**
          * List products
-         * @description Requires permission products:read. Lists products with optional status/category filtering and pagination.
+         * @description Requires permission products:read. Lists sales-content master records with optional status, category, keyword filtering and pagination. Products are the selectable sales/service content, not sales record types.
          */
         get: operations["listProducts"];
         put?: never;
@@ -472,7 +492,7 @@ export interface paths {
         put?: never;
         /**
          * Delete product
-         * @description Requires permission products:write. Hard deletes one product record by id.
+         * @description Requires permission products:write. Hard deletes one product record by id only when it has no business references. Products referenced by sales_record_lines.product_id must be disabled instead.
          */
         post: operations["deleteProduct"];
         delete?: never;
@@ -981,306 +1001,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/sales-records/list": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List sales records
-         * @description Requires permission sales:records:read. Lists sales records with status, group, reference and sale-date filtering plus pagination.
-         */
-        get: operations["listSalesRecords"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-records/detail/{sales_record_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get sales record detail
-         * @description Requires permission sales:records:read. Returns one sales record by id, including its operation-count account when one exists.
-         */
-        get: operations["getSalesRecordDetail"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-records/create-batch": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create sales records in a batch
-         * @description Requires permission sales:records:write. Creates one or more sales records in a single transaction. All records in the request share one record_group_id; categories requiring operation counts also create an operation-count account.
-         */
-        post: operations["createSalesRecordBatch"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-records/update/{sales_record_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Update sales record
-         * @description Requires permission sales:records:write. Applies a partial update. Omitted fields are unchanged; required fields reject null. Content category can only switch within the same operation-count requirement type.
-         */
-        post: operations["updateSalesRecord"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-records/void/{sales_record_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Void sales record
-         * @description Requires permission sales:records:write. Marks the sales record and its operation-count account as voided. Returns 409 when active operation usages still exist.
-         */
-        post: operations["voidSalesRecord"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-records/delete/{sales_record_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Delete sales record
-         * @description Requires permission sales:records:write. Hard deletes one sales record. Returns 409 when active operation usages still exist.
-         */
-        post: operations["deleteSalesRecord"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-record-operation-counts/list": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List sales record operation-count accounts
-         * @description Requires permission sales:operation-counts:read. Lists operation-count accounts with optional status and sales-record filtering plus pagination.
-         */
-        get: operations["listSalesRecordOperationCounts"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-record-operation-counts/detail/{sales_record_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get sales record operation-count account
-         * @description Requires permission sales:operation-counts:read. Returns the operation-count account for one sales record.
-         */
-        get: operations["getSalesRecordOperationCountDetail"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-record-operation-counts/update/{sales_record_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Update sales record operation-count account
-         * @description Requires permission sales:operation-counts:write. Updates total_count while preserving used_count. Returns 409 if total_count would become lower than used_count or the account is voided.
-         */
-        post: operations["updateSalesRecordOperationCount"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-record-operation-usages/list": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List operation usage records
-         * @description Requires permission sales:operation-usages:read. Lists operation usage records with status, sales record, operator, doctor and operated-at filtering plus pagination.
-         */
-        get: operations["listSalesRecordOperationUsages"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-record-operation-usages/detail/{usage_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get operation usage detail
-         * @description Requires permission sales:operation-usages:read. Returns one operation usage record by id.
-         */
-        get: operations["getSalesRecordOperationUsageDetail"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-record-operation-usages/create": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create operation usage
-         * @description Requires permission sales:operation-usages:write. Creates an active operation usage and increments the matching operation-count account used_count in the same transaction.
-         */
-        post: operations["createSalesRecordOperationUsage"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-record-operation-usages/update/{usage_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Update operation usage
-         * @description Requires permission sales:operation-usages:write. Applies a partial update. Changing operation_count adjusts the matching operation-count account used_count in the same transaction.
-         */
-        post: operations["updateSalesRecordOperationUsage"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-record-operation-usages/void/{usage_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Void operation usage
-         * @description Requires permission sales:operation-usages:write. Marks an active operation usage as voided and subtracts its operation_count from the matching used_count.
-         */
-        post: operations["voidSalesRecordOperationUsage"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-record-operation-usages/delete/{usage_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Delete operation usage
-         * @description Requires permission sales:operation-usages:write. Hard deletes one operation usage. Active usages are subtracted from used_count before deletion.
-         */
-        post: operations["deleteSalesRecordOperationUsage"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/permissions/roles": {
         parameters: {
             query?: never;
@@ -1521,6 +1241,386 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sales-records/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List sales records
+         * @description Requires permission sales:records:read. Lists sales or service facts. Sales records are the receivable/source facts; payments are the performance source.
+         */
+        get: operations["listSalesRecords"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-records/detail/{sales_record_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get sales record detail
+         * @description Requires permission sales:records:read. Returns one sales or service fact with lines, payments and payment allocations.
+         */
+        get: operations["getSalesRecordDetail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-records/create-sale": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create sale record
+         * @description Requires permission sales:records:write. Creates one sale fact, one or more product lines, and one initial payment in a single transaction. The customer determines system_id and store_id; product category determines whether a line needs operation counts.
+         */
+        post: operations["createSaleRecord"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-records/create-service": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create service record
+         * @description Requires permission sales:records:write. Creates a service/pre-sale groundwork fact. Lines must have receivable_amount 0.00. No payment, debt or performance is created.
+         */
+        post: operations["createServiceRecord"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-records/void/{sales_record_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Void sales record
+         * @description Requires permission sales:records:write. Voids a sales record and its lines, payments and operation-count accounts. Active operation usages must be voided or deleted first.
+         */
+        post: operations["voidSalesRecord"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-payments/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List sales payments
+         * @description Requires permission sales:records:read. Lists initial payments and collection payments. Payments are the source of performance.
+         */
+        get: operations["listSalesPayments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-payments/detail/{payment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get sales payment detail
+         * @description Requires permission sales:records:read. Returns one payment with guide allocations.
+         */
+        get: operations["getSalesPaymentDetail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-payments/collect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create collection payment
+         * @description Requires permission sales:records:write. Adds a collection payment to an existing active sale record. The payment cannot exceed the dynamic outstanding amount.
+         */
+        post: operations["createCollectionPayment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-payments/void/{payment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Void sales payment
+         * @description Requires permission sales:records:write. Voids one payment; outstanding amount is recalculated from active payments.
+         */
+        post: operations["voidSalesPayment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-record-operation-counts/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List operation-count accounts
+         * @description Requires permission sales:operation-counts:read. Operation-count accounts are attached to sales_record_lines.id.
+         */
+        get: operations["listSalesRecordOperationCounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-record-operation-counts/detail/{sales_record_line_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get operation-count account
+         * @description Requires permission sales:operation-counts:read. Uses sales_record_line_id as the account id.
+         */
+        get: operations["getSalesRecordOperationCount"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-record-operation-counts/update/{sales_record_line_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Update operation-count total
+         * @description Requires permission sales:operation-counts:write. total_count cannot be lower than used_count.
+         */
+        post: operations["updateSalesRecordOperationCount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-record-operation-usages/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List operation usages
+         * @description Requires permission sales:operation-usages:read. Operation usages consume operation counts on a sales record line.
+         */
+        get: operations["listSalesRecordOperationUsages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-record-operation-usages/detail/{usage_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get operation usage
+         * @description Requires permission sales:operation-usages:read.
+         */
+        get: operations["getSalesRecordOperationUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-record-operation-usages/create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create operation usage
+         * @description Requires permission sales:operation-usages:write. Creates an operation usage and increments used_count on the sales record line account.
+         */
+        post: operations["createSalesRecordOperationUsage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-record-operation-usages/update/{usage_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Update operation usage
+         * @description Requires permission sales:operation-usages:write. Adjusts used_count when operation_count changes.
+         */
+        post: operations["updateSalesRecordOperationUsage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-record-operation-usages/void/{usage_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Void operation usage
+         * @description Requires permission sales:operation-usages:write. Voids an active usage and decrements used_count.
+         */
+        post: operations["voidSalesRecordOperationUsage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-record-operation-usages/delete/{usage_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete operation usage
+         * @description Requires permission sales:operation-usages:write. Hard deletes a usage and decrements used_count if it was active.
+         */
+        post: operations["deleteSalesRecordOperationUsage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/products/suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get product input suggestions
+         * @description Requires permission products:read. Returns distinct non-empty series, brand_name and unit values for product form suggestions. Supports the same status/category/keyword filters as product listing.
+         */
+        get: operations["getProductSuggestions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1531,6 +1631,10 @@ export interface components {
         };
         LoginResponse: {
             user: components["schemas"]["UserResponse"];
+        };
+        DingTalkH5LoginRequest: {
+            /** @description Temporary DingTalk H5 logon-free authorization code obtained by the frontend in the DingTalk container. */
+            authCode: string;
         };
         UserResponse: {
             /**
@@ -1704,6 +1808,7 @@ export interface components {
             subject_id: string;
             policies: components["schemas"]["PolicyResponse"][];
         };
+        /** @description Sales-content master record. This represents selectable content such as products, medical items, instrument items and cards; sale/service is represented by sales_records.record_type, not by product category. */
         ProductResponse: {
             /** Format: uuid */
             id: string;
@@ -1731,6 +1836,7 @@ export interface components {
             page_size: number;
             total_count: number;
         };
+        /** @description Creates a sales-content master record. category_id must reference an active product category. */
         CreateProductRequest: {
             name: string;
             /** Format: uuid */
@@ -1747,7 +1853,7 @@ export interface components {
              */
             status: "active" | "disabled";
         };
-        /** @description Partial update request. Omitted fields are unchanged; nullable text fields can be cleared with null. category_id, name, unit_price and status reject null. */
+        /** @description Partially updates a sales-content master record. */
         UpdateProductRequest: {
             name?: string;
             /** Format: uuid */
@@ -1924,6 +2030,11 @@ export interface components {
         };
         OperationCountResponse: {
             /** Format: uuid */
+            sales_record_line_id: string;
+            /**
+             * Format: uuid
+             * @description Owning sales record of the line this count account belongs to.
+             */
             sales_record_id: string;
             total_count: number;
             used_count: number;
@@ -1938,48 +2049,39 @@ export interface components {
         SalesRecordResponse: {
             /** Format: uuid */
             id: string;
-            /**
-             * Format: uuid
-             * @description Shared by records created from the same create-batch request.
-             */
-            record_group_id: string | null;
+            /** @enum {string} */
+            record_type: "sale" | "service";
             /** Format: uuid */
             customer_id: string;
             /** Format: date */
-            sale_date: string;
-            /** @enum {string} */
-            deal_status: "closed" | "not_closed";
-            /** @enum {string} */
-            customer_type: "new" | "returning";
-            /** @enum {string} */
-            deal_type: "non_salon" | "salon";
-            /**
-             * Format: uuid
-             * @description Product category id used as sales content category.
-             */
-            content_category_id: string;
-            /** Format: uuid */
-            handler_user_id: string;
-            /** @description Decimal amount string returned with exactly two decimal places. */
-            paid_amount: string;
-            /** @description Decimal amount string returned with exactly two decimal places. */
-            unpaid_amount: string;
+            record_date: string;
+            customer_type: ("new" | "returning") | null;
+            deal_type: ("non_salon" | "salon") | null;
             /** Format: uuid */
             system_id: string;
             /** Format: uuid */
             store_id: string;
-            /** @enum {string} */
-            collaboration_type: "expert_consultation" | "self_sale";
+            /** Format: uuid */
+            handler_user_id: string;
             /** Format: uuid */
             expert_user_id: string | null;
             /** Format: uuid */
             consultant_user_id: string | null;
             /** Format: uuid */
             doctor_user_id: string | null;
+            remark: string | null;
             /** @enum {string} */
             status: "active" | "voided";
-            /** @description Present when the content category requires operation counts. */
-            operation_count: components["schemas"]["OperationCountResponse"] | null;
+            /** Format: uuid */
+            created_by_user_id: string;
+            /** @description Decimal amount string returned with exactly two decimal places. */
+            receivable_amount: string;
+            /** @description Decimal amount string returned with exactly two decimal places. */
+            paid_amount: string;
+            /** @description Decimal amount string returned with exactly two decimal places. */
+            outstanding_amount: string;
+            lines: components["schemas"]["SalesRecordLineResponse"][];
+            payments: components["schemas"]["SalesPaymentResponse"][];
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -1991,137 +2093,6 @@ export interface components {
             page_size: number;
             total_count: number;
         };
-        CreateSalesRecordBatchResponse: {
-            /** Format: uuid */
-            record_group_id: string;
-            sales_records: components["schemas"]["SalesRecordResponse"][];
-        };
-        CreateSalesRecordBatchRequest: {
-            records: components["schemas"]["CreateSalesRecordRequest"][];
-        };
-        CreateSalesRecordRequest: {
-            /** Format: uuid */
-            customer_id: string;
-            /** Format: date */
-            sale_date: string;
-            /** @enum {string} */
-            deal_status: "closed" | "not_closed";
-            /** @enum {string} */
-            customer_type: "new" | "returning";
-            /** @enum {string} */
-            deal_type: "non_salon" | "salon";
-            /**
-             * Format: uuid
-             * @description Must reference an active product category. If the category requires operation counts, operation_total_count is required; otherwise it is not allowed.
-             */
-            content_category_id: string;
-            /**
-             * Format: uuid
-             * @description Must reference an active user.
-             */
-            handler_user_id: string;
-            /** @description Decimal amount string stored as DECIMAL(12,2). */
-            paid_amount: string;
-            /** @description Decimal amount string stored as DECIMAL(12,2). */
-            unpaid_amount: string;
-            /**
-             * Format: uuid
-             * @description Must reference an existing system.
-             */
-            system_id: string;
-            /**
-             * Format: uuid
-             * @description Must reference an existing store owned by system_id.
-             */
-            store_id: string;
-            /**
-             * @description expert_consultation requires expert_user_id; self_sale requires it to be omitted.
-             * @enum {string}
-             */
-            collaboration_type: "expert_consultation" | "self_sale";
-            /**
-             * Format: uuid
-             * @description Required for expert_consultation and not allowed for self_sale.
-             */
-            expert_user_id?: string | null;
-            /** Format: uuid */
-            consultant_user_id?: string | null;
-            /** Format: uuid */
-            doctor_user_id?: string | null;
-            /** @description Required when content_category_id.requires_operation_count is true and rejected otherwise. */
-            operation_total_count?: number | null;
-        };
-        UpdateSalesRecordRequest: {
-            /**
-             * Format: uuid
-             * @description Omit to leave unchanged. null is rejected because customer_id is required.
-             */
-            customer_id?: string;
-            /**
-             * Format: date
-             * @description Omit to leave unchanged. null is rejected because sale_date is required.
-             */
-            sale_date?: string;
-            /**
-             * @description Omit to leave unchanged. null is rejected because deal_status is required.
-             * @enum {string}
-             */
-            deal_status?: "closed" | "not_closed";
-            /**
-             * @description Omit to leave unchanged. null is rejected because customer_type is required.
-             * @enum {string}
-             */
-            customer_type?: "new" | "returning";
-            /**
-             * @description Omit to leave unchanged. null is rejected because deal_type is required.
-             * @enum {string}
-             */
-            deal_type?: "non_salon" | "salon";
-            /**
-             * Format: uuid
-             * @description Omit to leave unchanged. null is rejected. The new category must have the same operation-count requirement type as the current record.
-             */
-            content_category_id?: string;
-            /**
-             * Format: uuid
-             * @description Omit to leave unchanged. null is rejected because handler_user_id is required.
-             */
-            handler_user_id?: string;
-            /** @description Omit to leave unchanged. null is rejected because paid_amount is required. */
-            paid_amount?: string;
-            /** @description Omit to leave unchanged. null is rejected because unpaid_amount is required. */
-            unpaid_amount?: string;
-            /**
-             * Format: uuid
-             * @description Omit to leave unchanged. null is rejected because system_id is required.
-             */
-            system_id?: string;
-            /**
-             * Format: uuid
-             * @description Omit to leave unchanged. null is rejected because store_id is required.
-             */
-            store_id?: string;
-            /**
-             * @description Omit to leave unchanged. null is rejected because collaboration_type is required.
-             * @enum {string}
-             */
-            collaboration_type?: "expert_consultation" | "self_sale";
-            /**
-             * Format: uuid
-             * @description Omit to leave unchanged. null clears the expert user.
-             */
-            expert_user_id?: string | null;
-            /**
-             * Format: uuid
-             * @description Omit to leave unchanged. null clears the consultant user.
-             */
-            consultant_user_id?: string | null;
-            /**
-             * Format: uuid
-             * @description Omit to leave unchanged. null clears the doctor user.
-             */
-            doctor_user_id?: string | null;
-        };
         ListOperationCountsResponse: {
             operation_counts: components["schemas"]["OperationCountResponse"][];
             page_number: number;
@@ -2129,13 +2100,17 @@ export interface components {
             total_count: number;
         };
         UpdateOperationCountRequest: {
-            /** @description Cannot be lower than the current used_count. */
             total_count: number;
         };
         OperationUsageResponse: {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
+            sales_record_line_id: string;
+            /**
+             * Format: uuid
+             * @description Owning sales record of the line this usage belongs to.
+             */
             sales_record_id: string;
             /** Format: date-time */
             operated_at: string;
@@ -2160,42 +2135,25 @@ export interface components {
         };
         CreateOperationUsageRequest: {
             /** Format: uuid */
-            sales_record_id: string;
+            sales_record_line_id: string;
             /** Format: date-time */
             operated_at: string;
-            /**
-             * Format: uuid
-             * @description Must reference an active user.
-             */
+            /** Format: uuid */
             operator_user_id: string;
-            /**
-             * Format: uuid
-             * @description When provided, must reference an active user.
-             */
+            /** Format: uuid */
             doctor_user_id?: string | null;
             /** @default 1 */
             operation_count: number;
             remark?: string | null;
         };
         UpdateOperationUsageRequest: {
-            /**
-             * Format: date-time
-             * @description Omit to leave unchanged. null is rejected because operated_at is required.
-             */
+            /** Format: date-time */
             operated_at?: string;
-            /**
-             * Format: uuid
-             * @description Omit to leave unchanged. null is rejected because operator_user_id is required.
-             */
+            /** Format: uuid */
             operator_user_id?: string;
-            /**
-             * Format: uuid
-             * @description Omit to leave unchanged. null clears the doctor user.
-             */
+            /** Format: uuid */
             doctor_user_id?: string | null;
-            /** @description Omit to leave unchanged. null is rejected because operation_count is required. Increasing this value requires enough remaining_count. */
             operation_count?: number;
-            /** @description Omit to leave unchanged. null or an empty string clears the remark. */
             remark?: string | null;
         };
         ListUsersResponse: {
@@ -2339,6 +2297,160 @@ export interface components {
             updated: number;
             unchanged: number;
         };
+        SalesRecordLineResponse: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            sales_record_id: string;
+            /** Format: uuid */
+            product_id: string;
+            item_name: string;
+            /** @description Decimal amount string returned with exactly two decimal places. */
+            receivable_amount: string;
+            operation_total_count: number | null;
+            remark: string | null;
+            /** @enum {string} */
+            status: "active" | "voided";
+            operation_count: components["schemas"]["OperationCountResponse"] | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        SalesPaymentResponse: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            sales_record_id: string;
+            /** @enum {string} */
+            payment_type: "initial" | "collection";
+            /** @description Decimal amount string returned with exactly two decimal places. */
+            paid_amount: string;
+            /** Format: date-time */
+            paid_at: string;
+            /** @enum {string} */
+            performance_status: "pending" | "posted";
+            /** @enum {string} */
+            status: "active" | "voided";
+            remark: string | null;
+            /** Format: uuid */
+            created_by_user_id: string;
+            allocations: components["schemas"]["SalesPaymentAllocationResponse"][];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        SalesPaymentAllocationResponse: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            payment_id: string;
+            /** Format: uuid */
+            guide_user_id: string;
+            allocation_ratio: string;
+            /** @description Decimal amount string returned with exactly two decimal places. */
+            allocated_amount: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ListSalesPaymentsResponse: {
+            sales_payments: components["schemas"]["SalesPaymentResponse"][];
+            page_number: number;
+            page_size: number;
+            total_count: number;
+        };
+        CreateSaleRecordRequest: {
+            /** Format: uuid */
+            customer_id: string;
+            /** Format: date */
+            record_date: string;
+            /** @enum {string} */
+            customer_type: "new" | "returning";
+            /** @enum {string} */
+            deal_type: "non_salon" | "salon";
+            /** Format: uuid */
+            handler_user_id: string;
+            /** Format: uuid */
+            expert_user_id?: string | null;
+            /** Format: uuid */
+            consultant_user_id?: string | null;
+            /** Format: uuid */
+            doctor_user_id?: string | null;
+            remark?: string | null;
+            lines: components["schemas"]["SalesRecordLineInput"][];
+            payment: components["schemas"]["SalesPaymentInput"];
+        };
+        CreateServiceRecordRequest: {
+            /** Format: uuid */
+            customer_id: string;
+            /** Format: date */
+            record_date: string;
+            customer_type?: ("new" | "returning") | null;
+            deal_type?: ("non_salon" | "salon") | null;
+            /** Format: uuid */
+            handler_user_id: string;
+            /** Format: uuid */
+            expert_user_id?: string | null;
+            /** Format: uuid */
+            consultant_user_id?: string | null;
+            /** Format: uuid */
+            doctor_user_id?: string | null;
+            remark?: string | null;
+            /** @description For service records, every line receivable_amount must be 0.00 and operation_total_count is not allowed. */
+            lines: components["schemas"]["SalesRecordLineInput"][];
+        };
+        SalesRecordLineInput: {
+            /**
+             * Format: uuid
+             * @description Must reference an active product/sales-content master record.
+             */
+            product_id: string;
+            /** @description Name snapshot at entry time. */
+            item_name: string;
+            /** @description Decimal amount string stored as DECIMAL(12,2). */
+            receivable_amount: string;
+            /** @description Required for sale lines whose product category requires operation counts. Not allowed for service records. */
+            operation_total_count?: number | null;
+            remark?: string | null;
+        };
+        SalesPaymentInput: {
+            /** @description Initial payment amount. Must be greater than 0.00 and cannot exceed sale receivable amount. */
+            paid_amount: string;
+            /** Format: date-time */
+            paid_at: string;
+            allocations: components["schemas"]["SalesPaymentAllocationInput"][];
+            remark?: string | null;
+        };
+        SalesPaymentAllocationInput: {
+            /** Format: uuid */
+            guide_user_id: string;
+            /** @description Allocation ratio. Ratios within one payment must total 100.00. */
+            allocation_ratio: string;
+        };
+        CreateCollectionPaymentRequest: {
+            /**
+             * Format: uuid
+             * @description Must reference an active sale record.
+             */
+            sales_record_id: string;
+            /** @description Collection amount. Must be greater than 0.00 and cannot exceed outstanding amount. */
+            paid_amount: string;
+            /** Format: date-time */
+            paid_at: string;
+            allocations: components["schemas"]["SalesPaymentAllocationInput"][];
+            remark?: string | null;
+        };
+        ProductSuggestionsResponse: {
+            /** @description Distinct non-empty series values. */
+            series: string[];
+            /** @description Distinct non-empty brand_name values. */
+            brand_names: string[];
+            /** @description Distinct non-empty unit values. */
+            units: string[];
+        };
     };
     responses: {
         /** @description Request validation failed. */
@@ -2469,6 +2581,36 @@ export interface operations {
                 content?: never;
             };
             500: components["responses"]["InternalError"];
+        };
+    };
+    completeDingTalkH5Login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DingTalkH5LoginRequest"];
+            };
+        };
+        responses: {
+            /** @description DingTalk H5 identity verified and mapped to an Atlas user. A session cookie is set. */
+            200: {
+                headers: {
+                    /** @description HttpOnly atlas_session cookie. */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+            502: components["responses"]["BadGateway"];
         };
     };
     handleDingTalkCallback: {
@@ -2936,6 +3078,8 @@ export interface operations {
                 status_filter?: "active" | "disabled";
                 /** @description Only return products in this product category. */
                 category_id?: string;
+                /** @description Trimmed keyword matched against name, series, brand_name, specification and unit. Blank values are ignored. */
+                keyword?: string;
                 page_number?: number;
                 page_size?: number;
             };
@@ -3100,6 +3244,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["PermissionDenied"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -3882,467 +4027,6 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
-    listSalesRecords: {
-        parameters: {
-            query?: {
-                /** @description Only return sales records with this status. */
-                status_filter?: "active" | "voided";
-                /** @description Only return records created by the same batch request. */
-                record_group_id?: string;
-                customer_id?: string;
-                system_id?: string;
-                store_id?: string;
-                handler_user_id?: string;
-                /** @description Product category id used as sales content category. */
-                content_category_id?: string;
-                /** @description Inclusive lower bound for sale_date. */
-                sale_date_from?: string;
-                /** @description Inclusive upper bound for sale_date. */
-                sale_date_to?: string;
-                page_number?: number;
-                page_size?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Sales records page. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ListSalesRecordsResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    getSalesRecordDetail: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Sales record id. */
-                sales_record_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Sales record detail. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SalesRecordResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            404: components["responses"]["NotFound"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    createSalesRecordBatch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateSalesRecordBatchRequest"];
-            };
-        };
-        responses: {
-            /** @description Created sales records. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CreateSalesRecordBatchResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            404: components["responses"]["NotFound"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    updateSalesRecord: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Sales record id. */
-                sales_record_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateSalesRecordRequest"];
-            };
-        };
-        responses: {
-            /** @description Updated sales record. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SalesRecordResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    voidSalesRecord: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Sales record id. */
-                sales_record_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Voided sales record. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SalesRecordResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    deleteSalesRecord: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Sales record id. */
-                sales_record_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Sales record was deleted. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    listSalesRecordOperationCounts: {
-        parameters: {
-            query?: {
-                /** @description Only return operation-count accounts with this status. */
-                status_filter?: "active" | "voided";
-                sales_record_id?: string;
-                page_number?: number;
-                page_size?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Operation-count accounts page. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ListOperationCountsResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    getSalesRecordOperationCountDetail: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Sales record id. */
-                sales_record_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Operation-count account detail. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OperationCountResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            404: components["responses"]["NotFound"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    updateSalesRecordOperationCount: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Sales record id. */
-                sales_record_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateOperationCountRequest"];
-            };
-        };
-        responses: {
-            /** @description Updated operation-count account. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OperationCountResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    listSalesRecordOperationUsages: {
-        parameters: {
-            query?: {
-                /** @description Only return operation usage records with this status. */
-                status_filter?: "active" | "voided";
-                sales_record_id?: string;
-                operator_user_id?: string;
-                doctor_user_id?: string;
-                /** @description Inclusive lower bound for operated_at. */
-                operated_at_from?: string;
-                /** @description Inclusive upper bound for operated_at. */
-                operated_at_to?: string;
-                page_number?: number;
-                page_size?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Operation usage records page. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ListOperationUsagesResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    getSalesRecordOperationUsageDetail: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Operation usage id. */
-                usage_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Operation usage detail. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OperationUsageResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            404: components["responses"]["NotFound"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    createSalesRecordOperationUsage: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateOperationUsageRequest"];
-            };
-        };
-        responses: {
-            /** @description Created operation usage. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OperationUsageResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    updateSalesRecordOperationUsage: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Operation usage id. */
-                usage_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateOperationUsageRequest"];
-            };
-        };
-        responses: {
-            /** @description Updated operation usage. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OperationUsageResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    voidSalesRecordOperationUsage: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Operation usage id. */
-                usage_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Voided operation usage. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OperationUsageResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    deleteSalesRecordOperationUsage: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Operation usage id. */
-                usage_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Operation usage was deleted. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
-            500: components["responses"]["InternalError"];
-        };
-    };
     listRoles: {
         parameters: {
             query?: never;
@@ -4774,6 +4458,590 @@ export interface operations {
             403: components["responses"]["PermissionDenied"];
             404: components["responses"]["NotFound"];
             422: components["responses"]["UnprocessableEntity"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listSalesRecords: {
+        parameters: {
+            query?: {
+                /** @description Only return records with this status. */
+                status_filter?: "active" | "voided";
+                /** @description sale is a closed sale; service is service/pre-sale groundwork with zero receivable and no payment. */
+                record_type?: "sale" | "service";
+                customer_id?: string;
+                system_id?: string;
+                store_id?: string;
+                handler_user_id?: string;
+                /** @description Inclusive lower bound for record_date. */
+                record_date_from?: string;
+                /** @description Inclusive upper bound for record_date. */
+                record_date_to?: string;
+                page_number?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sales records page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListSalesRecordsResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getSalesRecordDetail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Sales record id. */
+                sales_record_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sales record detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SalesRecordResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createSaleRecord: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSaleRecordRequest"];
+            };
+        };
+        responses: {
+            /** @description Created sale record. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SalesRecordResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createServiceRecord: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateServiceRecordRequest"];
+            };
+        };
+        responses: {
+            /** @description Created service record. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SalesRecordResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    voidSalesRecord: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Sales record id. */
+                sales_record_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Voided sales record. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SalesRecordResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listSalesPayments: {
+        parameters: {
+            query?: {
+                /** @description Only return payments with this status. */
+                status_filter?: "active" | "voided";
+                /** @description initial is the sale-time payment; collection is later debt collection. */
+                payment_type?: "initial" | "collection";
+                sales_record_id?: string;
+                /** @description Inclusive lower bound for paid_at. */
+                paid_at_from?: string;
+                /** @description Inclusive upper bound for paid_at. */
+                paid_at_to?: string;
+                page_number?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sales payments page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListSalesPaymentsResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getSalesPaymentDetail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Sales payment id. */
+                payment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sales payment detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SalesPaymentResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createCollectionPayment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateCollectionPaymentRequest"];
+            };
+        };
+        responses: {
+            /** @description Created collection payment. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SalesPaymentResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    voidSalesPayment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Sales payment id. */
+                payment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Voided sales payment. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SalesPaymentResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listSalesRecordOperationCounts: {
+        parameters: {
+            query?: {
+                status_filter?: "active" | "voided";
+                sales_record_line_id?: string;
+                /** @description Filter to count accounts whose line belongs to this sales record. */
+                sales_record_id?: string;
+                page_number?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Operation-count account page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListOperationCountsResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getSalesRecordOperationCount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Sales record line id. */
+                sales_record_line_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Operation-count account detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationCountResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateSalesRecordOperationCount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Sales record line id. */
+                sales_record_line_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateOperationCountRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated operation-count account. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationCountResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listSalesRecordOperationUsages: {
+        parameters: {
+            query?: {
+                status_filter?: "active" | "voided";
+                sales_record_line_id?: string;
+                /** @description Filter to usages whose line belongs to this sales record. */
+                sales_record_id?: string;
+                operator_user_id?: string;
+                doctor_user_id?: string;
+                operated_at_from?: string;
+                operated_at_to?: string;
+                page_number?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Operation usage page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListOperationUsagesResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getSalesRecordOperationUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Operation usage id. */
+                usage_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Operation usage detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationUsageResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createSalesRecordOperationUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateOperationUsageRequest"];
+            };
+        };
+        responses: {
+            /** @description Created operation usage. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationUsageResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateSalesRecordOperationUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Operation usage id. */
+                usage_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateOperationUsageRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated operation usage. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationUsageResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    voidSalesRecordOperationUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Operation usage id. */
+                usage_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Voided operation usage. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationUsageResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteSalesRecordOperationUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Operation usage id. */
+                usage_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Operation usage was deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getProductSuggestions: {
+        parameters: {
+            query?: {
+                /** @description Only use products with this status. */
+                status_filter?: "active" | "disabled";
+                /** @description Only use products in this product category. */
+                category_id?: string;
+                /** @description Trimmed keyword matched against name, series, brand_name, specification and unit. Blank values are ignored. */
+                keyword?: string;
+                /** @description Maximum number of suggestions to return for each field. */
+                limit_per_field?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Product input suggestions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductSuggestionsResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
             500: components["responses"]["InternalError"];
         };
     };

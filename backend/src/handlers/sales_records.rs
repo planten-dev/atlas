@@ -633,7 +633,9 @@ mod tests {
             .expect("line id should exist")
             .to_string();
         assert_eq!(
-            created.pointer("/outstanding_amount").and_then(Value::as_str),
+            created
+                .pointer("/outstanding_amount")
+                .and_then(Value::as_str),
             Some("200.00")
         );
 

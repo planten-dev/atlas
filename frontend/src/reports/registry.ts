@@ -59,9 +59,9 @@ export const CATALOG: CatalogItem[] = [
   { id: 'bu-monthly', title: '事业部月度总表 [占位]', group: '事业部数据报表', status: 'reserved', note: '等待统计域建设' },
 
   /* ---------- 数据报表(7) ---------- */
-  { id: 'report-card-deals', title: '卡项成交明细', group: '数据报表', status: 'available', route: '/sales?category=卡项', perm: 'sales:records:read' },
-  { id: 'report-device-deals', title: '仪器成交明细', group: '数据报表', status: 'available', route: '/sales?category=仪器', perm: 'sales:records:read' },
-  { id: 'report-medical-deals', title: '医疗成交明细', group: '数据报表', status: 'available', route: '/sales?category=医疗', perm: 'sales:records:read' },
+  { id: 'report-card-deals', title: '卡项成交明细', group: '数据报表', status: 'reserved', note: '类别/产品维度筛选等待新列表接口(销售明细行已改为产品维度)' },
+  { id: 'report-device-deals', title: '仪器成交明细', group: '数据报表', status: 'reserved', note: '类别/产品维度筛选等待新列表接口(销售明细行已改为产品维度)' },
+  { id: 'report-medical-deals', title: '医疗成交明细', group: '数据报表', status: 'reserved', note: '类别/产品维度筛选等待新列表接口(销售明细行已改为产品维度)' },
   { id: 'report-product-private-deals', title: '产品及私定成交明细', group: '数据报表', status: 'available', route: '/sales', perm: 'sales:records:read' },
   { id: 'report-product-sales-rank', title: '产品销售排名', group: '数据报表', status: 'reserved', note: '等待统计域建设' },
   { id: 'report-system-performance', title: '体系业绩排名', group: '数据报表', status: 'reserved', note: '等待统计域建设' },
@@ -77,7 +77,7 @@ export const CATALOG: CatalogItem[] = [
   { id: 'perf-import', title: '绩效数据导入 [占位]', group: '绩效导出表', status: 'reserved', note: '等待导入域建设' },
 
   /* ---------- 辅助类(9;"姓名匹配"不迁移) ---------- */
-  { id: 'aux-private-deals', title: '销售成交明细(私定)', group: '辅助类', status: 'available', route: '/sales?category=私定', perm: 'sales:records:read' },
+  { id: 'aux-private-deals', title: '销售成交明细(私定)', group: '辅助类', status: 'reserved', note: '类别/产品维度筛选等待新列表接口(销售明细行已改为产品维度)' },
   { id: 'aux-private-device-remaining', title: '私定仪器剩余', group: '辅助类', status: 'reserved', note: '等待 operation-counts/list 支持按类别筛选(缺口 #2),届时接 /counts 预设' },
   { id: 'aux-customer-payable', title: '客户应付金额', group: '辅助类', status: 'reserved', note: '等待 sales-records/list 支持未收金额筛选(缺口 #4),届时接 /sales 预设' },
   { id: 'aux-customer-archive', title: '客户档案查询', group: '辅助类', status: 'available', route: '/customers', perm: 'customers:read' },

@@ -2,6 +2,7 @@ import {
   Home,
   ClipboardCheck,
   ShoppingCart,
+  Banknote,
   Syringe,
   Gauge,
   Users,
@@ -41,6 +42,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: '销售',
     items: [
       { title: '销售记录', to: '/sales', icon: ShoppingCart, perm: 'sales:records:read' },
+      { title: '回款记录', to: '/payments', icon: Banknote, perm: 'sales:records:read' },
       { title: '耗用记录', to: '/usages', icon: Syringe, perm: 'sales:operation-usages:read' },
       { title: '剩余查询', to: '/counts', icon: Gauge, perm: 'sales:operation-counts:read' },
     ],

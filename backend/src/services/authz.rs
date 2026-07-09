@@ -362,7 +362,9 @@ impl AuthzService {
         if self.repo.user_has_role(user_id, role_id).await? {
             return Ok(());
         }
-        self.repo.add_user_role(user_id, role_id, Utc::now()).await?;
+        self.repo
+            .add_user_role(user_id, role_id, Utc::now())
+            .await?;
         self.reload().await?;
         Ok(())
     }

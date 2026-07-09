@@ -24,9 +24,17 @@ export const Route = createFileRoute('/_app/customers/$customerId/')({
 
 const salesColumns: ColumnDef<SalesRecordResponse>[] = [
   {
-    accessorKey: 'sale_date',
+    accessorKey: 'record_date',
     header: '成交日期',
-    cell: ({ row }) => formatDate(row.original.sale_date),
+    cell: ({ row }) => formatDate(row.original.record_date),
+  },
+  {
+    accessorKey: 'receivable_amount',
+    header: '应收',
+    meta: { align: 'right' },
+    cell: ({ row }) => (
+      <span className="tabular-nums">{formatAmount(row.original.receivable_amount)}</span>
+    ),
   },
   {
     accessorKey: 'paid_amount',
@@ -37,11 +45,11 @@ const salesColumns: ColumnDef<SalesRecordResponse>[] = [
     ),
   },
   {
-    accessorKey: 'unpaid_amount',
+    accessorKey: 'outstanding_amount',
     header: '未收',
     meta: { align: 'right' },
     cell: ({ row }) => (
-      <span className="tabular-nums">{formatAmount(row.original.unpaid_amount)}</span>
+      <span className="tabular-nums">{formatAmount(row.original.outstanding_amount)}</span>
     ),
   },
   {

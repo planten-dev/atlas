@@ -119,7 +119,8 @@ impl SalesRecordLineResponse {
             operation_total_count: line.operation_total_count,
             remark: line.remark,
             status: line.status,
-            operation_count: operation_count.map(OperationCountResponse::from),
+            operation_count: operation_count
+                .map(|count| OperationCountResponse::from_model(count, line.sales_record_id)),
             created_at: line.created_at,
             updated_at: line.updated_at,
         }
@@ -203,6 +204,7 @@ impl From<sales_payment_allocations::Model> for SalesPaymentAllocationResponse {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct OperationCountResponse {
     pub sales_record_line_id: Uuid,
+    pub sales_record_id: Uuid,
     pub total_count: i32,
     pub used_count: i32,
     pub remaining_count: i32,
@@ -219,10 +221,11 @@ pub struct ListOperationCountsResponse {
     pub total_count: u64,
 }
 
-impl From<sales_record_operation_counts::Model> for OperationCountResponse {
-    fn from(count: sales_record_operation_counts::Model) -> Self {
+impl OperationCountResponse {
+    pub fn from_model(count: sales_record_operation_counts::Model, sales_record_id: Uuid) -> Self {
         Self {
             sales_record_line_id: count.sales_record_line_id,
+            sales_record_id,
             total_count: count.total_count,
             used_count: count.used_count,
             remaining_count: count.total_count - count.used_count,
@@ -237,6 +240,7 @@ impl From<sales_record_operation_counts::Model> for OperationCountResponse {
 pub struct OperationUsageResponse {
     pub id: Uuid,
     pub sales_record_line_id: Uuid,
+    pub sales_record_id: Uuid,
     pub operated_at: DateTime<Utc>,
     pub operator_user_id: Uuid,
     pub doctor_user_id: Option<Uuid>,
@@ -255,11 +259,12 @@ pub struct ListOperationUsagesResponse {
     pub total_count: u64,
 }
 
-impl From<sales_record_operation_usages::Model> for OperationUsageResponse {
-    fn from(usage: sales_record_operation_usages::Model) -> Self {
+impl OperationUsageResponse {
+    pub fn from_model(usage: sales_record_operation_usages::Model, sales_record_id: Uuid) -> Self {
         Self {
             id: usage.id,
             sales_record_line_id: usage.sales_record_line_id,
+            sales_record_id,
             operated_at: usage.operated_at,
             operator_user_id: usage.operator_user_id,
             doctor_user_id: usage.doctor_user_id,
@@ -382,6 +387,7 @@ pub struct CreateCollectionPaymentRequest {
 pub struct ListOperationCountsQuery {
     pub status_filter: Option<String>,
     pub sales_record_line_id: Option<Uuid>,
+    pub sales_record_id: Option<Uuid>,
     pub page_number: Option<u64>,
     pub page_size: Option<u64>,
 }
@@ -396,6 +402,7 @@ pub struct UpdateOperationCountRequest {
 pub struct ListOperationUsagesQuery {
     pub status_filter: Option<String>,
     pub sales_record_line_id: Option<Uuid>,
+    pub sales_record_id: Option<Uuid>,
     pub operator_user_id: Option<Uuid>,
     pub doctor_user_id: Option<Uuid>,
     pub operated_at_from: Option<DateTime<Utc>>,
@@ -475,7 +482,12 @@ pub fn parse_payment_type(
     field: &'static str,
     value: &str,
 ) -> Result<&'static str, EnumParseError> {
-    parse_enum(field, value, &["initial", "collection"], "initial, collection")
+    parse_enum(
+        field,
+        value,
+        &["initial", "collection"],
+        "initial, collection",
+    )
 }
 
 pub fn parse_customer_type(

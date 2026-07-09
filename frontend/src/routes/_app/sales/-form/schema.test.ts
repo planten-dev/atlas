@@ -1,148 +1,341 @@
 import { describe, expect, it } from 'vitest'
 import {
-  assembleRecords,
-  buildSalesFormSchema,
+  assembleSaleRequest,
+  assembleServiceRequest,
+  ratioToBasisPoints,
+  salesFormSchema,
   SALES_FORM_DEFAULTS,
   type SalesFormValues,
 } from './schema'
 
-const CATEGORY_NORMAL = 'cat-normal'
-const CATEGORY_COUNTED = 'cat-counted'
-const requiresMap = new Map([
-  [CATEGORY_NORMAL, false],
-  [CATEGORY_COUNTED, true],
-])
-
-function validValues(overrides: Partial<SalesFormValues> = {}): SalesFormValues {
+function saleValues(overrides: Partial<SalesFormValues> = {}): SalesFormValues {
   return {
     ...SALES_FORM_DEFAULTS,
     customer_id: 'c1',
-    sale_date: '2026-07-08',
-    system_id: 'sys1',
-    store_id: 'st1',
+    record_date: '2026-07-09',
     handler_user_id: 'u1',
-    lines: [{ content_category_id: CATEGORY_NORMAL, paid_amount: '100.00', unpaid_amount: '0' }],
+    lines: [
+      {
+        product_id: 'p1',
+        item_name: '项目A',
+        receivable_amount: '300.00',
+        requires_operation_count: false,
+      },
+    ],
+    payment: {
+      paid_amount: '100.00',
+      paid_at: '2026-07-09T10:00',
+      allocations: [{ guide_user_id: 'g1', allocation_ratio: '100' }],
+      remark: '',
+    },
     ...overrides,
   }
 }
 
-describe('buildSalesFormSchema', () => {
-  const schema = buildSalesFormSchema(requiresMap)
+function serviceValues(overrides: Partial<SalesFormValues> = {}): SalesFormValues {
+  return saleValues({
+    record_type: 'service',
+    lines: [
+      {
+        product_id: 'p1',
+        item_name: '服务A',
+        receivable_amount: '0.00',
+        requires_operation_count: false,
+      },
+    ],
+    // 服务模式付款区不参与校验,允许留空
+    payment: { paid_amount: '', paid_at: '', allocations: [], remark: '' },
+    ...overrides,
+  })
+}
 
-  it('合法数据通过', () => {
-    expect(schema.safeParse(validValues()).success).toBe(true)
+describe('ratioToBasisPoints', () => {
+  it('整数与两位小数', () => {
+    expect(ratioToBasisPoints('100')).toBe(10000)
+    expect(ratioToBasisPoints('33.33')).toBe(3333)
+    expect(ratioToBasisPoints('0.01')).toBe(1)
+    expect(ratioToBasisPoints('60.5')).toBe(6050)
+  })
+  it('非法输入返回 null', () => {
+    expect(ratioToBasisPoints('')).toBeNull()
+    expect(ratioToBasisPoints('1.234')).toBeNull()
+    expect(ratioToBasisPoints('abc')).toBeNull()
+  })
+})
+
+describe('salesFormSchema · sale', () => {
+  it('合法销售通过', () => {
+    expect(salesFormSchema.safeParse(saleValues()).success).toBe(true)
   })
 
-  it('专家诊必填专家', () => {
-    const result = schema.safeParse(
-      validValues({ collaboration_type: 'expert_consultation' }),
-    )
-    expect(result.success).toBe(false)
-    const paths = result.success ? [] : result.error.issues.map((i) => i.path.join('.'))
-    expect(paths).toContain('expert_user_id')
-  })
-
-  it('专家诊填齐后通过', () => {
-    const result = schema.safeParse(
-      validValues({
-        collaboration_type: 'expert_consultation',
-        expert_user_id: 'e1',
+  it('比例合计 ≠ 100 失败', () => {
+    const result = salesFormSchema.safeParse(
+      saleValues({
+        payment: {
+          paid_amount: '100.00',
+          paid_at: '2026-07-09T10:00',
+          allocations: [
+            { guide_user_id: 'g1', allocation_ratio: '60' },
+            { guide_user_id: 'g2', allocation_ratio: '30' },
+          ],
+          remark: '',
+        },
       }),
     )
-    expect(result.success).toBe(true)
+    expect(result.success).toBe(false)
+    expect(
+      result.error?.issues.some((i) => i.path.join('.') === 'payment.allocations'),
+    ).toBe(true)
   })
 
-  it('需要次数的类别缺 operation_total_count 报错', () => {
-    const result = schema.safeParse(
-      validValues({
-        lines: [{ content_category_id: CATEGORY_COUNTED, paid_amount: '1.00', unpaid_amount: '0' }],
+  it('重复导购失败', () => {
+    const result = salesFormSchema.safeParse(
+      saleValues({
+        payment: {
+          paid_amount: '100.00',
+          paid_at: '2026-07-09T10:00',
+          allocations: [
+            { guide_user_id: 'g1', allocation_ratio: '50' },
+            { guide_user_id: 'g1', allocation_ratio: '50' },
+          ],
+          remark: '',
+        },
       }),
     )
     expect(result.success).toBe(false)
-    const paths = result.success ? [] : result.error.issues.map((i) => i.path.join('.'))
-    expect(paths).toContain('lines.0.operation_total_count')
   })
 
-  it('金额格式校验(pattern 对齐后端)', () => {
-    const result = schema.safeParse(
-      validValues({
-        lines: [{ content_category_id: CATEGORY_NORMAL, paid_amount: '1.234', unpaid_amount: '0' }],
+  it('首款超过应收合计失败', () => {
+    const result = salesFormSchema.safeParse(
+      saleValues({
+        payment: {
+          paid_amount: '301.00',
+          paid_at: '2026-07-09T10:00',
+          allocations: [{ guide_user_id: 'g1', allocation_ratio: '100' }],
+          remark: '',
+        },
+      }),
+    )
+    expect(result.success).toBe(false)
+    expect(result.error?.issues.some((i) => i.path.join('.') === 'payment.paid_amount')).toBe(true)
+  })
+
+  it('应收全 0 失败', () => {
+    const result = salesFormSchema.safeParse(
+      saleValues({
+        lines: [
+          {
+            product_id: 'p1',
+            item_name: '项目A',
+            receivable_amount: '0.00',
+            requires_operation_count: false,
+          },
+        ],
       }),
     )
     expect(result.success).toBe(false)
   })
 
-  it('至少一条明细', () => {
-    const result = schema.safeParse(validValues({ lines: [] }))
+  it('需要次数的产品缺次数失败', () => {
+    const result = salesFormSchema.safeParse(
+      saleValues({
+        lines: [
+          {
+            product_id: 'p1',
+            item_name: '项目A',
+            receivable_amount: '300.00',
+            requires_operation_count: true,
+          },
+        ],
+      }),
+    )
+    expect(result.success).toBe(false)
+    expect(
+      result.error?.issues.some((i) => i.path.join('.') === 'lines.0.operation_total_count'),
+    ).toBe(true)
+  })
+
+  it('不需要次数的产品带次数失败', () => {
+    const result = salesFormSchema.safeParse(
+      saleValues({
+        lines: [
+          {
+            product_id: 'p1',
+            item_name: '项目A',
+            receivable_amount: '300.00',
+            operation_total_count: 5,
+            requires_operation_count: false,
+          },
+        ],
+      }),
+    )
+    expect(result.success).toBe(false)
+  })
+
+  it('金额格式 1.234 失败', () => {
+    const result = salesFormSchema.safeParse(
+      saleValues({
+        lines: [
+          {
+            product_id: 'p1',
+            item_name: '项目A',
+            receivable_amount: '1.234',
+            requires_operation_count: false,
+          },
+        ],
+      }),
+    )
     expect(result.success).toBe(false)
   })
 })
 
-describe('assembleRecords', () => {
-  it('公共区 × 2 行明细 = 2 条 records', () => {
-    const records = assembleRecords(
-      validValues({
+describe('salesFormSchema · service', () => {
+  it('合法服务通过(付款区留空)', () => {
+    expect(salesFormSchema.safeParse(serviceValues()).success).toBe(true)
+  })
+
+  it('服务行金额非 0 失败', () => {
+    const result = salesFormSchema.safeParse(
+      serviceValues({
         lines: [
-          { content_category_id: CATEGORY_NORMAL, paid_amount: '100.00', unpaid_amount: '0' },
           {
-            content_category_id: CATEGORY_COUNTED,
-            paid_amount: '200.00',
-            unpaid_amount: '50.00',
-            operation_total_count: 10,
+            product_id: 'p1',
+            item_name: '服务A',
+            receivable_amount: '1.00',
+            requires_operation_count: false,
           },
         ],
       }),
-      requiresMap,
     )
-    expect(records).toHaveLength(2)
-    expect(records[0]?.customer_id).toBe('c1')
-    expect(records[1]?.customer_id).toBe('c1')
-    expect(records[0]?.operation_total_count).toBeNull()
-    expect(records[1]?.operation_total_count).toBe(10)
+    expect(result.success).toBe(false)
   })
 
-  it('自销强制清空专家字段(与后端校验对齐)', () => {
-    const records = assembleRecords(
-      validValues({
-        collaboration_type: 'self_sale',
-        expert_user_id: 'e1',
-      }),
-      requiresMap,
-    )
-    expect(records[0]?.expert_user_id).toBeNull()
-  })
-
-  it('专家诊保留专家字段', () => {
-    const records = assembleRecords(
-      validValues({
-        collaboration_type: 'expert_consultation',
-        expert_user_id: 'e1',
-      }),
-      requiresMap,
-    )
-    expect(records[0]?.expert_user_id).toBe('e1')
-  })
-
-  it('不需要次数的类别忽略残留 operation_total_count', () => {
-    const records = assembleRecords(
-      validValues({
+  it('服务行带次数失败', () => {
+    const result = salesFormSchema.safeParse(
+      serviceValues({
         lines: [
           {
-            content_category_id: CATEGORY_NORMAL,
-            paid_amount: '1.00',
-            unpaid_amount: '0',
+            product_id: 'p1',
+            item_name: '服务A',
+            receivable_amount: '0.00',
+            operation_total_count: 3,
+            requires_operation_count: true,
+          },
+        ],
+      }),
+    )
+    expect(result.success).toBe(false)
+  })
+})
+
+describe('assembleSaleRequest', () => {
+  it('deny_unknown_fields 守卫:输出键精确匹配契约', () => {
+    const request = assembleSaleRequest(
+      saleValues({
+        lines: [
+          {
+            product_id: 'p1',
+            item_name: '项目A',
+            receivable_amount: '300.00',
             operation_total_count: 5,
+            requires_operation_count: true,
           },
         ],
       }),
-      requiresMap,
     )
-    expect(records[0]?.operation_total_count).toBeNull()
+    expect(Object.keys(request).sort()).toEqual(
+      [
+        'customer_id',
+        'record_date',
+        'customer_type',
+        'deal_type',
+        'handler_user_id',
+        'expert_user_id',
+        'consultant_user_id',
+        'doctor_user_id',
+        'remark',
+        'lines',
+        'payment',
+      ].sort(),
+    )
+    expect(Object.keys(request.lines[0]!).sort()).toEqual(
+      ['product_id', 'item_name', 'receivable_amount', 'operation_total_count', 'remark'].sort(),
+    )
+    expect(Object.keys(request.payment).sort()).toEqual(
+      ['paid_amount', 'paid_at', 'allocations', 'remark'].sort(),
+    )
+    expect(Object.keys(request.payment.allocations[0]!).sort()).toEqual(
+      ['guide_user_id', 'allocation_ratio'].sort(),
+    )
   })
 
-  it('选填人员空串转 null', () => {
-    const records = assembleRecords(validValues(), requiresMap)
-    expect(records[0]?.consultant_user_id).toBeNull()
-    expect(records[0]?.doctor_user_id).toBeNull()
+  it('requires 行发送次数,非 requires 行次数为 null', () => {
+    const request = assembleSaleRequest(
+      saleValues({
+        lines: [
+          {
+            product_id: 'p1',
+            item_name: 'A',
+            receivable_amount: '100.00',
+            operation_total_count: 5,
+            requires_operation_count: true,
+          },
+          {
+            product_id: 'p2',
+            item_name: 'B',
+            receivable_amount: '200.00',
+            requires_operation_count: false,
+          },
+        ],
+      }),
+    )
+    expect(request.lines[0]?.operation_total_count).toBe(5)
+    expect(request.lines[1]?.operation_total_count).toBeNull()
+  })
+
+  it('paid_at 转为 ISO;空可选人员为 null', () => {
+    const request = assembleSaleRequest(saleValues())
+    expect(request.payment.paid_at).toMatch(/Z$/)
+    expect(new Date(request.payment.paid_at).getTime()).toBe(
+      new Date('2026-07-09T10:00').getTime(),
+    )
+    expect(request.expert_user_id).toBeNull()
+    expect(request.consultant_user_id).toBeNull()
+    expect(request.doctor_user_id).toBeNull()
+  })
+})
+
+describe('assembleServiceRequest', () => {
+  it('无 payment 键,行金额硬编码 0.00,无次数键', () => {
+    const request = assembleServiceRequest(
+      serviceValues({
+        lines: [
+          {
+            product_id: 'p1',
+            item_name: '服务A',
+            // 即便 UI 出错留下非 0 值,组装器也强制 0.00
+            receivable_amount: '5.00',
+            requires_operation_count: false,
+          },
+        ],
+      }),
+    )
+    expect('payment' in request).toBe(false)
+    expect(request.lines[0]?.receivable_amount).toBe('0.00')
+    expect('operation_total_count' in request.lines[0]!).toBe(false)
+    expect(Object.keys(request).sort()).toEqual(
+      [
+        'customer_id',
+        'record_date',
+        'customer_type',
+        'deal_type',
+        'handler_user_id',
+        'expert_user_id',
+        'consultant_user_id',
+        'doctor_user_id',
+        'remark',
+        'lines',
+      ].sort(),
+    )
   })
 })

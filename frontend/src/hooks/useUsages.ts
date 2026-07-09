@@ -7,6 +7,7 @@ export type OperationUsageResponse = components['schemas']['OperationUsageRespon
 
 export interface UsagesListSearch {
   status_filter?: 'active' | 'voided'
+  sales_record_line_id?: string
   sales_record_id?: string
   operator_user_id?: string
   doctor_user_id?: string
@@ -47,6 +48,10 @@ export function useCreateUsage() {
   })
 }
 
+/**
+ * PatchField 三态语义:键缺失 = 不变;null = 清空(仅 doctor_user_id/remark 合法);
+ * operated_at/operator_user_id/operation_count 传 null 会被 422 拒绝 —— 调用方只组装变更键。
+ */
 export function useUpdateUsage() {
   const queryClient = useQueryClient()
   return useMutation({

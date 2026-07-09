@@ -1,24 +1,23 @@
-import { Controller, useFieldArray, type UseFormReturn } from 'react-hook-form'
+import { Controller, type UseFormReturn } from 'react-hook-form'
+import { useFieldArray } from 'react-hook-form'
 import { useQuery } from '@tanstack/react-query'
 import { Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { FormDate, FormMoney, FormSelect } from '@/components/form/fields'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { FormDate, FormMoney, FormSelect, FormText, FormTextarea } from '@/components/form/fields'
 import { CustomerPicker } from '@/components/pickers/CustomerPicker'
-import { SystemPicker } from '@/components/pickers/SystemPicker'
-import { StorePicker } from '@/components/pickers/StorePicker'
-import { CategoryPicker } from '@/components/pickers/CategoryPicker'
+import { ProductPicker } from '@/components/pickers/ProductPicker'
 import { UserPicker } from '@/components/pickers/UserPicker'
-import { activeCategoriesOptions } from '@/hooks/useCategories'
-import {
-  COLLABORATION_TYPE_LABELS,
-  CUSTOMER_TYPE_LABELS,
-  DEAL_STATUS_LABELS,
-  DEAL_TYPE_LABELS,
-} from '@/lib/labels'
-import type { SalesFormValues } from './schema'
+import { DateTimePicker } from '@/components/pickers/DateTimePicker'
+import { AllocationsField } from '@/components/payments/AllocationsField'
+import { customerDetailOptions } from '@/hooks/useCustomers'
+import { systemsListOptions } from '@/hooks/useSystems'
+import { storesListOptions } from '@/hooks/useStores'
+import { CUSTOMER_TYPE_LABELS, DEAL_TYPE_LABELS } from '@/lib/labels'
+import { EMPTY_LINE, type SalesFormValues } from './schema'
 
 type SalesForm = UseFormReturn<SalesFormValues>
 
@@ -60,36 +59,65 @@ function PickerField({
   )
 }
 
-/** 第 1 步:客户与归属(体系→门店两级联动)。 */
+/** 选客户后只读显示归属体系/门店(由客户档案决定,后端派生)。 */
+function CustomerScopeHint({ customerId }: { customerId: string }) {
+  const { data: customer } = useQuery(customerDetailOptions(customerId))
+  const { data: systems } = useQuery(systemsListOptions({ page_size: 200 }))
+  const { data: stores } = useQuery({
+    ...storesListOptions({ system_id: customer?.system_id, page_size: 200 }),
+    enabled: Boolean(customer?.system_id),
+  })
+  if (!customer) return null
+  const systemName = systems?.items.find((s) => s.id === customer.system_id)?.name
+  const storeName = stores?.items.find((s) => s.id === customer.store_id)?.name
+  return (
+    <p className="text-xs text-muted-foreground md:col-span-2">
+      归属:{systemName ?? '…'} / {storeName ?? '…'}(由客户档案决定)
+    </p>
+  )
+}
+
+/** 第 1 步:记录类型 + 客户与类型。 */
 export function CustomerSection({ form }: { form: SalesForm }) {
-  const systemId = form.watch('system_id')
+  const recordType = form.watch('record_type')
+  const customerId = form.watch('customer_id')
 
   return (
     <div className="grid gap-4 md:grid-cols-2">
+      <Controller
+        control={form.control}
+        name="record_type"
+        render={({ field }) => (
+          <Field className="md:col-span-2">
+            <FieldLabel>
+              记录类型<span className="text-destructive">*</span>
+            </FieldLabel>
+            <Tabs
+              value={field.value}
+              onValueChange={(value) => {
+                field.onChange(value)
+                if (value === 'service') {
+                  // 服务记录:行金额锁 0、清次数
+                  form.getValues('lines').forEach((_, index) => {
+                    form.setValue(`lines.${index}.receivable_amount`, '0.00')
+                    form.setValue(`lines.${index}.operation_total_count`, undefined)
+                  })
+                }
+              }}
+            >
+              <TabsList>
+                <TabsTrigger value="sale">销售</TabsTrigger>
+                <TabsTrigger value="service">服务</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </Field>
+        )}
+      />
       <PickerField form={form} name="customer_id" label="客户" required>
         {(field) => <CustomerPicker value={field.value} onChange={field.onChange} />}
       </PickerField>
-      <FormDate control={form.control} name="sale_date" label="成交日期" required />
-      <PickerField form={form} name="system_id" label="体系" required>
-        {(field) => (
-          <SystemPicker
-            value={field.value}
-            onChange={(v) => {
-              field.onChange(v)
-              form.setValue('store_id', '')
-            }}
-          />
-        )}
-      </PickerField>
-      <PickerField form={form} name="store_id" label="门店" required>
-        {(field) => (
-          <StorePicker
-            systemId={systemId || undefined}
-            value={field.value}
-            onChange={field.onChange}
-          />
-        )}
-      </PickerField>
+      <FormDate control={form.control} name="record_date" label="成交日期" required />
+      {customerId && <CustomerScopeHint customerId={customerId} />}
       <FormSelect
         control={form.control}
         name="customer_type"
@@ -104,34 +132,31 @@ export function CustomerSection({ form }: { form: SalesForm }) {
         required
         options={toOptions(DEAL_TYPE_LABELS)}
       />
-      <FormSelect
-        control={form.control}
-        name="deal_status"
-        label="成交状态"
-        required
-        options={toOptions(DEAL_STATUS_LABELS)}
-      />
+      {recordType === 'service' && (
+        <p className="text-xs text-muted-foreground md:col-span-2">
+          服务记录不涉及收款,明细金额固定为 0。
+        </p>
+      )}
     </div>
   )
 }
 
-/** 第 2 步:内容明细行(动态增删;single 用于编辑单条记录)。 */
-export function LinesSection({ form, single = false }: { form: SalesForm; single?: boolean }) {
+/** 第 2 步:产品明细行(动态增删)。 */
+export function LinesSection({ form }: { form: SalesForm }) {
   const { fields, append, remove } = useFieldArray({ control: form.control, name: 'lines' })
-  const { data: categories } = useQuery(activeCategoriesOptions)
-  const requiresMap = new Map((categories ?? []).map((c) => [c.id, c.requires_operation_count]))
+  const recordType = form.watch('record_type')
   const lines = form.watch('lines')
+  const isService = recordType === 'service'
 
   return (
     <div className="flex flex-col gap-3">
       {fields.map((item, index) => {
-        const categoryId = lines[index]?.content_category_id
-        const requiresCount = categoryId ? (requiresMap.get(categoryId) ?? false) : false
+        const requiresCount = !isService && (lines[index]?.requires_operation_count ?? false)
         return (
           <Card key={item.id} className="gap-3 py-4">
             <CardHeader>
               <CardTitle className="text-sm text-muted-foreground">明细 {index + 1}</CardTitle>
-              {!single && fields.length > 1 && (
+              {fields.length > 1 && (
                 <CardAction>
                   <Button
                     type="button"
@@ -149,26 +174,52 @@ export function LinesSection({ form, single = false }: { form: SalesForm; single
             <CardContent className="grid gap-4 md:grid-cols-3">
               <Controller
                 control={form.control}
-                name={`lines.${index}.content_category_id`}
+                name={`lines.${index}.product_id`}
                 render={({ field, fieldState }) => (
                   <Field data-invalid={fieldState.invalid || undefined}>
                     <FieldLabel>
-                      内容类型<span className="text-destructive">*</span>
+                      产品<span className="text-destructive">*</span>
                     </FieldLabel>
-                    <CategoryPicker
+                    <ProductPicker
                       value={field.value || undefined}
-                      onChange={(v) => {
-                        field.onChange(v ?? '')
-                        // 切换类别时清空次数,避免残留
+                      onChange={(id, product) => {
+                        field.onChange(id ?? '')
+                        // 快照产品名与次数规则;换产品时清残留次数
+                        form.setValue(
+                          `lines.${index}.requires_operation_count`,
+                          product?.requires_operation_count ?? false,
+                        )
                         form.setValue(`lines.${index}.operation_total_count`, undefined)
+                        if (product) {
+                          form.setValue(`lines.${index}.item_name`, product.name, {
+                            shouldValidate: Boolean(product),
+                          })
+                        }
                       }}
                     />
                     {fieldState.error && <FieldError>{fieldState.error.message}</FieldError>}
                   </Field>
                 )}
               />
-              <FormMoney control={form.control} name={`lines.${index}.paid_amount`} label="已收金额" required />
-              <FormMoney control={form.control} name={`lines.${index}.unpaid_amount`} label="未收金额" required />
+              <FormText
+                control={form.control}
+                name={`lines.${index}.item_name`}
+                label="项目名称"
+                required
+              />
+              {isService ? (
+                <Field>
+                  <FieldLabel>应收金额</FieldLabel>
+                  <Input value="0.00" disabled />
+                </Field>
+              ) : (
+                <FormMoney
+                  control={form.control}
+                  name={`lines.${index}.receivable_amount`}
+                  label="应收金额"
+                  required
+                />
+              )}
               {requiresCount && (
                 <Controller
                   control={form.control}
@@ -193,52 +244,82 @@ export function LinesSection({ form, single = false }: { form: SalesForm; single
                   )}
                 />
               )}
+              <FormText control={form.control} name={`lines.${index}.remark`} label="行备注" />
             </CardContent>
           </Card>
         )
       })}
-      {!single && (
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => append({ content_category_id: '', paid_amount: '', unpaid_amount: '' })}
-        >
-          <Plus />
-          添加明细
-        </Button>
-      )}
+      <Button
+        type="button"
+        variant="outline"
+        onClick={() =>
+          append(isService ? { ...EMPTY_LINE, receivable_amount: '0.00' } : { ...EMPTY_LINE })
+        }
+      >
+        <Plus />
+        添加明细
+      </Button>
     </div>
   )
 }
 
-/** 第 3 步:协作与人员。 */
-export function CollaborationSection({ form }: { form: SalesForm }) {
-  const collaborationType = form.watch('collaboration_type')
-  const isExpert = collaborationType === 'expert_consultation'
+/** 第 3 步:付款(仅销售)与人员。 */
+export function PaymentSection({ form }: { form: SalesForm }) {
+  const recordType = form.watch('record_type')
+  const allocations = form.watch('payment.allocations')
+  const allocationsError = form.formState.errors.payment?.allocations?.root?.message ??
+    (form.formState.errors.payment?.allocations as { message?: string } | undefined)?.message
 
   return (
-    <div className="grid gap-4 md:grid-cols-2">
-      <FormSelect
-        control={form.control}
-        name="collaboration_type"
-        label="协作类型"
-        required
-        options={toOptions(COLLABORATION_TYPE_LABELS)}
-      />
-      <PickerField form={form} name="handler_user_id" label="处理人" required>
-        {(field) => <UserPicker value={field.value} onChange={field.onChange} />}
-      </PickerField>
-      {isExpert && (
-        <PickerField form={form} name="expert_user_id" label="专家" required>
-          {(field) => <UserPicker value={field.value} onChange={field.onChange} placeholder="选择专家" />}
+    <div className="flex flex-col gap-4">
+      <div className="grid gap-4 md:grid-cols-2">
+        <PickerField form={form} name="handler_user_id" label="处理人" required>
+          {(field) => <UserPicker value={field.value} onChange={field.onChange} />}
         </PickerField>
+        <PickerField form={form} name="expert_user_id" label="专家">
+          {(field) => <UserPicker value={field.value} onChange={field.onChange} placeholder="选择专家(选填)" />}
+        </PickerField>
+        <PickerField form={form} name="consultant_user_id" label="咨询师">
+          {(field) => <UserPicker value={field.value} onChange={field.onChange} placeholder="选择咨询师(选填)" />}
+        </PickerField>
+        <PickerField form={form} name="doctor_user_id" label="医生">
+          {(field) => <UserPicker value={field.value} onChange={field.onChange} placeholder="选择医生(选填)" />}
+        </PickerField>
+      </div>
+      <FormTextarea control={form.control} name="remark" label="记录备注" />
+
+      {recordType === 'sale' && (
+        <div className="flex flex-col gap-4 rounded-md border p-4">
+          <h4 className="text-sm font-medium">首次付款</h4>
+          <div className="grid gap-4 md:grid-cols-2">
+            <FormMoney control={form.control} name="payment.paid_amount" label="首款金额" required />
+            <Controller
+              control={form.control}
+              name="payment.paid_at"
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid || undefined}>
+                  <FieldLabel>
+                    支付时间<span className="text-destructive">*</span>
+                  </FieldLabel>
+                  <DateTimePicker
+                    value={field.value || undefined}
+                    onChange={field.onChange}
+                    aria-invalid={fieldState.invalid || undefined}
+                  />
+                  {fieldState.error && <FieldError>{fieldState.error.message}</FieldError>}
+                </Field>
+              )}
+            />
+          </div>
+          <AllocationsField
+            control={form.control}
+            name="payment.allocations"
+            rows={allocations ?? []}
+            error={allocationsError}
+          />
+          <FormTextarea control={form.control} name="payment.remark" label="付款备注" />
+        </div>
       )}
-      <PickerField form={form} name="consultant_user_id" label="咨询师">
-        {(field) => <UserPicker value={field.value} onChange={field.onChange} placeholder="选择咨询师(选填)" />}
-      </PickerField>
-      <PickerField form={form} name="doctor_user_id" label="医生">
-        {(field) => <UserPicker value={field.value} onChange={field.onChange} placeholder="选择医生(选填)" />}
-      </PickerField>
     </div>
   )
 }

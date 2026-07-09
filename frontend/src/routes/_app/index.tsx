@@ -93,7 +93,7 @@ function RecentSalesCard() {
                 className="flex items-center justify-between gap-2 py-2 text-sm hover:bg-accent/30"
               >
                 <span>{customerNameCell(record.customer_id)}</span>
-                <span className="text-muted-foreground">{formatDate(record.sale_date)}</span>
+                <span className="text-muted-foreground">{formatDate(record.record_date)}</span>
                 <span className="tabular-nums">{formatAmount(record.paid_amount)}</span>
               </Link>
             ))}

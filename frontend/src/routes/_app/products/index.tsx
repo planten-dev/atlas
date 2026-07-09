@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
@@ -6,6 +6,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Plus } from 'lucide-react'
+import { Input } from '@/components/ui/input'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,7 +35,9 @@ import { Guard } from '@/auth/PermissionProvider'
 import { requirePerm } from '@/auth/route-guard'
 import {
   productsListOptions,
+  productSuggestionsOptions,
   useCreateProduct,
+  useDeleteProduct,
   useDisableProduct,
   useUpdateProduct,
   type ProductResponse,
@@ -52,6 +55,7 @@ import { outcomeMessage } from '@/hooks/mutation-result'
 
 const searchSchema = z.object({
   tab: z.enum(['products', 'categories']).default('products'),
+  keyword: z.string().optional(),
   page_number: z.number().int().min(1).default(1),
   page_size: z.number().int().min(1).max(200).default(20),
 })
@@ -109,12 +113,32 @@ function ProductsTab() {
   const search = Route.useSearch()
   const navigate = useNavigate({ from: Route.fullPath })
   const query = useQuery(
-    productsListOptions({ page_number: search.page_number, page_size: search.page_size }),
+    productsListOptions({
+      keyword: search.keyword,
+      page_number: search.page_number,
+      page_size: search.page_size,
+    }),
   )
   const [editing, setEditing] = useState<ProductResponse | 'new' | null>(null)
   const [disabling, setDisabling] = useState<ProductResponse | null>(null)
+  const [deleting, setDeleting] = useState<ProductResponse | null>(null)
   const disableMutation = useDisableProduct()
+  const deleteMutation = useDeleteProduct()
   const rows = query.data?.items ?? []
+
+  // 关键词防抖写 URL
+  const [keywordDraft, setKeywordDraft] = useState(search.keyword ?? '')
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const next = keywordDraft.trim() || undefined
+      if (next !== search.keyword) {
+        void navigate({
+          search: (prev) => ({ ...prev, keyword: next, page_number: 1 }),
+        })
+      }
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [keywordDraft, search.keyword, navigate])
 
   const columns: ColumnDef<ProductResponse>[] = [
     { accessorKey: 'name', header: '名称' },
@@ -148,9 +172,18 @@ function ProductsTab() {
             <Button variant="ghost" size="xs" onClick={() => setEditing(row.original)}>
               编辑
             </Button>
-            {row.original.status === 'active' && (
+            {row.original.status === 'active' ? (
               <Button variant="ghost" size="xs" onClick={() => setDisabling(row.original)}>
                 停用
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="xs"
+                className="text-destructive"
+                onClick={() => setDeleting(row.original)}
+              >
+                删除
               </Button>
             )}
           </div>
@@ -180,7 +213,14 @@ function ProductsTab() {
             </Button>
           </Guard>
         }
-      />
+      >
+        <Input
+          value={keywordDraft}
+          onChange={(e) => setKeywordDraft(e.target.value)}
+          placeholder="搜索名称/系列/品牌/规格/单位…"
+          className="w-64"
+        />
+      </DataTableToolbar>
       <DataTable
         tableId="products"
         columns={columns}
@@ -220,6 +260,31 @@ function ProductsTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <AlertDialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除产品 “{deleting?.name}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              删除不可恢复;已被销售记录引用的产品无法删除。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (!deleting) return
+                deleteMutation.mutate(deleting.id, {
+                  onSuccess: () => notify.success('产品已删除'),
+                  onError: (error) => notify.error(error),
+                })
+                setDeleting(null)
+              }}
+            >
+              确认删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -231,6 +296,7 @@ function ProductDialog({
   product: ProductResponse | null
   onClose: () => void
 }) {
+  const { data: suggestions } = useQuery(productSuggestionsOptions())
   const form = useForm<ProductFormValues>({
     resolver: zodResolver(productFormSchema),
     defaultValues: {
@@ -293,10 +359,10 @@ function ProductDialog({
           </Field>
           <FormMoney control={form.control} name="unit_price" label="单价" required />
           <div className="grid grid-cols-2 gap-3">
-            <FormText control={form.control} name="series" label="系列" />
-            <FormText control={form.control} name="brand_name" label="品牌" />
+            <FormText control={form.control} name="series" label="系列" suggestions={suggestions?.series} />
+            <FormText control={form.control} name="brand_name" label="品牌" suggestions={suggestions?.brand_names} />
             <FormText control={form.control} name="specification" label="规格" />
-            <FormText control={form.control} name="unit" label="单位" />
+            <FormText control={form.control} name="unit" label="单位" suggestions={suggestions?.units} />
           </div>
           <Button type="submit" disabled={isPending}>
             {isPending ? '保存中…' : '保存'}

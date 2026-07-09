@@ -18,14 +18,19 @@ import { UserPicker } from '@/components/pickers/UserPicker'
 import { DateTimePicker } from '@/components/pickers/DateTimePicker'
 import { CustomerPicker } from '@/components/pickers/CustomerPicker'
 import { CustomerName } from '@/components/customers/CustomerName'
-import { salesDetailOptions, salesListOptions } from '@/hooks/useSales'
+import {
+  salesDetailOptions,
+  salesListOptions,
+  type SalesRecordLineResponse,
+  type SalesRecordResponse,
+} from '@/hooks/useSales'
 import { useCreateUsage } from '@/hooks/useUsages'
-import { formatDate } from '@/lib/date'
+import { formatDate, toLocalDateTimeInput } from '@/lib/date'
 import { notify } from '@/lib/notify'
 import { outcomeMessage } from '@/hooks/mutation-result'
 
 const usageFormSchema = z.object({
-  sales_record_id: z.string().min(1, '请选择销售记录'),
+  sales_record_line_id: z.string().min(1, '请选择明细行'),
   operated_at: z.string().min(1, '请选择操作时间'),
   operator_user_id: z.string().min(1, '请选择操作人'),
   doctor_user_id: z.string().optional(),
@@ -35,26 +40,32 @@ const usageFormSchema = z.object({
 
 type UsageFormValues = z.infer<typeof usageFormSchema>
 
-function toLocalDateTimeInput(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+/** 有有效次数账户、可登记耗用的明细行。 */
+function eligibleLines(record: SalesRecordResponse): SalesRecordLineResponse[] {
+  return record.lines.filter(
+    (line) => line.status === 'active' && line.operation_count?.status === 'active',
+  )
 }
 
 /**
- * 登记耗用表单(页面与弹窗共用):
- * lockedSalesRecordId 提供时锁定记录并显示剩余次数,否则先选客户再选记录。
+ * 登记耗用表单(页面与弹窗共用),三种模式:
+ * - lockedLineId + lockedSalesRecordId:锁定明细行(详情页明细行进入)
+ * - lockedSalesRecordId:锁定记录,行内选择(深链)
+ * - 都不传:先选客户 → 记录 → 明细行
  */
 export function UsageForm({
   lockedSalesRecordId,
+  lockedLineId,
   onSuccess,
 }: {
   lockedSalesRecordId?: string
+  lockedLineId?: string
   onSuccess: (salesRecordId: string) => void
 }) {
   const form = useForm<UsageFormValues>({
     resolver: zodResolver(usageFormSchema),
     defaultValues: {
-      sales_record_id: lockedSalesRecordId ?? '',
+      sales_record_line_id: lockedLineId ?? '',
       operated_at: toLocalDateTimeInput(new Date()),
       operator_user_id: '',
       doctor_user_id: '',
@@ -64,12 +75,14 @@ export function UsageForm({
   })
 
   const createMutation = useCreateUsage()
-  const selectedRecordId = form.watch('sales_record_id')
+  const selectedLineId = form.watch('sales_record_line_id')
+  // 自由模式下选行时记录所属记录 id,提交成功后跳详情
+  const [freeRecordId, setFreeRecordId] = useState<string | undefined>(undefined)
 
   const submit = form.handleSubmit((values) => {
     createMutation.mutate(
       {
-        sales_record_id: values.sales_record_id,
+        sales_record_line_id: values.sales_record_line_id,
         operated_at: new Date(values.operated_at).toISOString(),
         operator_user_id: values.operator_user_id,
         doctor_user_id: values.doctor_user_id || null,
@@ -79,7 +92,11 @@ export function UsageForm({
       {
         onSuccess: (outcome) => {
           notify.success(outcomeMessage(outcome, '耗用已登记'))
-          onSuccess(values.sales_record_id)
+          const recordId =
+            lockedSalesRecordId ??
+            freeRecordId ??
+            (outcome.kind === 'applied' ? outcome.data.sales_record_id : undefined)
+          if (recordId) onSuccess(recordId)
         },
         onError: (error) => notify.error(error),
       },
@@ -95,12 +112,23 @@ export function UsageForm({
       }}
     >
       {lockedSalesRecordId ? (
-        <LockedRecordCard salesRecordId={lockedSalesRecordId} />
+        <LockedRecordLines
+          salesRecordId={lockedSalesRecordId}
+          lockedLineId={lockedLineId}
+          value={selectedLineId || undefined}
+          onChange={(id) =>
+            form.setValue('sales_record_line_id', id ?? '', { shouldValidate: true })
+          }
+          error={form.formState.errors.sales_record_line_id?.message}
+        />
       ) : (
-        <RecordSelector
-          value={selectedRecordId || undefined}
-          onChange={(id) => form.setValue('sales_record_id', id ?? '', { shouldValidate: true })}
-          error={form.formState.errors.sales_record_id?.message}
+        <LineSelector
+          value={selectedLineId || undefined}
+          onChange={(lineId, recordId) => {
+            setFreeRecordId(recordId)
+            form.setValue('sales_record_line_id', lineId ?? '', { shouldValidate: true })
+          }}
+          error={form.formState.errors.sales_record_line_id?.message}
         />
       )}
 
@@ -187,10 +215,12 @@ export function UsageFormDialog({
   open,
   onOpenChange,
   lockedSalesRecordId,
+  lockedLineId,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   lockedSalesRecordId?: string
+  lockedLineId?: string
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -202,6 +232,7 @@ export function UsageFormDialog({
         <div className="-mx-2 overflow-y-auto px-2 pb-1">
           <UsageForm
             lockedSalesRecordId={lockedSalesRecordId}
+            lockedLineId={lockedLineId}
             onSuccess={() => onOpenChange(false)}
           />
         </div>
@@ -210,50 +241,106 @@ export function UsageFormDialog({
   )
 }
 
-/** 锁定记录:显示客户/日期与剩余次数。 */
-function LockedRecordCard({ salesRecordId }: { salesRecordId: string }) {
-  const { data: record } = useQuery(salesDetailOptions(salesRecordId))
+function LineButton({
+  line,
+  selected,
+  onClick,
+}: {
+  line: SalesRecordLineResponse
+  selected: boolean
+  onClick: () => void
+}) {
   return (
-    <Card>
-      <CardContent className="flex flex-col gap-1 py-3 text-sm">
-        {record ? (
-          <>
-            <p>
-              <CustomerName customerId={record.customer_id} /> · {formatDate(record.sale_date)}
-            </p>
-            {record.operation_count ? (
-              <p className="text-muted-foreground">
-                次数账户:剩余 <span className="font-medium">{record.operation_count.remaining_count}</span> /{' '}
-                {record.operation_count.total_count} 次
-              </p>
-            ) : (
-              <p className="text-destructive">该记录无次数账户,无法登记耗用</p>
-            )}
-          </>
-        ) : (
-          <p className="text-muted-foreground">加载记录中…</p>
-        )}
-      </CardContent>
-    </Card>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-md border p-2 text-left text-sm transition-colors ${
+        selected ? 'border-primary bg-primary/5' : 'hover:bg-accent/50'
+      }`}
+    >
+      <p>{line.item_name}</p>
+      <p className="text-muted-foreground">
+        剩余 {line.operation_count?.remaining_count} / {line.operation_count?.total_count} 次
+      </p>
+    </button>
   )
 }
 
-/** 未锁定:先选客户 → 列出该客户有次数账户的记录。 */
-function RecordSelector({
+/** 记录锁定:显示记录信息 + 可耗用明细行选择(单行锁定时只显示该行)。 */
+function LockedRecordLines({
+  salesRecordId,
+  lockedLineId,
+  value,
+  onChange,
+  error,
+}: {
+  salesRecordId: string
+  lockedLineId?: string
+  value: string | undefined
+  onChange: (id: string | undefined) => void
+  error?: string
+}) {
+  const { data: record } = useQuery(salesDetailOptions(salesRecordId))
+  if (!record) {
+    return <p className="text-sm text-muted-foreground">加载记录中…</p>
+  }
+  const lines = eligibleLines(record).filter(
+    (line) => !lockedLineId || line.id === lockedLineId,
+  )
+  return (
+    <div className="flex flex-col gap-2">
+      <Card>
+        <CardContent className="py-3 text-sm">
+          <CustomerName customerId={record.customer_id} /> · {formatDate(record.record_date)}
+        </CardContent>
+      </Card>
+      {lines.length === 0 ? (
+        <p className="text-sm text-destructive">该记录没有可耗用的明细行</p>
+      ) : (
+        <Field data-invalid={error ? true : undefined}>
+          <FieldLabel>
+            明细行<span className="text-destructive">*</span>
+          </FieldLabel>
+          <div className="flex flex-col gap-1">
+            {lines.map((line) => (
+              <LineButton
+                key={line.id}
+                line={line}
+                selected={value === line.id}
+                onClick={() => onChange(line.id)}
+              />
+            ))}
+          </div>
+          {error && <FieldError>{error}</FieldError>}
+        </Field>
+      )}
+    </div>
+  )
+}
+
+/** 自由模式:客户 → 销售记录 → 可耗用明细行(两级展开)。 */
+function LineSelector({
   value,
   onChange,
   error,
 }: {
   value: string | undefined
-  onChange: (id: string | undefined) => void
+  onChange: (lineId: string | undefined, recordId?: string) => void
   error?: string
 }) {
   const [customerId, setCustomerId] = useState<string | undefined>(undefined)
   const recordsQuery = useQuery({
-    ...salesListOptions({ customer_id: customerId, status_filter: 'active', page_size: 50 }),
+    ...salesListOptions({
+      customer_id: customerId,
+      status_filter: 'active',
+      record_type: 'sale',
+      page_size: 50,
+    }),
     enabled: Boolean(customerId),
   })
-  const records = (recordsQuery.data?.items ?? []).filter((r) => r.operation_count)
+  const records = (recordsQuery.data?.items ?? []).filter(
+    (record) => eligibleLines(record).length > 0,
+  )
 
   return (
     <div className="flex flex-col gap-2">
@@ -273,26 +360,24 @@ function RecordSelector({
       </Field>
 
       {customerId && (
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-2">
           {recordsQuery.isLoading ? (
             <p className="text-sm text-muted-foreground">加载记录中…</p>
           ) : records.length === 0 ? (
             <p className="text-sm text-muted-foreground">该客户没有可耗用的销售记录</p>
           ) : (
             records.map((record) => (
-              <button
-                key={record.id}
-                type="button"
-                onClick={() => onChange(record.id)}
-                className={`rounded-md border p-2 text-left text-sm transition-colors ${
-                  value === record.id ? 'border-primary bg-primary/5' : 'hover:bg-accent/50'
-                }`}
-              >
-                <p>{formatDate(record.sale_date)}</p>
-                <p className="text-muted-foreground">
-                  剩余 {record.operation_count?.remaining_count} / {record.operation_count?.total_count} 次
-                </p>
-              </button>
+              <div key={record.id} className="flex flex-col gap-1 rounded-md border p-2">
+                <p className="text-sm text-muted-foreground">{formatDate(record.record_date)}</p>
+                {eligibleLines(record).map((line) => (
+                  <LineButton
+                    key={line.id}
+                    line={line}
+                    selected={value === line.id}
+                    onClick={() => onChange(line.id, record.id)}
+                  />
+                ))}
+              </div>
             ))
           )}
         </div>

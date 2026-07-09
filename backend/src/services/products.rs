@@ -8,8 +8,8 @@ use uuid::Uuid;
 use crate::{
     dto::products::{
         CreateProductRequest, ListProductsQuery, ListProductsResponse, PatchField, ProductResponse,
-        ProductStatus, ProductStatusParseError, ProductSuggestionsQuery, ProductSuggestionsResponse,
-        UpdateProductRequest,
+        ProductStatus, ProductStatusParseError, ProductSuggestionsQuery,
+        ProductSuggestionsResponse, UpdateProductRequest,
     },
     entities::product_category,
     repositories::{

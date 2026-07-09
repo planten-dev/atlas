@@ -50,7 +50,14 @@ export function FormText<T extends FieldValues>({
   disabled,
   placeholder,
   type = 'text',
-}: BaseFieldProps<T> & { placeholder?: string; type?: string }) {
+  suggestions,
+}: BaseFieldProps<T> & {
+  placeholder?: string
+  type?: string
+  /** 原生 datalist 自动补全候选值 */
+  suggestions?: string[]
+}) {
+  const datalistId = suggestions ? `${name}-datalist` : undefined
   return (
     <Controller
       control={control}
@@ -65,10 +72,18 @@ export function FormText<T extends FieldValues>({
             type={type}
             placeholder={placeholder}
             disabled={disabled}
+            list={datalistId}
             aria-invalid={fieldState.invalid || undefined}
             {...field}
             value={field.value ?? ''}
           />
+          {datalistId && (
+            <datalist id={datalistId}>
+              {suggestions?.map((value) => (
+                <option key={value} value={value} />
+              ))}
+            </datalist>
+          )}
           {fieldState.error && <FieldError>{fieldState.error.message}</FieldError>}
         </Field>
       )}

@@ -1,6 +1,4 @@
-import { useMemo } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Button } from '@/components/ui/button'
@@ -11,19 +9,27 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
-import { activeCategoriesOptions } from '@/hooks/useCategories'
-import { useCreateSalesBatch } from '@/hooks/useSales'
+import { useCreateSale, useCreateService } from '@/hooks/useSales'
 import { notify } from '@/lib/notify'
-import { toDateParam } from '@/lib/date'
+import { toDateParam, toLocalDateTimeInput } from '@/lib/date'
 import {
-  assembleRecords,
-  buildSalesFormSchema,
+  assembleSaleRequest,
+  assembleServiceRequest,
+  salesFormSchema,
   SALES_FORM_DEFAULTS,
   type SalesFormValues,
 } from './schema'
-import { CollaborationSection, CustomerSection, LinesSection } from './sections'
+import { CustomerSection, LinesSection, PaymentSection } from './sections'
 
-/** 桌面端销售录入弹窗(移动端走 /sales/new 分步页)。 */
+function formDefaults(): SalesFormValues {
+  return {
+    ...SALES_FORM_DEFAULTS,
+    record_date: toDateParam(new Date()),
+    payment: { ...SALES_FORM_DEFAULTS.payment, paid_at: toLocalDateTimeInput(new Date()) },
+  }
+}
+
+/** 桌面端销售/服务录入弹窗(移动端走 /sales/new 分步页)。 */
 export function SalesFormDialog({
   open,
   onOpenChange,
@@ -32,37 +38,35 @@ export function SalesFormDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const navigate = useNavigate()
-  const { data: categories } = useQuery(activeCategoriesOptions)
-  const requiresMap = useMemo(
-    () => new Map((categories ?? []).map((c) => [c.id, c.requires_operation_count])),
-    [categories],
-  )
-
   const form = useForm<SalesFormValues>({
-    resolver: zodResolver(buildSalesFormSchema(requiresMap)),
-    defaultValues: { ...SALES_FORM_DEFAULTS, sale_date: toDateParam(new Date()) },
+    resolver: zodResolver(salesFormSchema),
+    defaultValues: formDefaults(),
     mode: 'onBlur',
   })
 
-  const createMutation = useCreateSalesBatch()
+  const createSale = useCreateSale()
+  const createService = useCreateService()
+  const isPending = createSale.isPending || createService.isPending
 
   const submit = form.handleSubmit((values) => {
-    createMutation.mutate(assembleRecords(values, requiresMap), {
-      onSuccess: (outcome) => {
+    const options = {
+      onSuccess: (outcome: { kind: 'applied'; data: { id: string } } | { kind: 'submitted'; eventId: string }) => {
         onOpenChange(false)
-        form.reset({ ...SALES_FORM_DEFAULTS, sale_date: toDateParam(new Date()) })
+        form.reset(formDefaults())
         if (outcome.kind === 'applied') {
-          notify.success(`已录入 ${outcome.data.sales_records.length} 条销售记录`)
-          void navigate({
-            to: '/sales',
-            search: { record_group_id: outcome.data.record_group_id },
-          })
+          notify.success(values.record_type === 'sale' ? '已录入销售记录' : '已录入服务记录')
+          void navigate({ to: '/sales/$salesId', params: { salesId: outcome.data.id } })
         } else {
           notify.info('已提交审批,通过后生效')
         }
       },
-      onError: (error) => notify.error(error),
-    })
+      onError: (error: Error) => notify.error(error),
+    }
+    if (values.record_type === 'sale') {
+      createSale.mutate(assembleSaleRequest(values), options)
+    } else {
+      createService.mutate(assembleServiceRequest(values), options)
+    }
   })
 
   return (
@@ -70,7 +74,7 @@ export function SalesFormDialog({
       {/* 外壳固定圆角,内容区单独滚动,滚动条不压边框/关闭按钮 */}
       <DialogContent className="grid max-h-[88vh] grid-rows-[auto_1fr] gap-4 sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>销售录入</DialogTitle>
+          <DialogTitle>销售/服务录入</DialogTitle>
         </DialogHeader>
         <form
           className="-mx-2 flex flex-col gap-5 overflow-y-auto px-2 pb-1"
@@ -80,21 +84,21 @@ export function SalesFormDialog({
           }}
         >
           <section className="flex flex-col gap-3">
-            <h3 className="text-sm font-medium text-muted-foreground">客户与归属</h3>
+            <h3 className="text-sm font-medium text-muted-foreground">客户与类型</h3>
             <CustomerSection form={form} />
           </section>
           <Separator />
           <section className="flex flex-col gap-3">
-            <h3 className="text-sm font-medium text-muted-foreground">内容明细</h3>
+            <h3 className="text-sm font-medium text-muted-foreground">产品明细</h3>
             <LinesSection form={form} />
           </section>
           <Separator />
           <section className="flex flex-col gap-3">
-            <h3 className="text-sm font-medium text-muted-foreground">协作与人员</h3>
-            <CollaborationSection form={form} />
+            <h3 className="text-sm font-medium text-muted-foreground">付款与人员</h3>
+            <PaymentSection form={form} />
           </section>
-          <Button type="submit" size="lg" disabled={createMutation.isPending}>
-            {createMutation.isPending ? '提交中…' : '提交'}
+          <Button type="submit" size="lg" disabled={isPending}>
+            {isPending ? '提交中…' : '提交'}
           </Button>
         </form>
       </DialogContent>

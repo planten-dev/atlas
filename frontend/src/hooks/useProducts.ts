@@ -8,6 +8,7 @@ export type ProductResponse = components['schemas']['ProductResponse']
 export function productsListOptions(search: {
   status_filter?: 'active' | 'disabled'
   category_id?: string
+  keyword?: string
   page_number?: number
   page_size?: number
 }) {
@@ -17,6 +18,21 @@ export function productsListOptions(search: {
       const data = unwrap(await client.GET('/api/v1/products/list', { params: { query: search } }))
       return { items: data.products, totalCount: data.total_count }
     },
+  })
+}
+
+/** 系列/品牌/单位去重值,供产品表单自动补全。 */
+export function productSuggestionsOptions(search: {
+  status_filter?: 'active' | 'disabled'
+  category_id?: string
+  keyword?: string
+  limit_per_field?: number
+} = {}) {
+  return queryOptions({
+    queryKey: ['products', 'suggestions', search],
+    queryFn: async () =>
+      unwrap(await client.GET('/api/v1/products/suggestions', { params: { query: search } })),
+    staleTime: 60_000,
   })
 }
 

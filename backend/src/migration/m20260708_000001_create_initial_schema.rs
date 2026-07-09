@@ -1279,7 +1279,11 @@ async fn create_sales_record_tables(manager: &SchemaManager<'_>) -> Result<(), D
                         .uuid()
                         .not_null(),
                 )
-                .col(ColumnDef::new(SalesRecordLines::ProductId).uuid().not_null())
+                .col(
+                    ColumnDef::new(SalesRecordLines::ProductId)
+                        .uuid()
+                        .not_null(),
+                )
                 .col(
                     ColumnDef::new(SalesRecordLines::ItemName)
                         .string_len(128)
@@ -1307,7 +1311,7 @@ async fn create_sales_record_tables(manager: &SchemaManager<'_>) -> Result<(), D
                 .col(
                     ColumnDef::new(SalesRecordLines::UpdatedAt)
                         .timestamp_with_time_zone()
-                        .not_null()
+                        .not_null(),
                 )
                 .foreign_key(
                     ForeignKey::create()
@@ -1338,7 +1342,12 @@ async fn create_sales_record_tables(manager: &SchemaManager<'_>) -> Result<(), D
             Table::create()
                 .table(SalesPayments::Table)
                 .if_not_exists()
-                .col(ColumnDef::new(SalesPayments::Id).uuid().not_null().primary_key())
+                .col(
+                    ColumnDef::new(SalesPayments::Id)
+                        .uuid()
+                        .not_null()
+                        .primary_key(),
+                )
                 .col(
                     ColumnDef::new(SalesPayments::SalesRecordId)
                         .uuid()
@@ -1451,14 +1460,20 @@ async fn create_sales_record_tables(manager: &SchemaManager<'_>) -> Result<(), D
                 .foreign_key(
                     ForeignKey::create()
                         .name("fk_sales_payment_allocations_payment_id")
-                        .from(SalesPaymentAllocations::Table, SalesPaymentAllocations::PaymentId)
+                        .from(
+                            SalesPaymentAllocations::Table,
+                            SalesPaymentAllocations::PaymentId,
+                        )
                         .to(SalesPayments::Table, SalesPayments::Id)
                         .on_delete(ForeignKeyAction::Cascade),
                 )
                 .foreign_key(
                     ForeignKey::create()
                         .name("fk_sales_payment_allocations_guide_user_id")
-                        .from(SalesPaymentAllocations::Table, SalesPaymentAllocations::GuideUserId)
+                        .from(
+                            SalesPaymentAllocations::Table,
+                            SalesPaymentAllocations::GuideUserId,
+                        )
                         .to(Users::Table, Users::Id),
                 )
                 .check(

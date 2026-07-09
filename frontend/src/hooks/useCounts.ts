@@ -7,6 +7,7 @@ export type OperationCountResponse = components['schemas']['OperationCountRespon
 
 export function countsListOptions(search: {
   status_filter?: 'active' | 'voided'
+  sales_record_line_id?: string
   sales_record_id?: string
   page_number?: number
   page_size?: number
@@ -24,15 +25,16 @@ export function countsListOptions(search: {
   })
 }
 
-/** 次数账户按 sales_record_id 定位(契约如此)。无账户的记录返回 404。 */
-export function countDetailOptions(salesRecordId: string) {
+/** 次数账户以明细行 id 为键;无账户的行返回 404。 */
+export function countDetailOptions(salesRecordLineId: string) {
   return queryOptions({
-    queryKey: ['operation-counts', 'detail', salesRecordId],
+    queryKey: ['operation-counts', 'detail', salesRecordLineId],
     queryFn: async () =>
       unwrap(
-        await client.GET('/api/v1/sales-record-operation-counts/detail/{sales_record_id}', {
-          params: { path: { sales_record_id: salesRecordId } },
-        }),
+        await client.GET(
+          '/api/v1/sales-record-operation-counts/detail/{sales_record_line_id}',
+          { params: { path: { sales_record_line_id: salesRecordLineId } } },
+        ),
       ),
     retry: false,
   })
@@ -42,18 +44,21 @@ export function useUpdateOperationCount() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: async ({
-      salesRecordId,
+      salesRecordLineId,
       totalCount,
     }: {
-      salesRecordId: string
+      salesRecordLineId: string
       totalCount: number
     }) =>
       applied(
         unwrap(
-          await client.POST('/api/v1/sales-record-operation-counts/update/{sales_record_id}', {
-            params: { path: { sales_record_id: salesRecordId } },
-            body: { total_count: totalCount },
-          }),
+          await client.POST(
+            '/api/v1/sales-record-operation-counts/update/{sales_record_line_id}',
+            {
+              params: { path: { sales_record_line_id: salesRecordLineId } },
+              body: { total_count: totalCount },
+            },
+          ),
         ),
       ),
     onSuccess: () => {

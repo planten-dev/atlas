@@ -1325,7 +1325,9 @@ mod tests {
             Some(member.id.to_string().as_str())
         );
         assert_eq!(
-            listed_body.pointer("/users/0/status").and_then(Value::as_str),
+            listed_body
+                .pointer("/users/0/status")
+                .and_then(Value::as_str),
             Some("active")
         );
         // Member records are deliberately slim: users-domain fields such as
@@ -1452,7 +1454,11 @@ mod tests {
             .clone()
             .oneshot(request(
                 Method::PUT,
-                &format!("/api/v1/permissions/roles/{}/users/{}", Uuid::new_v4(), member.id),
+                &format!(
+                    "/api/v1/permissions/roles/{}/users/{}",
+                    Uuid::new_v4(),
+                    member.id
+                ),
                 Some(&cookie),
                 None,
             ))
