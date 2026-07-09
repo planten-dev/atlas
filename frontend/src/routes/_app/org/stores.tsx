@@ -94,7 +94,7 @@ function StoresPage() {
       <DataTableToolbar
         actions={
           <Guard perm="stores:write">
-            <Button size="sm" onClick={() => setEditing('new')}>
+            <Button onClick={() => setEditing('new')}>
               <Plus />
               新建门店
             </Button>

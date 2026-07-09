@@ -30,18 +30,18 @@ const salesColumns: ColumnDef<SalesRecordResponse>[] = [
   },
   {
     accessorKey: 'paid_amount',
-    header: () => <span className="block text-right">已收</span>,
-    meta: { title: '已收' },
+    header: '已收',
+    meta: { align: 'right' },
     cell: ({ row }) => (
-      <span className="block text-right tabular-nums">{formatAmount(row.original.paid_amount)}</span>
+      <span className="tabular-nums">{formatAmount(row.original.paid_amount)}</span>
     ),
   },
   {
     accessorKey: 'unpaid_amount',
-    header: () => <span className="block text-right">未收</span>,
-    meta: { title: '未收' },
+    header: '未收',
+    meta: { align: 'right' },
     cell: ({ row }) => (
-      <span className="block text-right tabular-nums">{formatAmount(row.original.unpaid_amount)}</span>
+      <span className="tabular-nums">{formatAmount(row.original.unpaid_amount)}</span>
     ),
   },
   {

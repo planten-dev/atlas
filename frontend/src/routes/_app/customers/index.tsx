@@ -75,15 +75,7 @@ function CustomersListPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">客户</h1>
-        <Guard perm="customers:write">
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus />
-            新建客户
-          </Button>
-        </Guard>
-      </div>
+      <h1 className="text-xl font-semibold">客户</h1>
 
       <CreateCustomerDialog
         open={createOpen}
@@ -105,6 +97,14 @@ function CustomersListPage() {
           ],
           rows,
         }}
+        actions={
+          <Guard perm="customers:write">
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus />
+              新建客户
+            </Button>
+          </Guard>
+        }
       >
         <div className="grid w-full gap-2 md:grid-cols-4">
           <Input

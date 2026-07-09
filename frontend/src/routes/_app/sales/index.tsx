@@ -6,7 +6,6 @@ import type { ColumnDef } from '@tanstack/react-table'
 import { Plus } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -22,6 +21,7 @@ import { StorePicker } from '@/components/pickers/StorePicker'
 import { CategoryPicker } from '@/components/pickers/CategoryPicker'
 import { UserPicker } from '@/components/pickers/UserPicker'
 import { CustomerPicker } from '@/components/pickers/CustomerPicker'
+import { DatePicker } from '@/components/pickers/DatePicker'
 import { Guard } from '@/auth/PermissionProvider'
 import { requirePerm } from '@/auth/route-guard'
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -76,18 +76,18 @@ const columns: ColumnDef<SalesRecordResponse>[] = [
   },
   {
     accessorKey: 'paid_amount',
-    header: () => <span className="block text-right">已收</span>,
-    meta: { title: '已收' },
+    header: '已收',
+    meta: { align: 'right' },
     cell: ({ row }) => (
-      <span className="block text-right tabular-nums">{formatAmount(row.original.paid_amount)}</span>
+      <span className="tabular-nums">{formatAmount(row.original.paid_amount)}</span>
     ),
   },
   {
     accessorKey: 'unpaid_amount',
-    header: () => <span className="block text-right">未收</span>,
-    meta: { title: '未收' },
+    header: '未收',
+    meta: { align: 'right' },
     cell: ({ row }) => (
-      <span className="block text-right tabular-nums">{formatAmount(row.original.unpaid_amount)}</span>
+      <span className="tabular-nums">{formatAmount(row.original.unpaid_amount)}</span>
     ),
   },
   {
@@ -128,23 +128,7 @@ function SalesListPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">销售记录</h1>
-        <Guard perm="sales:records:write">
-          {/* 桌面弹窗;移动端跳分步页(表单过长不适合弹窗) */}
-          {isMobile ? (
-            <Button render={<Link to="/sales/new" />}>
-              <Plus />
-              销售录入
-            </Button>
-          ) : (
-            <Button onClick={() => setCreateOpen(true)}>
-              <Plus />
-              销售录入
-            </Button>
-          )}
-        </Guard>
-      </div>
+      <h1 className="text-xl font-semibold">销售记录</h1>
 
       {!isMobile && <SalesFormDialog open={createOpen} onOpenChange={setCreateOpen} />}
 
@@ -161,6 +145,22 @@ function SalesListPage() {
           ],
           rows,
         }}
+        actions={
+          <Guard perm="sales:records:write">
+            {/* 桌面弹窗;移动端跳分步页(表单过长不适合弹窗) */}
+            {isMobile ? (
+              <Button render={<Link to="/sales/new" />}>
+                <Plus />
+                销售录入
+              </Button>
+            ) : (
+              <Button onClick={() => setCreateOpen(true)}>
+                <Plus />
+                销售录入
+              </Button>
+            )}
+          </Guard>
+        }
       >
         <div className="grid w-full gap-2 md:grid-cols-4">
           <CustomerPicker
@@ -189,19 +189,21 @@ function SalesListPage() {
             onChange={(v) => patchSearch({ content_category_id: v })}
             placeholder="按内容类型筛选"
           />
-          <div className="flex items-center gap-1">
-            <Input
-              type="date"
-              value={search.sale_date_from ?? ''}
-              onChange={(e) => patchSearch({ sale_date_from: e.target.value || undefined })}
+          <div className="flex min-w-0 items-center gap-1">
+            <DatePicker
+              value={search.sale_date_from}
+              onChange={(v) => patchSearch({ sale_date_from: v })}
+              placeholder="成交日期起"
               aria-label="成交日期起"
+              className="min-w-0 flex-1"
             />
-            <span className="text-muted-foreground">~</span>
-            <Input
-              type="date"
-              value={search.sale_date_to ?? ''}
-              onChange={(e) => patchSearch({ sale_date_to: e.target.value || undefined })}
+            <span className="shrink-0 text-muted-foreground">~</span>
+            <DatePicker
+              value={search.sale_date_to}
+              onChange={(v) => patchSearch({ sale_date_to: v })}
+              placeholder="成交日期止"
               aria-label="成交日期止"
+              className="min-w-0 flex-1"
             />
           </div>
           <Select

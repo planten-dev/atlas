@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
+import { DatePicker } from '@/components/pickers/DatePicker'
 import { formatAmount, isValidAmount } from '@/lib/money'
 
 /**
@@ -198,7 +199,7 @@ export function FormMoney<T extends FieldValues>({
   )
 }
 
-/** 日期输入:统一用原生 date input(移动端体验最佳,桌面可用)。 */
+/** 日期输入:shadcn Calendar 弹层,值为 yyyy-MM-dd 字符串。 */
 export function FormDate<T extends FieldValues>({
   control,
   name,
@@ -215,13 +216,13 @@ export function FormDate<T extends FieldValues>({
           <FieldLabel htmlFor={name}>
             <LabelText label={label} required={required} />
           </FieldLabel>
-          <Input
+          <DatePicker
             id={name}
-            type="date"
+            value={field.value || undefined}
+            onChange={(v) => field.onChange(v ?? '')}
             disabled={disabled}
+            clearable={!required}
             aria-invalid={fieldState.invalid || undefined}
-            {...field}
-            value={field.value ?? ''}
           />
           {fieldState.error && <FieldError>{fieldState.error.message}</FieldError>}
         </Field>

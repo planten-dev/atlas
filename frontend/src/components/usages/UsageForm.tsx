@@ -15,6 +15,7 @@ import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { FormTextarea } from '@/components/form/fields'
 import { UserPicker } from '@/components/pickers/UserPicker'
+import { DateTimePicker } from '@/components/pickers/DateTimePicker'
 import { CustomerPicker } from '@/components/pickers/CustomerPicker'
 import { CustomerName } from '@/components/customers/CustomerName'
 import { salesDetailOptions, salesListOptions } from '@/hooks/useSales'
@@ -111,7 +112,12 @@ export function UsageForm({
             <FieldLabel htmlFor="operated_at">
               操作时间<span className="text-destructive">*</span>
             </FieldLabel>
-            <Input id="operated_at" type="datetime-local" {...field} />
+            <DateTimePicker
+              id="operated_at"
+              value={field.value || undefined}
+              onChange={field.onChange}
+              aria-invalid={fieldState.invalid || undefined}
+            />
             {fieldState.error && <FieldError>{fieldState.error.message}</FieldError>}
           </Field>
         )}

@@ -11,8 +11,16 @@ declare module '@tanstack/react-table' {
   interface ColumnMeta<TData extends RowData, TValue> {
     /** 列设置面板显示名(表头为函数组件时必填)。 */
     title?: string
+    /** 表头与单元格统一对齐方向(数字列用 right)。 */
+    align?: 'left' | 'center' | 'right'
   }
 }
+
+const ALIGN_CLASS = {
+  left: undefined,
+  center: 'text-center',
+  right: 'text-right',
+} as const
 import {
   Table,
   TableBody,
@@ -117,9 +125,12 @@ export function DataTable<TData, TValue>({
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id}>
+              <TableRow key={headerGroup.id} className="bg-muted/50 hover:bg-muted/50">
                 {headerGroup.headers.map((header) => (
-                  <TableHead key={header.id}>
+                  <TableHead
+                    key={header.id}
+                    className={cn('px-3', ALIGN_CLASS[header.column.columnDef.meta?.align ?? 'left'])}
+                  >
                     {header.isPlaceholder
                       ? null
                       : flexRender(header.column.columnDef.header, header.getContext())}
@@ -133,7 +144,7 @@ export function DataTable<TData, TValue>({
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
                   {visibleColumns.map((_, j) => (
-                    <TableCell key={j}>
+                    <TableCell key={j} className="px-3">
                       <Skeleton className="h-4 w-full" />
                     </TableCell>
                   ))}
@@ -159,7 +170,13 @@ export function DataTable<TData, TValue>({
                   onClick={onRowClick ? () => onRowClick(row.original) : undefined}
                 >
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
+                    <TableCell
+                      key={cell.id}
+                      className={cn(
+                        'px-3',
+                        ALIGN_CLASS[cell.column.columnDef.meta?.align ?? 'left'],
+                      )}
+                    >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </TableCell>
                   ))}

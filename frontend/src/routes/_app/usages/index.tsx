@@ -6,7 +6,6 @@ import type { ColumnDef } from '@tanstack/react-table'
 import { Plus } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -18,6 +17,7 @@ import { DataTable } from '@/components/data-table/data-table'
 import { DataTableToolbar } from '@/components/data-table/toolbar'
 import { UserName } from '@/components/UserName'
 import { UserPicker } from '@/components/pickers/UserPicker'
+import { DatePicker } from '@/components/pickers/DatePicker'
 import { Guard } from '@/auth/PermissionProvider'
 import { requirePerm } from '@/auth/route-guard'
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -65,9 +65,9 @@ const columns: ColumnDef<OperationUsageResponse>[] = [
   },
   {
     accessorKey: 'operation_count',
-    header: () => <span className="block text-right">次数</span>,
-    meta: { title: '次数' },
-    cell: ({ row }) => <span className="block text-right">{row.original.operation_count}</span>,
+    header: '次数',
+    meta: { align: 'right' },
+    cell: ({ row }) => <span className="tabular-nums">{row.original.operation_count}</span>,
   },
   {
     accessorKey: 'remark',
@@ -102,15 +102,7 @@ function UsagesListPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">耗用记录</h1>
-        <Guard perm="sales:operation-usages:write">
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus />
-            登记耗用
-          </Button>
-        </Guard>
-      </div>
+      <h1 className="text-xl font-semibold">耗用记录</h1>
 
       <UsageFormDialog open={createOpen} onOpenChange={setCreateOpen} />
 
@@ -126,6 +118,14 @@ function UsagesListPage() {
           ],
           rows,
         }}
+        actions={
+          <Guard perm="sales:operation-usages:write">
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus />
+              登记耗用
+            </Button>
+          </Guard>
+        }
       >
         <div className="grid w-full gap-2 md:grid-cols-4">
           <UserPicker
@@ -138,27 +138,25 @@ function UsagesListPage() {
             onChange={(v) => patchSearch({ doctor_user_id: v })}
             placeholder="按医生筛选"
           />
-          <div className="flex items-center gap-1">
-            <Input
-              type="date"
-              value={search.operated_at_from?.slice(0, 10) ?? ''}
-              onChange={(e) =>
-                patchSearch({
-                  operated_at_from: e.target.value ? `${e.target.value}T00:00:00Z` : undefined,
-                })
+          <div className="flex min-w-0 items-center gap-1">
+            <DatePicker
+              value={search.operated_at_from?.slice(0, 10)}
+              onChange={(v) =>
+                patchSearch({ operated_at_from: v ? `${v}T00:00:00Z` : undefined })
               }
+              placeholder="操作时间起"
               aria-label="操作时间起"
+              className="min-w-0 flex-1"
             />
-            <span className="text-muted-foreground">~</span>
-            <Input
-              type="date"
-              value={search.operated_at_to?.slice(0, 10) ?? ''}
-              onChange={(e) =>
-                patchSearch({
-                  operated_at_to: e.target.value ? `${e.target.value}T23:59:59Z` : undefined,
-                })
+            <span className="shrink-0 text-muted-foreground">~</span>
+            <DatePicker
+              value={search.operated_at_to?.slice(0, 10)}
+              onChange={(v) =>
+                patchSearch({ operated_at_to: v ? `${v}T23:59:59Z` : undefined })
               }
+              placeholder="操作时间止"
               aria-label="操作时间止"
+              className="min-w-0 flex-1"
             />
           </div>
           <Select

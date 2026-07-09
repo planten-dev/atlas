@@ -121,10 +121,10 @@ function ProductsTab() {
     { accessorKey: 'category_name', header: '类别' },
     {
       accessorKey: 'unit_price',
-      header: () => <span className="block text-right">单价</span>,
-      meta: { title: '单价' },
+      header: '单价',
+      meta: { align: 'right' },
       cell: ({ row }) => (
-        <span className="block text-right tabular-nums">{formatAmount(row.original.unit_price)}</span>
+        <span className="tabular-nums">{formatAmount(row.original.unit_price)}</span>
       ),
     },
     { accessorKey: 'specification', header: '规格', cell: ({ row }) => row.original.specification ?? '-' },
@@ -174,7 +174,7 @@ function ProductsTab() {
         }}
         actions={
           <Guard perm="products:write">
-            <Button size="sm" onClick={() => setEditing('new')}>
+            <Button onClick={() => setEditing('new')}>
               <Plus />
               新建产品
             </Button>
@@ -377,7 +377,7 @@ function CategoriesTab() {
       <DataTableToolbar
         actions={
           <Guard perm="products:categories:write">
-            <Button size="sm" onClick={() => setEditing('new')}>
+            <Button onClick={() => setEditing('new')}>
               <Plus />
               新建类别
             </Button>
