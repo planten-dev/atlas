@@ -58,18 +58,29 @@ function loadCollapsedGroups(): Set<string> {
   }
 }
 
-/** 可折叠的侧边栏分组:点击组标题收起/展开,折叠状态存 localStorage。 */
-function CollapsibleSidebarGroup({ label, children }: { label: string; children: ReactNode }) {
-  const [open, setOpen] = useState(() => !loadCollapsedGroups().has(label))
+/**
+ * 可折叠的侧边栏分组:整行组标题可点击,箭头在右侧;
+ * 子项带缩进竖线呈树形;折叠状态存 localStorage。
+ */
+function CollapsibleSidebarGroup({
+  label,
+  storageKey = label,
+  children,
+}: {
+  label: string
+  storageKey?: string
+  children: ReactNode
+}) {
+  const [open, setOpen] = useState(() => !loadCollapsedGroups().has(storageKey))
 
   const handleOpenChange = (next: boolean) => {
     setOpen(next)
     try {
       const collapsed = loadCollapsedGroups()
       if (next) {
-        collapsed.delete(label)
+        collapsed.delete(storageKey)
       } else {
-        collapsed.add(label)
+        collapsed.add(storageKey)
       }
       localStorage.setItem(SIDEBAR_COLLAPSED_KEY, JSON.stringify([...collapsed]))
     } catch {
@@ -79,19 +90,25 @@ function CollapsibleSidebarGroup({ label, children }: { label: string; children:
 
   return (
     <Collapsible open={open} onOpenChange={handleOpenChange}>
-      <SidebarGroup className="py-1">
+      <SidebarGroup className="px-2 py-0">
         <SidebarGroupLabel
           render={
-            <CollapsibleTrigger className="group/collapsible w-full cursor-pointer hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
+            <CollapsibleTrigger className="w-full cursor-pointer select-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
           }
+          className="h-8 text-[13px] font-medium text-sidebar-foreground"
         >
-          <ChevronRight
-            className={cn('mr-1 transition-transform duration-200', open && 'rotate-90')}
-          />
           {label}
+          <ChevronRight
+            className={cn(
+              'ml-auto size-3.5 text-sidebar-foreground/50 transition-transform duration-200',
+              open && 'rotate-90',
+            )}
+          />
         </SidebarGroupLabel>
         <CollapsibleContent>
-          <SidebarGroupContent>{children}</SidebarGroupContent>
+          <SidebarGroupContent className="ml-2.5 border-l border-sidebar-border pl-1.5">
+            {children}
+          </SidebarGroupContent>
         </CollapsibleContent>
       </SidebarGroup>
     </Collapsible>
@@ -114,7 +131,7 @@ function DesktopShell({ children }: { children: ReactNode }) {
             <span className="font-semibold">Atlas</span>
           </Link>
         </SidebarHeader>
-        <SidebarContent>
+        <SidebarContent className="gap-0 py-1">
           {NAV_GROUPS.map((group) => {
             const visible = group.items.filter((item) => !item.perm || permissions.has(item.perm))
             if (visible.length === 0) return null
@@ -171,11 +188,18 @@ function BusinessCatalogGroups() {
 
   return (
     <>
+      <div className="mx-4 mt-2 mb-1 border-t pt-2 text-[11px] font-medium tracking-wide text-sidebar-foreground/50">
+        业务
+      </div>
       {CATALOG_GROUPS.map((groupName) => {
         const items = catalog.filter((item) => item.group === groupName)
         if (items.length === 0) return null
         return (
-          <CollapsibleSidebarGroup key={groupName} label={`业务 · ${groupName}`}>
+          <CollapsibleSidebarGroup
+            key={groupName}
+            label={groupName}
+            storageKey={`业务 · ${groupName}`}
+          >
             <SidebarMenu>
               {items.map((item) => (
                 <SidebarMenuItem key={item.id}>
