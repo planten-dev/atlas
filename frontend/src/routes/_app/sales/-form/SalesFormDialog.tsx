@@ -67,12 +67,13 @@ export function SalesFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-3xl">
+      {/* 外壳固定圆角,内容区单独滚动,滚动条不压边框/关闭按钮 */}
+      <DialogContent className="grid max-h-[88vh] grid-rows-[auto_1fr] gap-4 sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>销售录入</DialogTitle>
         </DialogHeader>
         <form
-          className="flex flex-col gap-5"
+          className="-mx-2 flex flex-col gap-5 overflow-y-auto px-2 pb-1"
           onSubmit={(e) => {
             e.stopPropagation()
             void submit(e)

@@ -53,12 +53,13 @@ export function CreateCustomerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto">
+      {/* 外壳固定圆角,内容区单独滚动,滚动条不压边框/关闭按钮 */}
+      <DialogContent className="grid max-h-[85vh] grid-rows-[auto_1fr] gap-4">
         <DialogHeader>
           <DialogTitle>新建客户</DialogTitle>
         </DialogHeader>
         <form
-          className="flex flex-col gap-4"
+          className="-mx-2 flex flex-col gap-4 overflow-y-auto px-2 pb-1"
           onSubmit={(e) => {
             e.stopPropagation()
             void submit(e)

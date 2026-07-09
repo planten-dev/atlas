@@ -188,14 +188,17 @@ export function UsageFormDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+      {/* 外壳固定圆角,内容区单独滚动,滚动条不压边框/关闭按钮 */}
+      <DialogContent className="grid max-h-[85vh] grid-rows-[auto_1fr] gap-4 sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>登记耗用</DialogTitle>
         </DialogHeader>
-        <UsageForm
-          lockedSalesRecordId={lockedSalesRecordId}
-          onSuccess={() => onOpenChange(false)}
-        />
+        <div className="-mx-2 overflow-y-auto px-2 pb-1">
+          <UsageForm
+            lockedSalesRecordId={lockedSalesRecordId}
+            onSuccess={() => onOpenChange(false)}
+          />
+        </div>
       </DialogContent>
     </Dialog>
   )
