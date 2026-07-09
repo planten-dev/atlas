@@ -374,6 +374,64 @@ impl AuthzRepository {
             .await?)
     }
 
+    #[tracing::instrument(level = "debug", skip(self), fields(role_id = %role_id))]
+    pub async fn list_role_users(
+        &self,
+        role_id: Uuid,
+    ) -> Result<Vec<users::Model>, RepositoryError> {
+        let user_ids: Vec<Uuid> = user_roles::Entity::find()
+            .filter(user_roles::Column::RoleId.eq(role_id))
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|link| link.user_id)
+            .collect();
+
+        if user_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        Ok(users::Entity::find()
+            .filter(users::Column::Id.is_in(user_ids))
+            .order_by_asc(users::Column::CreatedAt)
+            .order_by_asc(users::Column::Id)
+            .all(&self.db)
+            .await?)
+    }
+
+    #[tracing::instrument(level = "info", skip(self), fields(user_id = %user_id, role_id = %role_id))]
+    pub async fn add_user_role(
+        &self,
+        user_id: Uuid,
+        role_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<(), RepositoryError> {
+        user_roles::ActiveModel {
+            user_id: Set(user_id),
+            role_id: Set(role_id),
+            created_at: Set(now),
+        }
+        .insert(&self.db)
+        .await?;
+        info!("added user role");
+        Ok(())
+    }
+
+    #[tracing::instrument(level = "info", skip(self), fields(user_id = %user_id, role_id = %role_id))]
+    pub async fn remove_user_role(
+        &self,
+        user_id: Uuid,
+        role_id: Uuid,
+    ) -> Result<(), RepositoryError> {
+        user_roles::Entity::delete_many()
+            .filter(user_roles::Column::UserId.eq(user_id))
+            .filter(user_roles::Column::RoleId.eq(role_id))
+            .exec(&self.db)
+            .await?;
+        info!("removed user role");
+        Ok(())
+    }
+
     #[tracing::instrument(level = "debug", skip(self), fields(user_id = %user_id, role_id = %role_id))]
     pub async fn user_has_role(
         &self,

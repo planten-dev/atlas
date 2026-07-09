@@ -1,23 +1,14 @@
-import { useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useQuery, useSuspenseQuery } from '@tanstack/react-query'
+import { useSuspenseQuery } from '@tanstack/react-query'
 import { ArrowLeft, RefreshCw } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Checkbox } from '@/components/ui/checkbox'
-import { PolicyEditor } from '@/components/admin/PolicyEditor'
+import { Card, CardContent } from '@/components/ui/card'
 import { Guard } from '@/auth/PermissionProvider'
 import { requirePerm } from '@/auth/route-guard'
 import { userProfileQueryOptions } from '@/hooks/useUserProfile'
 import { useSyncUserProfile } from '@/hooks/useUsers'
-import {
-  rolesListOptions,
-  userRolesOptions,
-  useSetUserRoles,
-} from '@/hooks/usePermissionsAdmin'
-import { ROLE_KIND_LABELS } from '@/lib/labels'
 import { notify } from '@/lib/notify'
 
 export const Route = createFileRoute('/_app/admin/users/$userId')({
@@ -85,92 +76,6 @@ function UserDetailPage() {
         </CardContent>
       </Card>
 
-      <Guard perm="system:permissions:read">
-        <RolesCard userId={userId} />
-      </Guard>
-
-      <Guard perm="system:permissions:read">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">个人策略</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <PolicyEditor subjectKind="user" subjectId={userId} />
-          </CardContent>
-        </Card>
-      </Guard>
     </div>
-  )
-}
-
-function RolesCard({ userId }: { userId: string }) {
-  const { data: allRoles } = useQuery(rolesListOptions)
-  const { data: userRoles } = useQuery(userRolesOptions(userId))
-  const setRolesMutation = useSetUserRoles()
-  const [draft, setDraft] = useState<Set<string> | null>(null)
-
-  const assigned = draft ?? new Set((userRoles?.roles ?? []).map((r) => r.id))
-  const dirty = draft !== null
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">角色分配</CardTitle>
-        {dirty && (
-          <CardAction className="flex gap-2">
-            <Button
-              size="sm"
-              disabled={setRolesMutation.isPending}
-              onClick={() => {
-                setRolesMutation.mutate(
-                  { userId, roleIds: [...assigned] },
-                  {
-                    onSuccess: () => {
-                      notify.success('角色已更新')
-                      setDraft(null)
-                    },
-                    onError: (error) => notify.error(error),
-                  },
-                )
-              }}
-            >
-              保存
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => setDraft(null)}>
-              放弃
-            </Button>
-          </CardAction>
-        )}
-      </CardHeader>
-      <CardContent>
-        {!allRoles ? (
-          <p className="text-sm text-muted-foreground">加载中…</p>
-        ) : allRoles.length === 0 ? (
-          <p className="text-sm text-muted-foreground">尚未创建任何角色</p>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {allRoles.map((role) => (
-              <label key={role.id} className="flex cursor-pointer items-center gap-2 text-sm">
-                <Checkbox
-                  checked={assigned.has(role.id)}
-                  onCheckedChange={(checked) => {
-                    const next = new Set(assigned)
-                    if (checked) {
-                      next.add(role.id)
-                    } else {
-                      next.delete(role.id)
-                    }
-                    setDraft(next)
-                  }}
-                />
-                <span>{role.name}</span>
-                <Badge variant="outline">{ROLE_KIND_LABELS[role.kind] ?? role.kind}</Badge>
-                <span className="text-xs text-muted-foreground">{role.code}</span>
-              </label>
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
   )
 }

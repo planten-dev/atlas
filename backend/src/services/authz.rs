@@ -12,7 +12,7 @@ use tracing::{debug, info};
 use uuid::Uuid;
 
 use crate::{
-    entities::{permission_policies, roles},
+    entities::{permission_policies, roles, users},
     repositories::{
         RepositoryError,
         authz::{
@@ -340,6 +340,56 @@ impl AuthzService {
             return Err(AuthzError::UserNotFound);
         }
         Ok(self.repo.list_user_roles(user_id).await?)
+    }
+
+    pub async fn list_role_users(&self, role_id: Uuid) -> Result<Vec<users::Model>, AuthzError> {
+        if self.repo.find_role(role_id).await?.is_none() {
+            return Err(AuthzError::RoleNotFound);
+        }
+        Ok(self.repo.list_role_users(role_id).await?)
+    }
+
+    /// Adds one user to a role. Idempotent: adding an existing member is a
+    /// no-op, so concurrent membership edits can never clobber each other
+    /// the way a whole-set replace can.
+    pub async fn add_role_member(&self, role_id: Uuid, user_id: Uuid) -> Result<(), AuthzError> {
+        if self.repo.find_role(role_id).await?.is_none() {
+            return Err(AuthzError::RoleNotFound);
+        }
+        if !self.repo.user_exists(user_id).await? {
+            return Err(AuthzError::UserNotFound);
+        }
+        if self.repo.user_has_role(user_id, role_id).await? {
+            return Ok(());
+        }
+        self.repo.add_user_role(user_id, role_id, Utc::now()).await?;
+        self.reload().await?;
+        Ok(())
+    }
+
+    /// Removes one user from a role. Idempotent for non-members; removing a
+    /// holder of the protected super_admin role is rejected.
+    pub async fn remove_role_member(&self, role_id: Uuid, user_id: Uuid) -> Result<(), AuthzError> {
+        if self.repo.find_role(role_id).await?.is_none() {
+            return Err(AuthzError::RoleNotFound);
+        }
+        if !self.repo.user_exists(user_id).await? {
+            return Err(AuthzError::UserNotFound);
+        }
+        if self
+            .repo
+            .super_admin_role()
+            .await?
+            .is_some_and(|role| role.id == role_id)
+        {
+            return Err(AuthzError::ProtectedSystemRole);
+        }
+        if !self.repo.user_has_role(user_id, role_id).await? {
+            return Ok(());
+        }
+        self.repo.remove_user_role(user_id, role_id).await?;
+        self.reload().await?;
+        Ok(())
     }
 
     pub async fn set_user_roles(
@@ -1128,6 +1178,123 @@ mod tests {
 
             h.authz.delete_role(role).await.expect("role should delete");
             assert!(!h.check(user, "finance:invoices", "read").await);
+        }
+
+        #[tokio::test]
+        async fn list_role_users_returns_members_and_rejects_unknown_role() {
+            let h = Harness::new().await;
+            let member = h.user("ding-1").await;
+            let outsider = h.user("ding-2").await;
+            let role = h.role("with-members", KIND_CUSTOM, None).await;
+            let empty_role = h.role("no-members", KIND_CUSTOM, None).await;
+            h.assign(member, vec![role]).await;
+
+            let members = h
+                .authz
+                .list_role_users(role)
+                .await
+                .expect("members should list");
+            assert_eq!(
+                members.iter().map(|u| u.id).collect::<Vec<_>>(),
+                vec![member]
+            );
+            assert!(!members.iter().any(|u| u.id == outsider));
+
+            let none = h
+                .authz
+                .list_role_users(empty_role)
+                .await
+                .expect("member-less role should list");
+            assert!(none.is_empty());
+
+            let missing = h.authz.list_role_users(Uuid::new_v4()).await;
+            assert!(matches!(missing, Err(AuthzError::RoleNotFound)));
+        }
+
+        #[tokio::test]
+        async fn add_and_remove_role_member_are_atomic_and_idempotent() {
+            let h = Harness::new().await;
+            let member = h.user("ding-1").await;
+            let role_a = h.role("role-a", KIND_CUSTOM, None).await;
+            let role_b = h.role("role-b", KIND_CUSTOM, None).await;
+            h.assign(member, vec![role_b]).await;
+
+            h.authz
+                .add_role_member(role_a, member)
+                .await
+                .expect("member should be added");
+            // Adding one role must not disturb the user's other roles.
+            let roles: Vec<Uuid> = h
+                .authz
+                .list_user_roles(member)
+                .await
+                .expect("roles should list")
+                .into_iter()
+                .map(|r| r.id)
+                .collect();
+            assert!(roles.contains(&role_a) && roles.contains(&role_b));
+
+            // Idempotent: re-adding is a no-op, not a unique-constraint error.
+            h.authz
+                .add_role_member(role_a, member)
+                .await
+                .expect("re-adding an existing member should be a no-op");
+
+            h.authz
+                .remove_role_member(role_a, member)
+                .await
+                .expect("member should be removed");
+            h.authz
+                .remove_role_member(role_a, member)
+                .await
+                .expect("removing a non-member should be a no-op");
+            let remaining: Vec<Uuid> = h
+                .authz
+                .list_user_roles(member)
+                .await
+                .expect("roles should list")
+                .into_iter()
+                .map(|r| r.id)
+                .collect();
+            assert_eq!(remaining, vec![role_b]);
+
+            // The enforcer reloads on membership changes: role-a grants a
+            // permission that must appear/disappear with membership.
+            h.policy("role", role_a, "finance:invoices", "read", "allow")
+                .await;
+            assert!(!h.check(member, "finance:invoices", "read").await);
+            h.authz
+                .add_role_member(role_a, member)
+                .await
+                .expect("member should be added");
+            assert!(h.check(member, "finance:invoices", "read").await);
+            h.authz
+                .remove_role_member(role_a, member)
+                .await
+                .expect("member should be removed");
+            assert!(!h.check(member, "finance:invoices", "read").await);
+
+            // Validation and protection paths.
+            assert!(matches!(
+                h.authz.add_role_member(Uuid::new_v4(), member).await,
+                Err(AuthzError::RoleNotFound)
+            ));
+            assert!(matches!(
+                h.authz.add_role_member(role_a, Uuid::new_v4()).await,
+                Err(AuthzError::UserNotFound)
+            ));
+            let super_admin = h
+                .authz
+                .repo
+                .super_admin_role()
+                .await
+                .expect("role lookup should succeed")
+                .expect("super admin role should be seeded");
+            h.assign(member, vec![role_b, super_admin.id]).await;
+            assert!(matches!(
+                h.authz.remove_role_member(super_admin.id, member).await,
+                Err(AuthzError::ProtectedSystemRole)
+            ));
         }
 
         #[tokio::test]

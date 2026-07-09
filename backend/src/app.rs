@@ -401,6 +401,20 @@ pub fn router(state: AppState) -> Router {
                 .layer(require_permission(&state, "system:permissions:write"))),
         )
         .route(
+            "/api/v1/permissions/roles/{roleId}/users",
+            get(handlers::permissions::list_role_users
+                .layer(require_permission(&state, "system:permissions:read"))),
+        )
+        .route(
+            "/api/v1/permissions/roles/{roleId}/users/{userId}",
+            put(handlers::permissions::add_role_member
+                .layer(require_permission(&state, "system:permissions:write")))
+            .delete(
+                handlers::permissions::remove_role_member
+                    .layer(require_permission(&state, "system:permissions:write")),
+            ),
+        )
+        .route(
             "/api/v1/permissions/users/{userId}/roles",
             get(handlers::permissions::list_user_roles
                 .layer(require_permission(&state, "system:permissions:read")))

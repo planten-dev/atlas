@@ -3311,6 +3311,141 @@
         }
       }
     },
+    "/api/v1/permissions/roles/{roleId}/users": {
+      "parameters": [
+        {
+          "name": "roleId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Permissions"
+        ],
+        "summary": "List users assigned to a role",
+        "operationId": "listRoleUsers",
+        "description": "Requires permission system:permissions:read. Member records are slim (id and status only): user-domain fields such as dingtalk_user_id require users:read via the users endpoints.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Users directly assigned the role.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleUsersResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/permissions/roles/{roleId}/users/{userId}": {
+      "parameters": [
+        {
+          "name": "roleId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "put": {
+        "tags": [
+          "Permissions"
+        ],
+        "summary": "Add a user to a role",
+        "operationId": "addRoleMember",
+        "description": "Requires permission system:permissions:write. Atomic single-membership write: unlike PUT /permissions/users/{userId}/roles it cannot clobber concurrent edits to the user's other roles. Idempotent — adding an existing member succeeds without change.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Membership ensured."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Permissions"
+        ],
+        "summary": "Remove a user from a role",
+        "operationId": "removeRoleMember",
+        "description": "Requires permission system:permissions:write. Atomic single-membership write; idempotent for non-members. Removing a holder of the protected builtin super_admin role is rejected with error code protected_system_role.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Membership removed (or user was not a member)."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/v1/permissions/users/{userId}/roles": {
       "parameters": [
         {
@@ -5449,6 +5584,46 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/RoleResponse"
+            }
+          }
+        }
+      },
+      "RoleMemberResponse": {
+        "type": "object",
+        "description": "Slim member record. User-domain fields (dingtalk_user_id, timestamps) are deliberately excluded: they require users:read, while this schema is served under system:permissions:read.",
+        "required": [
+          "id",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled"
+            ]
+          }
+        }
+      },
+      "RoleUsersResponse": {
+        "type": "object",
+        "required": [
+          "role_id",
+          "users"
+        ],
+        "properties": {
+          "role_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoleMemberResponse"
             }
           }
         }

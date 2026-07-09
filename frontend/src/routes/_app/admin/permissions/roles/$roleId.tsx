@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useQuery, useSuspenseQuery } from '@tanstack/react-query'
-import { ArrowLeft, Trash2 } from 'lucide-react'
+import { ArrowLeft, Plus, ShieldCheck, Trash2 } from 'lucide-react'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,13 +18,17 @@ import { Button } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
-import { PolicyEditor } from '@/components/admin/PolicyEditor'
+import { UserName } from '@/components/UserName'
+import { UserPicker } from '@/components/pickers/UserPicker'
+import { Guard } from '@/auth/PermissionProvider'
 import { requirePerm } from '@/auth/route-guard'
 import {
   roleDetailOptions,
   rolesListOptions,
+  roleUsersOptions,
   useDeleteRole,
   useSetRoleParents,
+  useToggleRoleMember,
   useUpdateRole,
 } from '@/hooks/usePermissionsAdmin'
 import { ROLE_KIND_LABELS } from '@/lib/labels'
@@ -94,16 +98,137 @@ function RoleDetailPage() {
 
       <BasicCard roleId={roleId} name={role.name} code={role.code} priority={role.priority} />
       <ParentsCard roleId={roleId} parentRoleIds={role.parent_role_ids} />
+      <MembersCard roleId={roleId} />
 
       <Card>
         <CardHeader>
           <CardTitle className="text-base">角色策略</CardTitle>
         </CardHeader>
         <CardContent>
-          <PolicyEditor subjectKind="role" subjectId={roleId} />
+          <Button
+            variant="outline"
+            size="sm"
+            render={
+              <Link
+                to="/admin/permissions"
+                search={{ tab: 'subjects', subject_kind: 'role', subject_id: roleId }}
+              />
+            }
+          >
+            <ShieldCheck />
+            在主体授权中编辑角色策略
+          </Button>
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+function MembersCard({ roleId }: { roleId: string }) {
+  const { data: roleUsers, isLoading, isError } = useQuery(roleUsersOptions(roleId))
+  const toggleMutation = useToggleRoleMember()
+  const [pendingUserId, setPendingUserId] = useState<string | undefined>(undefined)
+  const members = roleUsers?.users ?? []
+  const memberIds = members.map((u) => u.id)
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">成员</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">加载中…</p>
+        ) : isError ? (
+          <p className="text-sm text-destructive">成员列表加载失败,请刷新重试</p>
+        ) : members.length === 0 ? (
+          <p className="text-sm text-muted-foreground">该角色暂无成员</p>
+        ) : (
+          <div className="flex flex-col">
+            {members.map((member) => (
+              <div
+                key={member.id}
+                className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+              >
+                <span className="flex-1 truncate">
+                  <UserName userId={member.id} />
+                </span>
+                {member.status === 'disabled' && <Badge variant="destructive">停用</Badge>}
+                <Guard perm="system:permissions:write">
+                  <AlertDialog>
+                    <AlertDialogTrigger
+                      render={<Button variant="ghost" size="icon-xs" aria-label="移出成员" />}
+                    >
+                      <Trash2 />
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>
+                          将 “<UserName userId={member.id} />” 移出该角色?
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                          移出后该用户将立即失去此角色带来的全部权限。
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>取消</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={() => {
+                            toggleMutation.mutate(
+                              { roleId, userId: member.id, op: 'remove' },
+                              {
+                                onSuccess: () => notify.success('已移出成员'),
+                                onError: (error) => notify.error(error),
+                              },
+                            )
+                          }}
+                        >
+                          确认移出
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </Guard>
+              </div>
+            ))}
+          </div>
+        )}
+        <Guard perm="system:permissions:write">
+          <Guard perm="users:read">
+            <div className="flex items-center gap-2">
+              <div className="w-64">
+                <UserPicker
+                  value={pendingUserId}
+                  onChange={setPendingUserId}
+                  disabledIds={memberIds}
+                  placeholder="选择要添加的人员"
+                />
+              </div>
+              <Button
+                size="sm"
+                disabled={!pendingUserId || toggleMutation.isPending}
+                onClick={() => {
+                  if (!pendingUserId) return
+                  toggleMutation.mutate(
+                    { roleId, userId: pendingUserId, op: 'add' },
+                    {
+                      onSuccess: () => {
+                        notify.success('已添加成员')
+                        setPendingUserId(undefined)
+                      },
+                      onError: (error) => notify.error(error),
+                    },
+                  )
+                }}
+              >
+                <Plus />
+                添加成员
+              </Button>
+            </div>
+          </Guard>
+        </Guard>
+      </CardContent>
+    </Card>
   )
 }
 
