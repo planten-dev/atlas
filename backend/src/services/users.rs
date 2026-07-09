@@ -102,10 +102,14 @@ impl UserService {
     #[tracing::instrument(level = "info", skip(self, request))]
     pub async fn update_status(
         &self,
+        actor_user_id: Uuid,
         user_id: Uuid,
         request: UpdateUserStatusRequest,
     ) -> Result<UserResponse, UserError> {
         let target_status = UserStatus::parse("target_status", &request.target_status)?;
+        if target_status == UserStatus::Disabled && user_id == actor_user_id {
+            return Err(UserError::CannotDisableSelf);
+        }
         let now = Utc::now();
         let user = self
             .users
@@ -165,6 +169,8 @@ pub enum UserError {
     UserNotFound,
     #[error("user profile was not found")]
     UserProfileNotFound,
+    #[error("cannot disable your own account")]
+    CannotDisableSelf,
     #[error("{field} must be one of: active, disabled")]
     InvalidStatus { field: &'static str, value: String },
     #[error("{field} must be greater than or equal to {minimum}")]
@@ -183,6 +189,7 @@ impl UserError {
             },
             Self::UserNotFound => "user_not_found",
             Self::UserProfileNotFound => "user_profile_not_found",
+            Self::CannotDisableSelf => "cannot_disable_self",
             Self::InvalidStatus { .. }
             | Self::InvalidPaginationMinimum { .. }
             | Self::InvalidPaginationMaximum { .. } => "validation_error",
@@ -351,6 +358,7 @@ mod tests {
 
         let updated = service
             .update_status(
+                Uuid::new_v4(),
                 user.id,
                 UpdateUserStatusRequest {
                     target_status: "disabled".to_string(),
@@ -379,6 +387,7 @@ mod tests {
 
         service
             .update_status(
+                Uuid::new_v4(),
                 user.id,
                 UpdateUserStatusRequest {
                     target_status: "disabled".to_string(),
@@ -411,6 +420,7 @@ mod tests {
 
         let updated = service
             .update_status(
+                Uuid::new_v4(),
                 disabled.id,
                 UpdateUserStatusRequest {
                     target_status: "active".to_string(),
@@ -427,6 +437,42 @@ mod tests {
                 .expect("session revoke should succeed"),
             0
         );
+    }
+
+    #[tokio::test]
+    async fn rejects_disabling_own_account_but_allows_activating_self() {
+        let (users, _, service) = test_services().await;
+        let now = Utc.with_ymd_and_hms(2026, 7, 9, 0, 0, 0).unwrap();
+        let user = users
+            .find_or_create_for_login("ding-user-1", now)
+            .await
+            .expect("user should be created");
+
+        assert!(matches!(
+            service
+                .update_status(
+                    user.id,
+                    user.id,
+                    UpdateUserStatusRequest {
+                        target_status: "disabled".to_string(),
+                    },
+                )
+                .await,
+            Err(UserError::CannotDisableSelf)
+        ));
+
+        // 自己启用自己不受限制(幂等操作,无危害)
+        let updated = service
+            .update_status(
+                user.id,
+                user.id,
+                UpdateUserStatusRequest {
+                    target_status: "active".to_string(),
+                },
+            )
+            .await
+            .expect("activating self should be allowed");
+        assert_eq!(updated.status, "active");
     }
 
     #[tokio::test]
@@ -475,6 +521,7 @@ mod tests {
         assert!(matches!(
             service
                 .update_status(
+                    Uuid::new_v4(),
                     Uuid::new_v4(),
                     UpdateUserStatusRequest {
                         target_status: "deleted".to_string(),
