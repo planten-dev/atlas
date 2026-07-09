@@ -6,22 +6,27 @@ export function UserPicker({
   value,
   onChange,
   disabled,
+  disabledIds,
   placeholder = '选择人员',
   className,
 }: {
   value: string | undefined
   onChange: (value: string | undefined) => void
   disabled?: boolean
+  /** 置灰不可选的人员(如已是角色成员) */
+  disabledIds?: string[]
   placeholder?: string
   className?: string
 }) {
   const { options, isLoading } = useUserOptions()
+  const disabledSet = new Set(disabledIds ?? [])
   return (
     <PickerBase
       items={options.map((u) => ({
         value: u.id,
         label: u.title ? `${u.name}(${u.title})` : u.name,
         keywords: [u.name],
+        disabled: disabledSet.has(u.id),
       }))}
       value={value}
       onChange={onChange}

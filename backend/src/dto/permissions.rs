@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::entities::{permission_policies, roles};
+use crate::entities::{permission_policies, roles, users};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateRoleRequest {
@@ -64,6 +64,31 @@ pub struct SetUserRolesRequest {
 pub struct UserRolesResponse {
     pub user_id: Uuid,
     pub roles: Vec<RoleResponse>,
+}
+
+/// Slim member record: deliberately excludes fields like
+/// dingtalk_user_id / last_login_at, which belong to the users domain and
+/// require users:read (this endpoint is reachable with
+/// system:permissions:read alone).
+#[derive(Debug, Serialize)]
+pub struct RoleMemberResponse {
+    pub id: Uuid,
+    pub status: String,
+}
+
+impl From<users::Model> for RoleMemberResponse {
+    fn from(user: users::Model) -> Self {
+        Self {
+            id: user.id,
+            status: user.status,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct RoleUsersResponse {
+    pub role_id: Uuid,
+    pub users: Vec<RoleMemberResponse>,
 }
 
 #[derive(Debug, Deserialize)]

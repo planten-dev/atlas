@@ -10,8 +10,8 @@ use crate::{
     dto::permissions::{
         CatalogEntryResponse, CreatePolicyRequest, CreateRoleRequest, ListPoliciesQuery,
         MyPermissionsResponse, PolicyResponse, ReplaceSubjectPoliciesRequest, RoleDetailResponse,
-        RoleResponse, SetRoleParentsRequest, SetUserRolesRequest, SubjectPoliciesResponse,
-        UpdateRoleRequest, UserRolesResponse,
+        RoleMemberResponse, RoleResponse, RoleUsersResponse, SetRoleParentsRequest,
+        SetUserRolesRequest, SubjectPoliciesResponse, UpdateRoleRequest, UserRolesResponse,
     },
     handlers::error::authz_error_response,
     repositories::authz::NewPolicy,
@@ -165,6 +165,40 @@ pub async fn set_role_parents(
         .set_role_parents(role_id, request.parent_role_ids)
         .await
     {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => authz_error_response(error),
+    }
+}
+
+pub async fn list_role_users(State(state): State<AppState>, Path(role_id): Path<Uuid>) -> Response {
+    match state.authz.list_role_users(role_id).await {
+        Ok(users) => (
+            StatusCode::OK,
+            Json(RoleUsersResponse {
+                role_id,
+                users: users.into_iter().map(RoleMemberResponse::from).collect(),
+            }),
+        )
+            .into_response(),
+        Err(error) => authz_error_response(error),
+    }
+}
+
+pub async fn add_role_member(
+    State(state): State<AppState>,
+    Path((role_id, user_id)): Path<(Uuid, Uuid)>,
+) -> Response {
+    match state.authz.add_role_member(role_id, user_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => authz_error_response(error),
+    }
+}
+
+pub async fn remove_role_member(
+    State(state): State<AppState>,
+    Path((role_id, user_id)): Path<(Uuid, Uuid)>,
+) -> Response {
+    match state.authz.remove_role_member(role_id, user_id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => authz_error_response(error),
     }
@@ -1200,6 +1234,230 @@ mod tests {
             .await
             .expect("request should be handled");
         assert_eq!(get_missing_response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn role_users_listing_via_http() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let caller_id = logged_in_user_id(&context).await;
+
+        let role = context
+            .authz
+            .create_role(
+                "members-role".to_string(),
+                "成员角色".to_string(),
+                "custom".to_string(),
+                None,
+            )
+            .await
+            .expect("role should be created");
+
+        // Without system:permissions:read the listing is forbidden.
+        let forbidden = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                &format!("/api/v1/permissions/roles/{}/users", role.id),
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("request should be handled");
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+
+        grant(&context, caller_id, "system:permissions", "read").await;
+
+        let empty = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                &format!("/api/v1/permissions/roles/{}/users", role.id),
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("request should be handled");
+        assert_eq!(empty.status(), StatusCode::OK);
+        let empty_body = json_body(empty).await;
+        assert_eq!(
+            empty_body.pointer("/role_id").and_then(Value::as_str),
+            Some(role.id.to_string().as_str())
+        );
+        assert_eq!(
+            empty_body
+                .pointer("/users")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0)
+        );
+
+        let member = context
+            .users
+            .find_or_create_for_login("ding-user-2", chrono::Utc::now())
+            .await
+            .expect("member should be created");
+        context
+            .authz
+            .set_user_roles(member.id, vec![role.id])
+            .await
+            .expect("role should be assigned");
+
+        let listed = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                &format!("/api/v1/permissions/roles/{}/users", role.id),
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("request should be handled");
+        assert_eq!(listed.status(), StatusCode::OK);
+        let listed_body = json_body(listed).await;
+        assert_eq!(
+            listed_body.pointer("/users/0/id").and_then(Value::as_str),
+            Some(member.id.to_string().as_str())
+        );
+        assert_eq!(
+            listed_body.pointer("/users/0/status").and_then(Value::as_str),
+            Some("active")
+        );
+        // Member records are deliberately slim: users-domain fields such as
+        // dingtalk_user_id must stay behind users:read.
+        assert!(listed_body.pointer("/users/0/dingtalk_user_id").is_none());
+
+        let missing = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                &format!("/api/v1/permissions/roles/{}/users", Uuid::new_v4()),
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("request should be handled");
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        let missing_body = json_body(missing).await;
+        assert_eq!(
+            missing_body.pointer("/error").and_then(Value::as_str),
+            Some("role_not_found")
+        );
+    }
+
+    #[tokio::test]
+    async fn role_member_add_and_remove_via_http() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let caller_id = logged_in_user_id(&context).await;
+
+        let role = context
+            .authz
+            .create_role(
+                "member-role".to_string(),
+                "成员角色".to_string(),
+                "custom".to_string(),
+                None,
+            )
+            .await
+            .expect("role should be created");
+        let other_role = context
+            .authz
+            .create_role(
+                "other-role".to_string(),
+                "其他角色".to_string(),
+                "custom".to_string(),
+                None,
+            )
+            .await
+            .expect("role should be created");
+        let member = context
+            .users
+            .find_or_create_for_login("ding-user-2", chrono::Utc::now())
+            .await
+            .expect("member should be created");
+        context
+            .authz
+            .set_user_roles(member.id, vec![other_role.id])
+            .await
+            .expect("baseline role should be assigned");
+
+        let member_path = format!("/api/v1/permissions/roles/{}/users/{}", role.id, member.id);
+
+        // Requires system:permissions:write.
+        let forbidden = context
+            .app
+            .clone()
+            .oneshot(request(Method::PUT, &member_path, Some(&cookie), None))
+            .await
+            .expect("request should be handled");
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+
+        grant(&context, caller_id, "system:permissions", "write").await;
+
+        let added = context
+            .app
+            .clone()
+            .oneshot(request(Method::PUT, &member_path, Some(&cookie), None))
+            .await
+            .expect("request should be handled");
+        assert_eq!(added.status(), StatusCode::NO_CONTENT);
+        // Atomic single-membership write: the user's other roles are intact.
+        let roles: Vec<Uuid> = context
+            .authz
+            .list_user_roles(member.id)
+            .await
+            .expect("roles should list")
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert!(roles.contains(&role.id) && roles.contains(&other_role.id));
+
+        // Idempotent re-add.
+        let re_added = context
+            .app
+            .clone()
+            .oneshot(request(Method::PUT, &member_path, Some(&cookie), None))
+            .await
+            .expect("request should be handled");
+        assert_eq!(re_added.status(), StatusCode::NO_CONTENT);
+
+        let removed = context
+            .app
+            .clone()
+            .oneshot(request(Method::DELETE, &member_path, Some(&cookie), None))
+            .await
+            .expect("request should be handled");
+        assert_eq!(removed.status(), StatusCode::NO_CONTENT);
+        let remaining: Vec<Uuid> = context
+            .authz
+            .list_user_roles(member.id)
+            .await
+            .expect("roles should list")
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(remaining, vec![other_role.id]);
+
+        // Unknown role 404s.
+        let missing = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::PUT,
+                &format!("/api/v1/permissions/roles/{}/users/{}", Uuid::new_v4(), member.id),
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("request should be handled");
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

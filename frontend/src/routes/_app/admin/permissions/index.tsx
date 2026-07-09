@@ -1,21 +1,10 @@
 import { useState } from 'react'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Plus, Trash2 } from 'lucide-react'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
+import { Plus } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -31,21 +20,32 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { FormSelect, FormText } from '@/components/form/fields'
 import { UserName } from '@/components/UserName'
+import { PolicyEditor } from '@/components/admin/PolicyEditor'
+import { UserRolesCard } from '@/components/admin/UserRolesCard'
+import { RolePicker } from '@/components/pickers/RolePicker'
+import { UserPicker } from '@/components/pickers/UserPicker'
+import { usePermission } from '@/auth/PermissionProvider'
 import { requirePerm } from '@/auth/route-guard'
 import {
   catalogOptions,
   policiesListOptions,
   rolesListOptions,
   useCreateRole,
-  useDeletePolicy,
-  type PolicyResponse,
 } from '@/hooks/usePermissionsAdmin'
-import { POLICY_EFFECT_LABELS, ROLE_KIND_LABELS, SUBJECT_KIND_LABELS } from '@/lib/labels'
+import { ROLE_KIND_LABELS, SUBJECT_KIND_LABELS } from '@/lib/labels'
 import { notify } from '@/lib/notify'
 
-const searchSchema = z.object({
-  tab: z.enum(['roles', 'policies', 'catalog']).default('roles'),
-})
+const searchSchema = z
+  .object({
+    // .catch 吸收旧 ?tab=policies 书签,回落到角色 tab
+    tab: z.enum(['roles', 'subjects', 'catalog']).default('roles').catch('roles'),
+    subject_kind: z.enum(['user', 'role']).optional().catch(undefined),
+    subject_id: z.uuid().optional().catch(undefined),
+  })
+  // kind 与 id 成对出现:缺/错 kind 时丢弃 id,避免把角色 UUID 当用户打开。
+  .transform((search) =>
+    search.subject_kind ? search : { ...search, subject_id: undefined },
+  )
 
 export const Route = createFileRoute('/_app/admin/permissions/')({
   validateSearch: searchSchema,
@@ -64,17 +64,22 @@ function PermissionsPage() {
       <Tabs
         value={search.tab}
         onValueChange={(value) => {
-          void navigate({ search: { tab: value as 'roles' | 'policies' | 'catalog' } })
+          void navigate({
+            search:
+              value === 'subjects'
+                ? { tab: 'subjects', subject_kind: search.subject_kind, subject_id: search.subject_id }
+                : { tab: value as 'roles' | 'catalog' },
+          })
         }}
       >
         <TabsList>
           <TabsTrigger value="roles">角色</TabsTrigger>
-          <TabsTrigger value="policies">策略</TabsTrigger>
+          <TabsTrigger value="subjects">主体授权</TabsTrigger>
           <TabsTrigger value="catalog">权限目录</TabsTrigger>
         </TabsList>
       </Tabs>
       {search.tab === 'roles' && <RolesTab />}
-      {search.tab === 'policies' && <PoliciesTab />}
+      {search.tab === 'subjects' && <SubjectsTab />}
       {search.tab === 'catalog' && <CatalogTab />}
     </div>
   )
@@ -195,108 +200,154 @@ function RoleCreateDialog({ onClose }: { onClose: () => void }) {
   )
 }
 
-/* ---------------- 策略 ---------------- */
+/* ---------------- 主体授权 ---------------- */
 
-function PoliciesTab() {
-  const { data: policies, isLoading } = useQuery(policiesListOptions())
-  const deleteMutation = useDeletePolicy()
+function SubjectsTab() {
+  const search = Route.useSearch()
+  const navigate = useNavigate({ from: Route.fullPath })
+  const canReadUsers = usePermission('users:read')
+
+  const kind = search.subject_kind ?? 'user'
+  const subjectId = search.subject_id
+
+  const setSubject = (nextKind: 'user' | 'role', nextId: string | undefined) => {
+    void navigate({
+      search: { tab: 'subjects', subject_kind: nextKind, subject_id: nextId },
+    })
+  }
 
   return (
-    <div className="flex flex-col gap-3">
-      <p className="text-sm text-muted-foreground">
-        全部策略总览。新增请在用户详情/角色详情的策略编辑器中操作。
-      </p>
-      <div className="overflow-x-auto rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>主体</TableHead>
-              <TableHead>资源</TableHead>
-              <TableHead>操作</TableHead>
-              <TableHead>效果</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-                  加载中…
-                </TableCell>
-              </TableRow>
-            ) : !policies || policies.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-                  暂无策略
-                </TableCell>
-              </TableRow>
-            ) : (
-              policies.map((policy) => (
-                <PolicyRow
-                  key={policy.id}
-                  policy={policy}
-                  onDelete={() => {
-                    deleteMutation.mutate(policy.id, {
-                      onSuccess: () => notify.success('策略已删除'),
-                      onError: (error) => notify.error(error),
-                    })
-                  }}
-                />
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+    <div className="flex flex-col gap-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">选择主体</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex items-center gap-3">
+            <Tabs value={kind} onValueChange={(value) => setSubject(value as 'user' | 'role', undefined)}>
+              <TabsList>
+                <TabsTrigger value="user">用户</TabsTrigger>
+                <TabsTrigger value="role">角色</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <div className="w-72">
+              {kind === 'user' ? (
+                canReadUsers ? (
+                  <UserPicker value={subjectId} onChange={(id) => setSubject('user', id)} />
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    需要用户查看权限(users:read)才能检索人员
+                  </p>
+                )
+              ) : (
+                <RolePicker value={subjectId} onChange={(id) => setSubject('role', id)} />
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {subjectId ? (
+        kind === 'user' ? (
+          // key 绑定主体:切换主体时强制重挂,防止上一主体的未保存草稿渗入。
+          <>
+            <UserRolesCard key={subjectId} userId={subjectId} />
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">个人策略</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <PolicyEditor key={`user:${subjectId}`} subjectKind="user" subjectId={subjectId} />
+              </CardContent>
+            </Card>
+          </>
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">角色策略</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                基本信息、父角色与成员在
+                <Link
+                  to="/admin/permissions/roles/$roleId"
+                  params={{ roleId: subjectId }}
+                  className="mx-1 underline underline-offset-2"
+                >
+                  角色详情
+                </Link>
+                中管理。
+              </p>
+            </CardHeader>
+            <CardContent>
+              <PolicyEditor key={`role:${subjectId}`} subjectKind="role" subjectId={subjectId} />
+            </CardContent>
+          </Card>
+        )
+      ) : (
+        <ConfiguredSubjects onSelect={setSubject} />
+      )}
     </div>
   )
 }
 
-function PolicyRow({ policy, onDelete }: { policy: PolicyResponse; onDelete: () => void }) {
+/** 主体发现:按 (subject_kind, subject_id) 分组的全部策略总览,点击进入编辑。 */
+function ConfiguredSubjects({
+  onSelect,
+}: {
+  onSelect: (kind: 'user' | 'role', id: string) => void
+}) {
+  const { data: policies, isLoading, isError } = useQuery(policiesListOptions())
   const { data: roles } = useQuery(rolesListOptions)
-  const subjectLabel =
-    policy.subject_kind === 'role' ? (
-      (roles?.find((r) => r.id === policy.subject_id)?.name ?? policy.subject_id.slice(0, 8))
-    ) : (
-      <UserName userId={policy.subject_id} />
-    )
+
+  const groups = new Map<string, { kind: 'user' | 'role'; id: string; count: number }>()
+  for (const policy of policies ?? []) {
+    const key = `${policy.subject_kind}:${policy.subject_id}`
+    const entry = groups.get(key)
+    if (entry) {
+      entry.count += 1
+    } else {
+      groups.set(key, { kind: policy.subject_kind, id: policy.subject_id, count: 1 })
+    }
+  }
 
   return (
-    <TableRow>
-      <TableCell>
-        <Badge variant="outline" className="mr-1">
-          {SUBJECT_KIND_LABELS[policy.subject_kind]}
-        </Badge>
-        {subjectLabel}
-      </TableCell>
-      <TableCell className="font-mono text-xs">{policy.object}</TableCell>
-      <TableCell className="font-mono text-xs">{policy.action}</TableCell>
-      <TableCell>
-        <Badge variant={policy.effect === 'deny' ? 'destructive' : 'outline'}>
-          {POLICY_EFFECT_LABELS[policy.effect]}
-        </Badge>
-      </TableCell>
-      <TableCell className="text-right">
-        <AlertDialog>
-          <AlertDialogTrigger
-            render={<Button variant="ghost" size="icon-xs" aria-label="删除策略" />}
-          >
-            <Trash2 />
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>删除该策略?</AlertDialogTitle>
-              <AlertDialogDescription>
-                {policy.object} / {policy.action} / {POLICY_EFFECT_LABELS[policy.effect]}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>取消</AlertDialogCancel>
-              <AlertDialogAction onClick={onDelete}>删除</AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </TableCell>
-    </TableRow>
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">已配置策略的主体</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          选择上方主体开始编辑,或从下列已有配置直接进入。
+        </p>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">加载中…</p>
+        ) : isError ? (
+          <p className="text-sm text-destructive">策略列表加载失败,请刷新重试</p>
+        ) : groups.size === 0 ? (
+          <p className="text-sm text-muted-foreground">暂无策略</p>
+        ) : (
+          <div className="flex flex-col">
+            {[...groups.values()].map((subject) => (
+              <button
+                key={`${subject.kind}:${subject.id}`}
+                type="button"
+                className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted"
+                onClick={() => onSelect(subject.kind, subject.id)}
+              >
+                <Badge variant="outline">{SUBJECT_KIND_LABELS[subject.kind]}</Badge>
+                <span className="flex-1 truncate">
+                  {subject.kind === 'role' ? (
+                    (roles?.find((r) => r.id === subject.id)?.name ?? subject.id.slice(0, 8))
+                  ) : (
+                    <UserName userId={subject.id} />
+                  )}
+                </span>
+                <Badge variant="secondary">{subject.count} 条策略</Badge>
+              </button>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 

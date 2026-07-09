@@ -1323,14 +1323,14 @@ export interface paths {
         post?: never;
         /**
          * Delete role
-         * @description Requires permission system:permissions:write. Also removes the role's policies, inheritance links, and user assignments.
+         * @description Requires permission system:permissions:write. Also removes the role's policies, inheritance links, and user assignments. The builtin super_admin role is protected; attempts to delete it are rejected with error code protected_system_role.
          */
         delete: operations["deleteRole"];
         options?: never;
         head?: never;
         /**
          * Update role name or priority
-         * @description Requires permission system:permissions:write. kind cannot be changed.
+         * @description Requires permission system:permissions:write. kind cannot be changed. The builtin super_admin role is protected; attempts to update it are rejected with error code protected_system_role.
          */
         patch: operations["updateRole"];
         trace?: never;
@@ -1347,11 +1347,60 @@ export interface paths {
         get?: never;
         /**
          * Replace parent roles
-         * @description Requires permission system:permissions:write. Replaces the full parent set. The child role inherits every policy of its parents (e.g. sub-department inherits parent department). Cycles and inheritance chains deeper than 8 links are rejected.
+         * @description Requires permission system:permissions:write. Replaces the full parent set. The child role inherits every policy of its parents (e.g. sub-department inherits parent department). Cycles and inheritance chains deeper than 8 links are rejected. The builtin super_admin role is protected; attempts to edit its parents are rejected with error code protected_system_role.
          */
         put: operations["setRoleParents"];
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/permissions/roles/{roleId}/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roleId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * List users assigned to a role
+         * @description Requires permission system:permissions:read. Member records are slim (id and status only): user-domain fields such as dingtalk_user_id require users:read via the users endpoints.
+         */
+        get: operations["listRoleUsers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/permissions/roles/{roleId}/users/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roleId: string;
+                userId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Add a user to a role
+         * @description Requires permission system:permissions:write. Atomic single-membership write: unlike PUT /permissions/users/{userId}/roles it cannot clobber concurrent edits to the user's other roles. Idempotent — adding an existing member succeeds without change.
+         */
+        put: operations["addRoleMember"];
+        post?: never;
+        /**
+         * Remove a user from a role
+         * @description Requires permission system:permissions:write. Atomic single-membership write; idempotent for non-members. Removing a holder of the protected builtin super_admin role is rejected with error code protected_system_role.
+         */
+        delete: operations["removeRoleMember"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1373,7 +1422,7 @@ export interface paths {
         get: operations["listUserRoles"];
         /**
          * Replace a user's roles
-         * @description Requires permission system:permissions:write. Replaces the full role set of the user.
+         * @description Requires permission system:permissions:write. Replaces the full role set of the user. If the user currently has the protected builtin super_admin role, the replacement must preserve it; attempts to remove it are rejected with error code protected_system_role.
          */
         put: operations["setUserRoles"];
         post?: never;
@@ -1398,7 +1447,7 @@ export interface paths {
         put?: never;
         /**
          * Create permission policy
-         * @description Requires permission system:permissions:write. Objects are colon-separated scopes (e.g. finance:invoices). In policy objects, a trailing * matches all remaining segments and * matches one segment. The object/action must cover at least one permission from the catalog (see /api/v1/permissions/catalog); otherwise the request is rejected with error code permission_not_in_catalog. Effect resolution: user policies override role policies; roles with smaller priority override larger; within the same priority, deny overrides allow.
+         * @description Requires permission system:permissions:write. Objects are colon-separated scopes (e.g. finance:invoices). In policy objects, a trailing * matches all remaining segments and * matches one segment. The object/action must cover at least one permission from the catalog (see /api/v1/permissions/catalog); otherwise the request is rejected with error code permission_not_in_catalog. Effect resolution: user policies override role policies; roles with smaller priority override larger; within the same priority, deny overrides allow. The builtin super_admin role and its policies are protected; attempts to add policies directly to it are rejected with error code protected_system_role.
          */
         post: operations["createPolicy"];
         delete?: never;
@@ -1421,7 +1470,7 @@ export interface paths {
         post?: never;
         /**
          * Delete permission policy
-         * @description Requires permission system:permissions:write.
+         * @description Requires permission system:permissions:write. Policies belonging to the protected builtin super_admin role cannot be deleted and are rejected with error code protected_system_role.
          */
         delete: operations["deletePolicy"];
         options?: never;
@@ -1462,7 +1511,7 @@ export interface paths {
         get?: never;
         /**
          * Replace all policies of a subject
-         * @description Requires permission system:permissions:write. Replaces the full policy set of one user or role in a single transaction followed by exactly one policy reload — the bulk save behind the permission panel's edit-matrix flow. An empty policies array clears every policy of the subject. Each object must cover at least one catalog permission (exactly or via wildcards) and (object, action) pairs must not repeat; any validation failure rejects the whole request and leaves the existing policy set untouched.
+         * @description Requires permission system:permissions:write. Replaces the full policy set of one user or role in a single transaction followed by exactly one policy reload; this is the bulk save behind the permission panel's edit-matrix flow. An empty policies array clears every policy of the subject. Each object must cover at least one catalog permission (exactly or via wildcards) and (object, action) pairs must not repeat; any validation failure rejects the whole request and leaves the existing policy set untouched. The builtin super_admin role and its wildcard policy are protected; attempts to replace that role's policies are rejected with error code protected_system_role.
          */
         put: operations["replaceSubjectPolicies"];
         post?: never;
@@ -1580,6 +1629,18 @@ export interface components {
             /** Format: uuid */
             user_id: string;
             roles: components["schemas"]["RoleResponse"][];
+        };
+        /** @description Slim member record. User-domain fields (dingtalk_user_id, timestamps) are deliberately excluded: they require users:read, while this schema is served under system:permissions:read. */
+        RoleMemberResponse: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            status: "active" | "disabled";
+        };
+        RoleUsersResponse: {
+            /** Format: uuid */
+            role_id: string;
+            users: components["schemas"]["RoleMemberResponse"][];
         };
         CreatePolicyRequest: {
             /** @enum {string} */
@@ -2334,7 +2395,7 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
-        /** @description Validation failed: invalid kind/effect/action, empty segments, inheritance cycle, or chain too deep. */
+        /** @description Validation failed: invalid kind/effect/action, empty segments, inheritance cycle, chain too deep, or protected system role mutation (error code protected_system_role). */
         UnprocessableEntity: {
             headers: {
                 [name: string]: unknown;
@@ -4381,6 +4442,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["PermissionDenied"];
             404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableEntity"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -4431,6 +4493,83 @@ export interface operations {
         };
         responses: {
             /** @description Parent roles replaced. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableEntity"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listRoleUsers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roleId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Users directly assigned the role. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleUsersResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    addRoleMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roleId: string;
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Membership ensured. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    removeRoleMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roleId: string;
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Membership removed (or user was not a member). */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -4579,6 +4718,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["PermissionDenied"];
             404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableEntity"];
             500: components["responses"]["InternalError"];
         };
     };
