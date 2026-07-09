@@ -113,6 +113,10 @@ function AuditPage() {
             onChange={(e) => patchSearch({ resource_type: e.target.value || undefined })}
           />
           <Select
+            items={[
+              { value: 'all', label: '全部事件类型' },
+              ...Object.entries(EVENT_TYPE_LABELS).map(([value, label]) => ({ value, label })),
+            ]}
             value={search.event_type !== undefined ? String(search.event_type) : 'all'}
             onValueChange={(value) =>
               patchSearch({
@@ -133,6 +137,10 @@ function AuditPage() {
             </SelectContent>
           </Select>
           <Select
+            items={[
+              { value: 'all', label: '全部审批状态' },
+              ...Object.entries(APPROVAL_STATUS_LABELS).map(([value, label]) => ({ value, label })),
+            ]}
             value={search.approval_status !== undefined ? String(search.approval_status) : 'all'}
             onValueChange={(value) =>
               patchSearch({

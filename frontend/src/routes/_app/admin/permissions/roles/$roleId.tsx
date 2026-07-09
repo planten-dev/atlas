@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { PolicyEditor } from '@/components/admin/PolicyEditor'
@@ -198,10 +198,10 @@ function ParentsCard({ roleId, parentRoleIds }: { roleId: string; parentRoleIds:
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between">
+      <CardHeader>
         <CardTitle className="text-base">父角色(继承其权限)</CardTitle>
         {dirty && (
-          <div className="flex gap-2">
+          <CardAction className="flex gap-2">
             <Button
               size="sm"
               disabled={setParentsMutation.isPending}
@@ -223,7 +223,7 @@ function ParentsCard({ roleId, parentRoleIds }: { roleId: string; parentRoleIds:
             <Button variant="ghost" size="sm" onClick={() => setDraft(null)}>
               放弃
             </Button>
-          </div>
+          </CardAction>
         )}
       </CardHeader>
       <CardContent>

@@ -113,6 +113,7 @@ pub async fn sync_user_profile(
 
 pub async fn update_user_status(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
     request: Result<Json<UpdateUserStatusRequest>, JsonRejection>,
 ) -> Response {
@@ -125,7 +126,11 @@ pub async fn update_user_status(
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
-    match state.users.update_status(user_id, request).await {
+    match state
+        .users
+        .update_status(current_session.user.id, user_id, request)
+        .await
+    {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => user_error_response(error),
     }
@@ -196,6 +201,7 @@ fn status_code(error: &UserError) -> StatusCode {
             RepositoryError::DisabledUser => StatusCode::FORBIDDEN,
         },
         UserError::UserNotFound | UserError::UserProfileNotFound => StatusCode::NOT_FOUND,
+        UserError::CannotDisableSelf => StatusCode::CONFLICT,
         UserError::InvalidStatus { .. }
         | UserError::InvalidPaginationMinimum { .. }
         | UserError::InvalidPaginationMaximum { .. } => StatusCode::BAD_REQUEST,
@@ -925,6 +931,55 @@ mod tests {
             .await
             .expect("me request should be handled");
         assert_eq!(target_me_response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn update_status_rejects_disabling_own_account() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let current = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("current user should exist");
+        grant(&context, current.id, "users", "write").await;
+
+        let response = context
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/users/update-status/{}", current.id))
+                    .header(header::COOKIE, cookie.clone())
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"target_status":"disabled"}"#))
+                    .unwrap(),
+            )
+            .await
+            .expect("update status request should be handled");
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = response_json(response).await;
+        assert_eq!(
+            body.pointer("/error").and_then(Value::as_str),
+            Some("cannot_disable_self")
+        );
+
+        // 账号未被停用,会话仍有效
+        let me_response = context
+            .app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/auth/me")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("me request should be handled");
+        assert_eq!(me_response.status(), StatusCode::OK);
     }
 
     #[tokio::test]

@@ -1,7 +1,18 @@
+import { useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import type { ColumnDef } from '@tanstack/react-table'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -16,6 +27,7 @@ import { DataTableToolbar } from '@/components/data-table/toolbar'
 import { UserName } from '@/components/UserName'
 import { Guard } from '@/auth/PermissionProvider'
 import { requirePerm } from '@/auth/route-guard'
+import { meQueryOptions } from '@/auth/session'
 import { usersListOptions, useUpdateUserStatus, type UserResponse } from '@/hooks/useUsers'
 import { formatDateTime } from '@/lib/date'
 import { notify } from '@/lib/notify'
@@ -37,8 +49,10 @@ function UsersPage() {
   const search = Route.useSearch()
   const navigate = useNavigate({ from: Route.fullPath })
   const query = useQuery(usersListOptions(search))
+  const { data: me } = useQuery(meQueryOptions)
   const statusMutation = useUpdateUserStatus()
   const rows = query.data?.items ?? []
+  const [disabling, setDisabling] = useState<UserResponse | null>(null)
 
   const columns: ColumnDef<UserResponse>[] = [
     {
@@ -64,38 +78,90 @@ function UsersPage() {
     },
     {
       id: 'actions',
-      header: '',
-      cell: ({ row }) => (
-        <Guard perm="users:write">
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={(e) => {
-              e.stopPropagation()
-              statusMutation.mutate(
-                {
-                  userId: row.original.id,
-                  status: row.original.status === 'active' ? 'disabled' : 'active',
-                },
-                {
-                  onSuccess: () => notify.success('用户状态已更新'),
-                  onError: (error) => notify.error(error),
-                },
-              )
-            }}
-          >
-            {row.original.status === 'active' ? '停用' : '启用'}
-          </Button>
-        </Guard>
-      ),
+      header: '操作',
+      meta: { align: 'right' },
+      cell: ({ row }) => {
+        // 后端同样拒绝自停用(cannot_disable_self),这里直接不给入口
+        if (row.original.id === me?.id) {
+          return <span className="text-xs text-muted-foreground">当前账号</span>
+        }
+        return (
+          <Guard perm="users:write">
+            {row.original.status === 'active' ? (
+              <Button
+                variant="destructive"
+                size="xs"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setDisabling(row.original)
+                }}
+              >
+                停用
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  statusMutation.mutate(
+                    { userId: row.original.id, status: 'active' },
+                    {
+                      onSuccess: () => notify.success('用户已启用'),
+                      onError: (error) => notify.error(error),
+                    },
+                  )
+                }}
+              >
+                启用
+              </Button>
+            )}
+          </Guard>
+        )
+      },
     },
   ]
 
   return (
     <div className="flex flex-col gap-4">
       <h1 className="text-xl font-semibold">用户</h1>
+      <AlertDialog open={disabling !== null} onOpenChange={(open) => !open && setDisabling(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              停用用户 “{disabling && <UserName userId={disabling.id} />}”?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              停用后该用户将立即退出登录且无法再登录系统,可随时重新启用。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (!disabling) return
+                statusMutation.mutate(
+                  { userId: disabling.id, status: 'disabled' },
+                  {
+                    onSuccess: () => notify.success('用户已停用'),
+                    onError: (error) => notify.error(error),
+                  },
+                )
+                setDisabling(null)
+              }}
+            >
+              确认停用
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <DataTableToolbar>
         <Select
+          items={[
+            { value: 'all', label: '全部状态' },
+            { value: 'active', label: '启用' },
+            { value: 'disabled', label: '停用' },
+          ]}
           value={search.status_filter ?? 'all'}
           onValueChange={(value) => {
             void navigate({

@@ -7,6 +7,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   duplicate_review: '你已审批过该事件',
   event_not_reviewable: '该事件不可审批',
   unknown_resource_type: '未知的资源类型',
+  cannot_disable_self: '不能停用自己的账号',
   not_found: '记录不存在或已被删除',
   conflict: '数据冲突,请刷新后重试',
   validation_error: '提交内容校验未通过',

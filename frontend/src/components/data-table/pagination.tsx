@@ -27,6 +27,7 @@ export function DataTablePagination({
       <p className="text-sm text-muted-foreground">共 {totalCount} 条</p>
       <div className="flex items-center gap-2">
         <Select
+          items={PAGE_SIZES.map((size) => ({ value: String(size), label: `${size} 条/页` }))}
           value={String(page.pageSize)}
           onValueChange={(value) => {
             if (value) onPageChange({ pageNumber: 1, pageSize: Number(value) })

@@ -18,13 +18,13 @@ interface DataTableToolbarProps<T> {
 
 export function DataTableToolbar<T>({ children, exportConfig, actions }: DataTableToolbarProps<T>) {
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    // 筛选区可能折成多行,动作按钮固定与第一行对齐(items-start + 同高按钮)
+    <div className="flex flex-wrap items-start gap-2">
       <div className="flex flex-1 flex-wrap items-center gap-2">{children}</div>
       <div className="flex items-center gap-2">
         {exportConfig && (
           <Button
             variant="outline"
-            size="sm"
             onClick={() => {
               if (exportConfig.rows.length === 0) {
                 notify.info('当前筛选无数据可导出')

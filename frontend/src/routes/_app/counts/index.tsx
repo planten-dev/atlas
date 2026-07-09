@@ -59,10 +59,10 @@ const columns: ColumnDef<OperationCountResponse>[] = [
   },
   {
     accessorKey: 'remaining_count',
-    header: () => <span className="block text-right">剩余</span>,
-    meta: { title: '剩余' },
+    header: '剩余',
+    meta: { align: 'right' },
     cell: ({ row }) => (
-      <span className="block text-right font-medium">{row.original.remaining_count}</span>
+      <span className="font-medium tabular-nums">{row.original.remaining_count}</span>
     ),
   },
   {
@@ -116,6 +116,11 @@ function CountsListPage() {
         }}
       >
         <Select
+          items={[
+            { value: 'all', label: '全部状态' },
+            { value: 'active', label: '正常' },
+            { value: 'voided', label: '已作废' },
+          ]}
           value={search.status_filter ?? 'all'}
           onValueChange={(value) => {
             void navigate({

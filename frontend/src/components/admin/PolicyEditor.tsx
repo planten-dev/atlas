@@ -84,6 +84,7 @@ export function PolicyEditor({
           {rows.map((row, index) => (
             <div key={index} className="flex flex-wrap items-center gap-2">
               <Select
+                items={objectOptions}
                 value={row.object || null}
                 onValueChange={(value) => value && update(index, { object: value })}
               >
@@ -99,6 +100,7 @@ export function PolicyEditor({
                 </SelectContent>
               </Select>
               <Select
+                items={ACTIONS.map((a) => ({ value: a, label: a }))}
                 value={row.action}
                 onValueChange={(value) =>
                   value && update(index, { action: value as ReplacePolicyItem['action'] })
@@ -116,6 +118,10 @@ export function PolicyEditor({
                 </SelectContent>
               </Select>
               <Select
+                items={[
+                  { value: 'allow', label: POLICY_EFFECT_LABELS.allow ?? 'allow' },
+                  { value: 'deny', label: POLICY_EFFECT_LABELS.deny ?? 'deny' },
+                ]}
                 value={row.effect}
                 onValueChange={(value) =>
                   value && update(index, { effect: value as 'allow' | 'deny' })

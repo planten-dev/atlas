@@ -126,6 +126,94 @@ export const FIELD_LABELS: Record<string, string> = {
   external_id: '外部ID',
 }
 
+/**
+ * 权限对象 → 展示分组/中文名。与后端 authz_catalog.rs 的 builtin 目录保持一致;
+ * catalog 接口需要 system:permissions:read,普通用户拿不到,故本地静态维护。
+ */
+export const PERMISSION_OBJECT_META: Record<string, { group: string; label: string }> = {
+  customers: { group: '销售', label: '客户' },
+  'sales:records': { group: '销售', label: '销售记录' },
+  'sales:operation-counts': { group: '销售', label: '次数账户' },
+  'sales:operation-usages': { group: '销售', label: '耗用记录' },
+  products: { group: '商品', label: '产品' },
+  'products:categories': { group: '商品', label: '产品类别' },
+  systems: { group: '门店', label: '门店体系' },
+  stores: { group: '门店', label: '门店' },
+  events: { group: '审核', label: '审核事件' },
+  users: { group: '系统', label: '用户管理' },
+  departments: { group: '系统', label: '部门' },
+  'system:permissions': { group: '系统', label: '权限管理' },
+}
+
+export const PERMISSION_ACTION_LABELS: Record<string, string> = {
+  read: '查看',
+  write: '编辑',
+  approve: '审批',
+  '*': '全部',
+}
+
+export interface PermissionGroupItem {
+  object: string
+  label: string
+  actions: string[]
+}
+
+export interface PermissionGroup {
+  group: string
+  items: PermissionGroupItem[]
+}
+
+const PERMISSION_GROUP_ORDER = ['销售', '商品', '门店', '审核', '系统', '其他']
+const PERMISSION_ACTION_ORDER = ['read', 'write', 'approve']
+const PERMISSION_OBJECT_ORDER = Object.keys(PERMISSION_OBJECT_META)
+
+/**
+ * 把后端已解析的 `object:action` 权限串按对象聚合、按目录分组,
+ * 未收录的对象归入"其他"并原样展示(前端字典落后于后端时不静默丢失)。
+ */
+export function groupPermissions(permissions: Iterable<string>): PermissionGroup[] {
+  const actionsByObject = new Map<string, Set<string>>()
+  for (const perm of permissions) {
+    const idx = perm.lastIndexOf(':')
+    const object = idx > 0 ? perm.slice(0, idx) : perm
+    const action = idx > 0 ? perm.slice(idx + 1) : ''
+    const actions = actionsByObject.get(object) ?? new Set<string>()
+    if (action) actions.add(action)
+    actionsByObject.set(object, actions)
+  }
+
+  const itemsByGroup = new Map<string, PermissionGroupItem[]>()
+  for (const [object, actions] of actionsByObject) {
+    const meta = PERMISSION_OBJECT_META[object]
+    const group = meta?.group ?? '其他'
+    const items = itemsByGroup.get(group) ?? []
+    items.push({
+      object,
+      label: meta?.label ?? object,
+      actions: [...actions].sort(
+        (a, b) => rankOf(PERMISSION_ACTION_ORDER, a) - rankOf(PERMISSION_ACTION_ORDER, b),
+      ),
+    })
+    itemsByGroup.set(group, items)
+  }
+
+  return [...itemsByGroup.entries()]
+    .sort(([a], [b]) => rankOf(PERMISSION_GROUP_ORDER, a) - rankOf(PERMISSION_GROUP_ORDER, b))
+    .map(([group, items]) => ({
+      group,
+      items: items.sort(
+        (a, b) =>
+          rankOf(PERMISSION_OBJECT_ORDER, a.object) - rankOf(PERMISSION_OBJECT_ORDER, b.object) ||
+          a.object.localeCompare(b.object),
+      ),
+    }))
+}
+
+function rankOf(order: readonly string[], value: string): number {
+  const idx = order.indexOf(value)
+  return idx === -1 ? order.length : idx
+}
+
 export function fieldLabel(key: string): string {
   return FIELD_LABELS[key] ?? key
 }

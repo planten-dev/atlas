@@ -95,7 +95,7 @@ function SystemsPage() {
       <DataTableToolbar
         actions={
           <Guard perm="systems:write">
-            <Button size="sm" onClick={() => setEditing('new')}>
+            <Button onClick={() => setEditing('new')}>
               <Plus />
               新建体系
             </Button>

@@ -1,4 +1,5 @@
-import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
+import { useState } from 'react'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import type { ColumnDef } from '@tanstack/react-table'
@@ -13,6 +14,7 @@ import { StorePicker } from '@/components/pickers/StorePicker'
 import { Guard } from '@/auth/PermissionProvider'
 import { requirePerm } from '@/auth/route-guard'
 import { customersListOptions, type CustomerResponse } from '@/hooks/useCustomers'
+import { CreateCustomerDialog } from '@/components/customers/CreateCustomerDialog'
 import { formatDate } from '@/lib/date'
 import { ENTITY_STATUS_LABELS } from '@/lib/labels'
 
@@ -65,6 +67,7 @@ function CustomersListPage() {
   const navigate = useNavigate({ from: Route.fullPath })
   const query = useQuery(customersListOptions(search))
   const rows = query.data?.items ?? []
+  const [createOpen, setCreateOpen] = useState(false)
 
   const patchSearch = (patch: Partial<CustomersSearch>) => {
     void navigate({ search: (prev) => ({ ...prev, ...patch, page_number: 1 }) })
@@ -72,15 +75,16 @@ function CustomersListPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">客户</h1>
-        <Guard perm="customers:write">
-          <Button render={<Link to="/customers/new" />}>
-            <Plus />
-            新建客户
-          </Button>
-        </Guard>
-      </div>
+      <h1 className="text-xl font-semibold">客户</h1>
+
+      <CreateCustomerDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onCreated={(customerId) => {
+          setCreateOpen(false)
+          void navigate({ to: '/customers/$customerId', params: { customerId } })
+        }}
+      />
 
       <DataTableToolbar
         exportConfig={{
@@ -93,6 +97,14 @@ function CustomersListPage() {
           ],
           rows,
         }}
+        actions={
+          <Guard perm="customers:write">
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus />
+              新建客户
+            </Button>
+          </Guard>
+        }
       >
         <div className="grid w-full gap-2 md:grid-cols-4">
           <Input

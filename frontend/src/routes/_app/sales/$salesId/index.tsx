@@ -16,7 +16,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -32,6 +32,7 @@ import { requirePerm } from '@/auth/route-guard'
 import { salesDetailOptions, useVoidSalesRecord } from '@/hooks/useSales'
 import { useUpdateOperationCount } from '@/hooks/useCounts'
 import { usagesListOptions, useVoidUsage } from '@/hooks/useUsages'
+import { UsageFormDialog } from '@/components/usages/UsageForm'
 import { customerDetailOptions } from '@/hooks/useCustomers'
 import { activeCategoriesOptions } from '@/hooks/useCategories'
 import { formatDate, formatDateTime } from '@/lib/date'
@@ -220,13 +221,15 @@ function CountsCard({
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between">
+      <CardHeader>
         <CardTitle className="text-base">次数账户</CardTitle>
         {!voided && (
           <Guard perm="sales:operation-counts:write">
-            <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-              调整总次数
-            </Button>
+            <CardAction>
+              <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+                调整总次数
+              </Button>
+            </CardAction>
           </Guard>
         )}
       </CardHeader>
@@ -291,24 +294,28 @@ function UsagesCard({ salesRecordId, hasCounts }: { salesRecordId: string; hasCo
   const query = useQuery(usagesListOptions({ sales_record_id: salesRecordId, page_size: 200 }))
   const voidMutation = useVoidUsage()
   const usages = query.data?.items ?? []
+  const [createOpen, setCreateOpen] = useState(false)
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between">
+      <CardHeader>
         <CardTitle className="text-base">耗用记录</CardTitle>
         {hasCounts && (
           <Guard perm="sales:operation-usages:write">
-            <Button
-              variant="outline"
-              size="sm"
-              render={<Link to="/usages/new" search={{ salesRecordId }} />}
-            >
-              <Plus />
-              登记耗用
-            </Button>
+            <CardAction>
+              <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>
+                <Plus />
+                登记耗用
+              </Button>
+            </CardAction>
           </Guard>
         )}
       </CardHeader>
+      <UsageFormDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        lockedSalesRecordId={salesRecordId}
+      />
       <CardContent>
         {query.isLoading ? (
           <p className="text-sm text-muted-foreground">加载中…</p>

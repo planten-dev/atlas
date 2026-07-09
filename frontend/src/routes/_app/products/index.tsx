@@ -25,6 +25,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { DataTable } from '@/components/data-table/data-table'
 import { DataTableToolbar } from '@/components/data-table/toolbar'
 import { FormMoney, FormSwitch, FormText } from '@/components/form/fields'
@@ -120,10 +121,10 @@ function ProductsTab() {
     { accessorKey: 'category_name', header: '类别' },
     {
       accessorKey: 'unit_price',
-      header: () => <span className="block text-right">单价</span>,
-      meta: { title: '单价' },
+      header: '单价',
+      meta: { align: 'right' },
       cell: ({ row }) => (
-        <span className="block text-right tabular-nums">{formatAmount(row.original.unit_price)}</span>
+        <span className="tabular-nums">{formatAmount(row.original.unit_price)}</span>
       ),
     },
     { accessorKey: 'specification', header: '规格', cell: ({ row }) => row.original.specification ?? '-' },
@@ -173,7 +174,7 @@ function ProductsTab() {
         }}
         actions={
           <Guard perm="products:write">
-            <Button size="sm" onClick={() => setEditing('new')}>
+            <Button onClick={() => setEditing('new')}>
               <Plus />
               新建产品
             </Button>
@@ -278,18 +279,18 @@ function ProductDialog({
         </DialogHeader>
         <form className="flex flex-col gap-4" onSubmit={submit}>
           <FormText control={form.control} name="name" label="名称" required />
-          <div className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">
+          <Field data-invalid={form.formState.errors.category_id ? true : undefined}>
+            <FieldLabel>
               类别<span className="text-destructive">*</span>
-            </span>
+            </FieldLabel>
             <CategoryPicker
               value={form.watch('category_id') || undefined}
               onChange={(v) => form.setValue('category_id', v ?? '', { shouldValidate: true })}
             />
             {form.formState.errors.category_id && (
-              <p className="text-sm text-destructive">{form.formState.errors.category_id.message}</p>
+              <FieldError>{form.formState.errors.category_id.message}</FieldError>
             )}
-          </div>
+          </Field>
           <FormMoney control={form.control} name="unit_price" label="单价" required />
           <div className="grid grid-cols-2 gap-3">
             <FormText control={form.control} name="series" label="系列" />
@@ -376,7 +377,7 @@ function CategoriesTab() {
       <DataTableToolbar
         actions={
           <Guard perm="products:categories:write">
-            <Button size="sm" onClick={() => setEditing('new')}>
+            <Button onClick={() => setEditing('new')}>
               <Plus />
               新建类别
             </Button>

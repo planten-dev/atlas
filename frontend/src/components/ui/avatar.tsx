@@ -30,7 +30,8 @@ function AvatarImage({ className, ...props }: AvatarPrimitive.Image.Props) {
     <AvatarPrimitive.Image
       data-slot="avatar-image"
       className={cn(
-        "aspect-square size-full rounded-full object-cover",
+        // 钉钉头像存在长方形原图:保持比例完整放入圆内,muted 底色补边不变形
+        "aspect-square size-full rounded-full bg-muted object-contain",
         className
       )}
       {...props}

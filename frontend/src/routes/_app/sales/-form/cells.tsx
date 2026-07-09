@@ -1,11 +1,5 @@
-import { useQuery } from '@tanstack/react-query'
-import { customerDetailOptions } from '@/hooks/useCustomers'
-
-function CustomerNameCell({ customerId }: { customerId: string }) {
-  const { data } = useQuery({ ...customerDetailOptions(customerId), staleTime: 10 * 60_000 })
-  return <span>{data?.name ?? '…'}</span>
-}
+import { CustomerName } from '@/components/customers/CustomerName'
 
 export function customerNameCell(customerId: string) {
-  return <CustomerNameCell customerId={customerId} />
+  return <CustomerName customerId={customerId} />
 }
