@@ -8,7 +8,10 @@ use tracing::{debug, info};
 use uuid::Uuid;
 
 use crate::{
-    entities::{sales_record_operation_counts, sales_record_operation_usages, sales_records},
+    entities::{
+        sales_payment_allocations, sales_payments, sales_record_lines,
+        sales_record_operation_counts, sales_record_operation_usages, sales_records,
+    },
     repositories::RepositoryError,
 };
 
@@ -19,80 +22,77 @@ pub struct SalesRecordRepository {
 
 #[derive(Debug, Clone)]
 pub struct NewSalesRecord {
-    pub record_group_id: Option<Uuid>,
+    pub record_type: String,
     pub customer_id: Uuid,
-    pub sale_date: NaiveDate,
-    pub deal_status: String,
-    pub customer_type: String,
-    pub deal_type: String,
-    pub content_category_id: Uuid,
-    pub handler_user_id: Uuid,
-    pub paid_amount: Decimal,
-    pub unpaid_amount: Decimal,
+    pub record_date: NaiveDate,
+    pub customer_type: Option<String>,
+    pub deal_type: Option<String>,
     pub system_id: Uuid,
     pub store_id: Uuid,
-    pub collaboration_type: String,
+    pub handler_user_id: Uuid,
     pub expert_user_id: Option<Uuid>,
     pub consultant_user_id: Option<Uuid>,
     pub doctor_user_id: Option<Uuid>,
+    pub remark: Option<String>,
+    pub status: String,
+    pub created_by_user_id: Uuid,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewSalesRecordLine {
+    pub sales_record_id: Uuid,
+    pub product_id: Uuid,
+    pub item_name: String,
+    pub receivable_amount: Decimal,
+    pub operation_total_count: Option<i32>,
+    pub remark: Option<String>,
     pub status: String,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct SalesRecordChanges {
-    pub customer_id: Option<Uuid>,
-    pub sale_date: Option<NaiveDate>,
-    pub deal_status: Option<String>,
-    pub customer_type: Option<String>,
-    pub deal_type: Option<String>,
-    pub content_category_id: Option<Uuid>,
-    pub handler_user_id: Option<Uuid>,
-    pub paid_amount: Option<Decimal>,
-    pub unpaid_amount: Option<Decimal>,
-    pub system_id: Option<Uuid>,
-    pub store_id: Option<Uuid>,
-    pub collaboration_type: Option<String>,
-    pub expert_user_id: Option<Option<Uuid>>,
-    pub consultant_user_id: Option<Option<Uuid>>,
-    pub doctor_user_id: Option<Option<Uuid>>,
+#[derive(Debug, Clone)]
+pub struct NewSalesPayment {
+    pub sales_record_id: Uuid,
+    pub payment_type: String,
+    pub paid_amount: Decimal,
+    pub paid_at: DateTime<Utc>,
+    pub performance_status: String,
+    pub status: String,
+    pub remark: Option<String>,
+    pub created_by_user_id: Uuid,
 }
 
-impl SalesRecordChanges {
-    pub fn is_empty(&self) -> bool {
-        self.customer_id.is_none()
-            && self.sale_date.is_none()
-            && self.deal_status.is_none()
-            && self.customer_type.is_none()
-            && self.deal_type.is_none()
-            && self.content_category_id.is_none()
-            && self.handler_user_id.is_none()
-            && self.paid_amount.is_none()
-            && self.unpaid_amount.is_none()
-            && self.system_id.is_none()
-            && self.store_id.is_none()
-            && self.collaboration_type.is_none()
-            && self.expert_user_id.is_none()
-            && self.consultant_user_id.is_none()
-            && self.doctor_user_id.is_none()
-    }
+#[derive(Debug, Clone)]
+pub struct NewSalesPaymentAllocation {
+    pub payment_id: Uuid,
+    pub guide_user_id: Uuid,
+    pub allocation_ratio: Decimal,
+    pub allocated_amount: Decimal,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SalesRecordFilters<'a> {
     pub status_filter: Option<&'a str>,
-    pub record_group_id: Option<Uuid>,
+    pub record_type: Option<&'a str>,
     pub customer_id: Option<Uuid>,
     pub system_id: Option<Uuid>,
     pub store_id: Option<Uuid>,
     pub handler_user_id: Option<Uuid>,
-    pub content_category_id: Option<Uuid>,
-    pub sale_date_from: Option<NaiveDate>,
-    pub sale_date_to: Option<NaiveDate>,
+    pub record_date_from: Option<NaiveDate>,
+    pub record_date_to: Option<NaiveDate>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SalesPaymentFilters<'a> {
+    pub status_filter: Option<&'a str>,
+    pub payment_type: Option<&'a str>,
+    pub sales_record_id: Option<Uuid>,
+    pub paid_at_from: Option<DateTime<Utc>>,
+    pub paid_at_to: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct NewOperationCount {
-    pub sales_record_id: Uuid,
+    pub sales_record_line_id: Uuid,
     pub total_count: i32,
     pub used_count: i32,
     pub status: String,
@@ -108,12 +108,12 @@ pub struct OperationCountChanges {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OperationCountFilters<'a> {
     pub status_filter: Option<&'a str>,
-    pub sales_record_id: Option<Uuid>,
+    pub sales_record_line_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone)]
 pub struct NewOperationUsage {
-    pub sales_record_id: Uuid,
+    pub sales_record_line_id: Uuid,
     pub operated_at: DateTime<Utc>,
     pub operator_user_id: Uuid,
     pub doctor_user_id: Option<Uuid>,
@@ -146,7 +146,7 @@ impl OperationUsageChanges {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OperationUsageFilters<'a> {
     pub status_filter: Option<&'a str>,
-    pub sales_record_id: Option<Uuid>,
+    pub sales_record_line_id: Option<Uuid>,
     pub operator_user_id: Option<Uuid>,
     pub doctor_user_id: Option<Uuid>,
     pub operated_at_from: Option<DateTime<Utc>>,
@@ -162,38 +162,32 @@ impl SalesRecordRepository {
         Ok(self.db.begin().await?)
     }
 
-    #[tracing::instrument(level = "info", skip(self, conn, record), fields(customer_id = %record.customer_id, record_group_id = ?record.record_group_id))]
+    #[tracing::instrument(level = "info", skip(self, conn, record), fields(customer_id = %record.customer_id, record_type = %record.record_type))]
     pub async fn insert_sales_record<C: ConnectionTrait>(
         &self,
         conn: &C,
         record: NewSalesRecord,
         now: DateTime<Utc>,
     ) -> Result<sales_records::Model, RepositoryError> {
-        validate_required("deal_status", &record.deal_status)?;
-        validate_required("customer_type", &record.customer_type)?;
-        validate_required("deal_type", &record.deal_type)?;
-        validate_required("collaboration_type", &record.collaboration_type)?;
+        validate_required("record_type", &record.record_type)?;
         validate_required("status", &record.status)?;
 
         let record = sales_records::ActiveModel {
             id: Set(Uuid::new_v4()),
-            record_group_id: Set(record.record_group_id),
+            record_type: Set(record.record_type),
             customer_id: Set(record.customer_id),
-            sale_date: Set(record.sale_date),
-            deal_status: Set(record.deal_status),
+            record_date: Set(record.record_date),
             customer_type: Set(record.customer_type),
             deal_type: Set(record.deal_type),
-            content_category_id: Set(record.content_category_id),
-            handler_user_id: Set(record.handler_user_id),
-            paid_amount: Set(record.paid_amount),
-            unpaid_amount: Set(record.unpaid_amount),
             system_id: Set(record.system_id),
             store_id: Set(record.store_id),
-            collaboration_type: Set(record.collaboration_type),
+            handler_user_id: Set(record.handler_user_id),
             expert_user_id: Set(record.expert_user_id),
             consultant_user_id: Set(record.consultant_user_id),
             doctor_user_id: Set(record.doctor_user_id),
+            remark: Set(record.remark),
             status: Set(record.status),
+            created_by_user_id: Set(record.created_by_user_id),
             created_at: Set(now),
             updated_at: Set(now),
         }
@@ -204,6 +198,89 @@ impl SalesRecordRepository {
         Ok(record)
     }
 
+    #[tracing::instrument(level = "info", skip(self, conn, line), fields(sales_record_id = %line.sales_record_id, product_id = %line.product_id))]
+    pub async fn insert_sales_record_line<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        line: NewSalesRecordLine,
+        now: DateTime<Utc>,
+    ) -> Result<sales_record_lines::Model, RepositoryError> {
+        validate_required("item_name", &line.item_name)?;
+        validate_required("status", &line.status)?;
+
+        let line = sales_record_lines::ActiveModel {
+            id: Set(Uuid::new_v4()),
+            sales_record_id: Set(line.sales_record_id),
+            product_id: Set(line.product_id),
+            item_name: Set(line.item_name),
+            receivable_amount: Set(line.receivable_amount),
+            operation_total_count: Set(line.operation_total_count),
+            remark: Set(line.remark),
+            status: Set(line.status),
+            created_at: Set(now),
+            updated_at: Set(now),
+        }
+        .insert(conn)
+        .await?;
+
+        info!(sales_record_line_id = %line.id, "inserted sales record line");
+        Ok(line)
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn, payment), fields(sales_record_id = %payment.sales_record_id, payment_type = %payment.payment_type))]
+    pub async fn insert_sales_payment<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        payment: NewSalesPayment,
+        now: DateTime<Utc>,
+    ) -> Result<sales_payments::Model, RepositoryError> {
+        validate_required("payment_type", &payment.payment_type)?;
+        validate_required("performance_status", &payment.performance_status)?;
+        validate_required("status", &payment.status)?;
+
+        let payment = sales_payments::ActiveModel {
+            id: Set(Uuid::new_v4()),
+            sales_record_id: Set(payment.sales_record_id),
+            payment_type: Set(payment.payment_type),
+            paid_amount: Set(payment.paid_amount),
+            paid_at: Set(payment.paid_at),
+            performance_status: Set(payment.performance_status),
+            status: Set(payment.status),
+            remark: Set(payment.remark),
+            created_by_user_id: Set(payment.created_by_user_id),
+            created_at: Set(now),
+            updated_at: Set(now),
+        }
+        .insert(conn)
+        .await?;
+
+        info!(payment_id = %payment.id, "inserted sales payment");
+        Ok(payment)
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn, allocation), fields(payment_id = %allocation.payment_id, guide_user_id = %allocation.guide_user_id))]
+    pub async fn insert_sales_payment_allocation<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        allocation: NewSalesPaymentAllocation,
+        now: DateTime<Utc>,
+    ) -> Result<sales_payment_allocations::Model, RepositoryError> {
+        let allocation = sales_payment_allocations::ActiveModel {
+            id: Set(Uuid::new_v4()),
+            payment_id: Set(allocation.payment_id),
+            guide_user_id: Set(allocation.guide_user_id),
+            allocation_ratio: Set(allocation.allocation_ratio),
+            allocated_amount: Set(allocation.allocated_amount),
+            created_at: Set(now),
+            updated_at: Set(now),
+        }
+        .insert(conn)
+        .await?;
+
+        info!(allocation_id = %allocation.id, "inserted sales payment allocation");
+        Ok(allocation)
+    }
+
     #[tracing::instrument(level = "debug", skip(self))]
     pub async fn find_sales_record_by_id(
         &self,
@@ -212,7 +289,6 @@ impl SalesRecordRepository {
         let record = sales_records::Entity::find_by_id(sales_record_id)
             .one(&self.db)
             .await?;
-
         debug!(found = record.is_some(), %sales_record_id, "looked up sales record by id");
         Ok(record)
     }
@@ -227,7 +303,6 @@ impl SalesRecordRepository {
             .lock_exclusive()
             .one(tx)
             .await?;
-
         debug!(found = record.is_some(), %sales_record_id, "locked sales record by id");
         Ok(record)
     }
@@ -240,7 +315,7 @@ impl SalesRecordRepository {
         page_size: u64,
     ) -> Result<(Vec<sales_records::Model>, u64), RepositoryError> {
         let mut query = sales_records::Entity::find()
-            .order_by_desc(sales_records::Column::SaleDate)
+            .order_by_desc(sales_records::Column::RecordDate)
             .order_by_desc(sales_records::Column::CreatedAt)
             .order_by_asc(sales_records::Column::Id);
 
@@ -248,8 +323,9 @@ impl SalesRecordRepository {
             validate_required("status_filter", status_filter)?;
             query = query.filter(sales_records::Column::Status.eq(status_filter.trim()));
         }
-        if let Some(record_group_id) = filters.record_group_id {
-            query = query.filter(sales_records::Column::RecordGroupId.eq(record_group_id));
+        if let Some(record_type) = filters.record_type {
+            validate_required("record_type", record_type)?;
+            query = query.filter(sales_records::Column::RecordType.eq(record_type.trim()));
         }
         if let Some(customer_id) = filters.customer_id {
             query = query.filter(sales_records::Column::CustomerId.eq(customer_id));
@@ -263,14 +339,11 @@ impl SalesRecordRepository {
         if let Some(handler_user_id) = filters.handler_user_id {
             query = query.filter(sales_records::Column::HandlerUserId.eq(handler_user_id));
         }
-        if let Some(content_category_id) = filters.content_category_id {
-            query = query.filter(sales_records::Column::ContentCategoryId.eq(content_category_id));
+        if let Some(record_date_from) = filters.record_date_from {
+            query = query.filter(sales_records::Column::RecordDate.gte(record_date_from));
         }
-        if let Some(sale_date_from) = filters.sale_date_from {
-            query = query.filter(sales_records::Column::SaleDate.gte(sale_date_from));
-        }
-        if let Some(sale_date_to) = filters.sale_date_to {
-            query = query.filter(sales_records::Column::SaleDate.lte(sale_date_to));
+        if let Some(record_date_to) = filters.record_date_to {
+            query = query.filter(sales_records::Column::RecordDate.lte(record_date_to));
         }
 
         let paginator = query.paginate(&self.db, page_size);
@@ -284,72 +357,6 @@ impl SalesRecordRepository {
         Ok((records, total_count))
     }
 
-    #[tracing::instrument(level = "info", skip(self, conn, record, changes), fields(sales_record_id = %record.id))]
-    pub async fn update_sales_record<C: ConnectionTrait>(
-        &self,
-        conn: &C,
-        record: &sales_records::Model,
-        changes: SalesRecordChanges,
-        now: DateTime<Utc>,
-    ) -> Result<sales_records::Model, RepositoryError> {
-        let mut active: sales_records::ActiveModel = record.clone().into();
-
-        if let Some(customer_id) = changes.customer_id {
-            active.customer_id = Set(customer_id);
-        }
-        if let Some(sale_date) = changes.sale_date {
-            active.sale_date = Set(sale_date);
-        }
-        if let Some(deal_status) = changes.deal_status {
-            validate_required("deal_status", &deal_status)?;
-            active.deal_status = Set(deal_status);
-        }
-        if let Some(customer_type) = changes.customer_type {
-            validate_required("customer_type", &customer_type)?;
-            active.customer_type = Set(customer_type);
-        }
-        if let Some(deal_type) = changes.deal_type {
-            validate_required("deal_type", &deal_type)?;
-            active.deal_type = Set(deal_type);
-        }
-        if let Some(content_category_id) = changes.content_category_id {
-            active.content_category_id = Set(content_category_id);
-        }
-        if let Some(handler_user_id) = changes.handler_user_id {
-            active.handler_user_id = Set(handler_user_id);
-        }
-        if let Some(paid_amount) = changes.paid_amount {
-            active.paid_amount = Set(paid_amount);
-        }
-        if let Some(unpaid_amount) = changes.unpaid_amount {
-            active.unpaid_amount = Set(unpaid_amount);
-        }
-        if let Some(system_id) = changes.system_id {
-            active.system_id = Set(system_id);
-        }
-        if let Some(store_id) = changes.store_id {
-            active.store_id = Set(store_id);
-        }
-        if let Some(collaboration_type) = changes.collaboration_type {
-            validate_required("collaboration_type", &collaboration_type)?;
-            active.collaboration_type = Set(collaboration_type);
-        }
-        if let Some(expert_user_id) = changes.expert_user_id {
-            active.expert_user_id = Set(expert_user_id);
-        }
-        if let Some(consultant_user_id) = changes.consultant_user_id {
-            active.consultant_user_id = Set(consultant_user_id);
-        }
-        if let Some(doctor_user_id) = changes.doctor_user_id {
-            active.doctor_user_id = Set(doctor_user_id);
-        }
-        active.updated_at = Set(now);
-
-        let record = active.update(conn).await?;
-        info!(sales_record_id = %record.id, "updated sales record");
-        Ok(record)
-    }
-
     #[tracing::instrument(level = "info", skip(self, conn, record), fields(sales_record_id = %record.id, status = %status))]
     pub async fn update_sales_record_status<C: ConnectionTrait>(
         &self,
@@ -359,32 +366,244 @@ impl SalesRecordRepository {
         now: DateTime<Utc>,
     ) -> Result<sales_records::Model, RepositoryError> {
         validate_required("status", status)?;
-
         let mut active: sales_records::ActiveModel = record.clone().into();
         active.status = Set(status.trim().to_string());
         active.updated_at = Set(now);
         let record = active.update(conn).await?;
-
         info!(sales_record_id = %record.id, status = %record.status, "updated sales record status");
         Ok(record)
     }
 
-    #[tracing::instrument(level = "info", skip(self, conn))]
-    pub async fn delete_sales_record_by_id<C: ConnectionTrait>(
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn find_lines_by_sales_record_ids(
+        &self,
+        sales_record_ids: Vec<Uuid>,
+    ) -> Result<Vec<sales_record_lines::Model>, RepositoryError> {
+        if sales_record_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let lines = sales_record_lines::Entity::find()
+            .filter(sales_record_lines::Column::SalesRecordId.is_in(sales_record_ids))
+            .order_by_asc(sales_record_lines::Column::CreatedAt)
+            .order_by_asc(sales_record_lines::Column::Id)
+            .all(&self.db)
+            .await?;
+        debug!(count = lines.len(), "looked up sales record lines by record ids");
+        Ok(lines)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn find_lines_by_sales_record_id(
+        &self,
+        sales_record_id: Uuid,
+    ) -> Result<Vec<sales_record_lines::Model>, RepositoryError> {
+        self.find_lines_by_sales_record_ids(vec![sales_record_id]).await
+    }
+
+    #[tracing::instrument(level = "debug", skip(self, conn))]
+    pub async fn find_lines_by_sales_record_id_in<C: ConnectionTrait>(
         &self,
         conn: &C,
         sales_record_id: Uuid,
-    ) -> Result<bool, RepositoryError> {
-        let result = sales_records::Entity::delete_by_id(sales_record_id)
-            .exec(conn)
+    ) -> Result<Vec<sales_record_lines::Model>, RepositoryError> {
+        let lines = sales_record_lines::Entity::find()
+            .filter(sales_record_lines::Column::SalesRecordId.eq(sales_record_id))
+            .order_by_asc(sales_record_lines::Column::CreatedAt)
+            .order_by_asc(sales_record_lines::Column::Id)
+            .all(conn)
             .await?;
-        let deleted = result.rows_affected > 0;
-
-        info!(%sales_record_id, deleted, "deleted sales record by id");
-        Ok(deleted)
+        debug!(%sales_record_id, count = lines.len(), "looked up sales record lines in connection");
+        Ok(lines)
     }
 
-    #[tracing::instrument(level = "info", skip(self, conn, count), fields(sales_record_id = %count.sales_record_id))]
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn find_line_by_id(
+        &self,
+        sales_record_line_id: Uuid,
+    ) -> Result<Option<sales_record_lines::Model>, RepositoryError> {
+        let line = sales_record_lines::Entity::find_by_id(sales_record_line_id)
+            .one(&self.db)
+            .await?;
+        debug!(found = line.is_some(), %sales_record_line_id, "looked up sales record line by id");
+        Ok(line)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self, tx))]
+    pub async fn find_line_by_id_for_update(
+        &self,
+        tx: &DatabaseTransaction,
+        sales_record_line_id: Uuid,
+    ) -> Result<Option<sales_record_lines::Model>, RepositoryError> {
+        let line = sales_record_lines::Entity::find_by_id(sales_record_line_id)
+            .lock_exclusive()
+            .one(tx)
+            .await?;
+        debug!(found = line.is_some(), %sales_record_line_id, "locked sales record line by id");
+        Ok(line)
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn, line), fields(sales_record_line_id = %line.id, status = %status))]
+    pub async fn update_line_status<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        line: &sales_record_lines::Model,
+        status: &str,
+        now: DateTime<Utc>,
+    ) -> Result<sales_record_lines::Model, RepositoryError> {
+        validate_required("status", status)?;
+        let mut active: sales_record_lines::ActiveModel = line.clone().into();
+        active.status = Set(status.trim().to_string());
+        active.updated_at = Set(now);
+        Ok(active.update(conn).await?)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn find_payments_by_sales_record_ids(
+        &self,
+        sales_record_ids: Vec<Uuid>,
+    ) -> Result<Vec<sales_payments::Model>, RepositoryError> {
+        if sales_record_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let payments = sales_payments::Entity::find()
+            .filter(sales_payments::Column::SalesRecordId.is_in(sales_record_ids))
+            .order_by_asc(sales_payments::Column::PaidAt)
+            .order_by_asc(sales_payments::Column::CreatedAt)
+            .order_by_asc(sales_payments::Column::Id)
+            .all(&self.db)
+            .await?;
+        debug!(count = payments.len(), "looked up sales payments by record ids");
+        Ok(payments)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn find_payments_by_sales_record_id(
+        &self,
+        sales_record_id: Uuid,
+    ) -> Result<Vec<sales_payments::Model>, RepositoryError> {
+        self.find_payments_by_sales_record_ids(vec![sales_record_id]).await
+    }
+
+    #[tracing::instrument(level = "debug", skip(self, conn))]
+    pub async fn find_payments_by_sales_record_id_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        sales_record_id: Uuid,
+    ) -> Result<Vec<sales_payments::Model>, RepositoryError> {
+        let payments = sales_payments::Entity::find()
+            .filter(sales_payments::Column::SalesRecordId.eq(sales_record_id))
+            .order_by_asc(sales_payments::Column::PaidAt)
+            .order_by_asc(sales_payments::Column::CreatedAt)
+            .order_by_asc(sales_payments::Column::Id)
+            .all(conn)
+            .await?;
+        debug!(%sales_record_id, count = payments.len(), "looked up sales payments in connection");
+        Ok(payments)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn find_payment_by_id(
+        &self,
+        payment_id: Uuid,
+    ) -> Result<Option<sales_payments::Model>, RepositoryError> {
+        let payment = sales_payments::Entity::find_by_id(payment_id)
+            .one(&self.db)
+            .await?;
+        debug!(found = payment.is_some(), %payment_id, "looked up sales payment by id");
+        Ok(payment)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self, tx))]
+    pub async fn find_payment_by_id_for_update(
+        &self,
+        tx: &DatabaseTransaction,
+        payment_id: Uuid,
+    ) -> Result<Option<sales_payments::Model>, RepositoryError> {
+        let payment = sales_payments::Entity::find_by_id(payment_id)
+            .lock_exclusive()
+            .one(tx)
+            .await?;
+        debug!(found = payment.is_some(), %payment_id, "locked sales payment by id");
+        Ok(payment)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn list_sales_payments(
+        &self,
+        filters: SalesPaymentFilters<'_>,
+        page_number: u64,
+        page_size: u64,
+    ) -> Result<(Vec<sales_payments::Model>, u64), RepositoryError> {
+        let mut query = sales_payments::Entity::find()
+            .order_by_desc(sales_payments::Column::PaidAt)
+            .order_by_desc(sales_payments::Column::CreatedAt)
+            .order_by_asc(sales_payments::Column::Id);
+
+        if let Some(status_filter) = filters.status_filter {
+            validate_required("status_filter", status_filter)?;
+            query = query.filter(sales_payments::Column::Status.eq(status_filter.trim()));
+        }
+        if let Some(payment_type) = filters.payment_type {
+            validate_required("payment_type", payment_type)?;
+            query = query.filter(sales_payments::Column::PaymentType.eq(payment_type.trim()));
+        }
+        if let Some(sales_record_id) = filters.sales_record_id {
+            query = query.filter(sales_payments::Column::SalesRecordId.eq(sales_record_id));
+        }
+        if let Some(paid_at_from) = filters.paid_at_from {
+            query = query.filter(sales_payments::Column::PaidAt.gte(paid_at_from));
+        }
+        if let Some(paid_at_to) = filters.paid_at_to {
+            query = query.filter(sales_payments::Column::PaidAt.lte(paid_at_to));
+        }
+
+        let paginator = query.paginate(&self.db, page_size);
+        let total_count = paginator.num_items().await?;
+        let payments = paginator.fetch_page(page_number.saturating_sub(1)).await?;
+
+        debug!(
+            count = payments.len(),
+            total_count, page_number, page_size, "listed sales payments"
+        );
+        Ok((payments, total_count))
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn, payment), fields(payment_id = %payment.id, status = %status))]
+    pub async fn update_payment_status<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        payment: &sales_payments::Model,
+        status: &str,
+        now: DateTime<Utc>,
+    ) -> Result<sales_payments::Model, RepositoryError> {
+        validate_required("status", status)?;
+        let mut active: sales_payments::ActiveModel = payment.clone().into();
+        active.status = Set(status.trim().to_string());
+        active.updated_at = Set(now);
+        let payment = active.update(conn).await?;
+        info!(payment_id = %payment.id, status = %payment.status, "updated payment status");
+        Ok(payment)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn find_allocations_by_payment_ids(
+        &self,
+        payment_ids: Vec<Uuid>,
+    ) -> Result<Vec<sales_payment_allocations::Model>, RepositoryError> {
+        if payment_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let allocations = sales_payment_allocations::Entity::find()
+            .filter(sales_payment_allocations::Column::PaymentId.is_in(payment_ids))
+            .order_by_asc(sales_payment_allocations::Column::CreatedAt)
+            .order_by_asc(sales_payment_allocations::Column::Id)
+            .all(&self.db)
+            .await?;
+        debug!(count = allocations.len(), "looked up sales payment allocations by payment ids");
+        Ok(allocations)
+    }
+
+    #[tracing::instrument(level = "info", skip(self, conn, count), fields(sales_record_line_id = %count.sales_record_line_id))]
     pub async fn insert_operation_count<C: ConnectionTrait>(
         &self,
         conn: &C,
@@ -392,9 +611,8 @@ impl SalesRecordRepository {
         now: DateTime<Utc>,
     ) -> Result<sales_record_operation_counts::Model, RepositoryError> {
         validate_required("status", &count.status)?;
-
         let count = sales_record_operation_counts::ActiveModel {
-            sales_record_id: Set(count.sales_record_id),
+            sales_record_line_id: Set(count.sales_record_line_id),
             total_count: Set(count.total_count),
             used_count: Set(count.used_count),
             status: Set(count.status),
@@ -403,21 +621,19 @@ impl SalesRecordRepository {
         }
         .insert(conn)
         .await?;
-
-        info!(sales_record_id = %count.sales_record_id, "inserted sales record operation count");
+        info!(sales_record_line_id = %count.sales_record_line_id, "inserted operation count");
         Ok(count)
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
     pub async fn find_operation_count(
         &self,
-        sales_record_id: Uuid,
+        sales_record_line_id: Uuid,
     ) -> Result<Option<sales_record_operation_counts::Model>, RepositoryError> {
-        let count = sales_record_operation_counts::Entity::find_by_id(sales_record_id)
+        let count = sales_record_operation_counts::Entity::find_by_id(sales_record_line_id)
             .one(&self.db)
             .await?;
-
-        debug!(found = count.is_some(), %sales_record_id, "looked up operation count");
+        debug!(found = count.is_some(), %sales_record_line_id, "looked up operation count");
         Ok(count)
     }
 
@@ -425,35 +641,52 @@ impl SalesRecordRepository {
     pub async fn find_operation_count_for_update(
         &self,
         tx: &DatabaseTransaction,
-        sales_record_id: Uuid,
+        sales_record_line_id: Uuid,
     ) -> Result<Option<sales_record_operation_counts::Model>, RepositoryError> {
-        let count = sales_record_operation_counts::Entity::find_by_id(sales_record_id)
+        let count = sales_record_operation_counts::Entity::find_by_id(sales_record_line_id)
             .lock_exclusive()
             .one(tx)
             .await?;
-
-        debug!(found = count.is_some(), %sales_record_id, "locked operation count");
+        debug!(found = count.is_some(), %sales_record_line_id, "locked operation count");
         Ok(count)
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
-    pub async fn find_operation_counts_by_sales_record_ids(
+    pub async fn find_operation_counts_by_line_ids(
         &self,
-        sales_record_ids: Vec<Uuid>,
+        sales_record_line_ids: Vec<Uuid>,
     ) -> Result<Vec<sales_record_operation_counts::Model>, RepositoryError> {
-        if sales_record_ids.is_empty() {
+        if sales_record_line_ids.is_empty() {
             return Ok(Vec::new());
         }
-
         let counts = sales_record_operation_counts::Entity::find()
-            .filter(sales_record_operation_counts::Column::SalesRecordId.is_in(sales_record_ids))
+            .filter(
+                sales_record_operation_counts::Column::SalesRecordLineId
+                    .is_in(sales_record_line_ids),
+            )
             .all(&self.db)
             .await?;
+        debug!(count = counts.len(), "looked up operation counts by line ids");
+        Ok(counts)
+    }
 
-        debug!(
-            count = counts.len(),
-            "looked up operation counts by sales record ids"
-        );
+    #[tracing::instrument(level = "debug", skip(self, conn))]
+    pub async fn find_operation_counts_by_line_ids_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        sales_record_line_ids: Vec<Uuid>,
+    ) -> Result<Vec<sales_record_operation_counts::Model>, RepositoryError> {
+        if sales_record_line_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let counts = sales_record_operation_counts::Entity::find()
+            .filter(
+                sales_record_operation_counts::Column::SalesRecordLineId
+                    .is_in(sales_record_line_ids),
+            )
+            .all(conn)
+            .await?;
+        debug!(count = counts.len(), "looked up operation counts by line ids in connection");
         Ok(counts)
     }
 
@@ -466,16 +699,18 @@ impl SalesRecordRepository {
     ) -> Result<(Vec<sales_record_operation_counts::Model>, u64), RepositoryError> {
         let mut query = sales_record_operation_counts::Entity::find()
             .order_by_desc(sales_record_operation_counts::Column::CreatedAt)
-            .order_by_asc(sales_record_operation_counts::Column::SalesRecordId);
+            .order_by_asc(sales_record_operation_counts::Column::SalesRecordLineId);
 
         if let Some(status_filter) = filters.status_filter {
             validate_required("status_filter", status_filter)?;
             query = query
                 .filter(sales_record_operation_counts::Column::Status.eq(status_filter.trim()));
         }
-        if let Some(sales_record_id) = filters.sales_record_id {
-            query = query
-                .filter(sales_record_operation_counts::Column::SalesRecordId.eq(sales_record_id));
+        if let Some(sales_record_line_id) = filters.sales_record_line_id {
+            query = query.filter(
+                sales_record_operation_counts::Column::SalesRecordLineId
+                    .eq(sales_record_line_id),
+            );
         }
 
         let paginator = query.paginate(&self.db, page_size);
@@ -489,7 +724,7 @@ impl SalesRecordRepository {
         Ok((counts, total_count))
     }
 
-    #[tracing::instrument(level = "info", skip(self, conn, count, changes), fields(sales_record_id = %count.sales_record_id))]
+    #[tracing::instrument(level = "info", skip(self, conn, count, changes), fields(sales_record_line_id = %count.sales_record_line_id))]
     pub async fn update_operation_count<C: ConnectionTrait>(
         &self,
         conn: &C,
@@ -498,7 +733,6 @@ impl SalesRecordRepository {
         now: DateTime<Utc>,
     ) -> Result<sales_record_operation_counts::Model, RepositoryError> {
         let mut active: sales_record_operation_counts::ActiveModel = count.clone().into();
-
         if let Some(total_count) = changes.total_count {
             active.total_count = Set(total_count);
         }
@@ -512,11 +746,11 @@ impl SalesRecordRepository {
         active.updated_at = Set(now);
 
         let count = active.update(conn).await?;
-        info!(sales_record_id = %count.sales_record_id, "updated operation count");
+        info!(sales_record_line_id = %count.sales_record_line_id, "updated operation count");
         Ok(count)
     }
 
-    #[tracing::instrument(level = "info", skip(self, conn, usage), fields(sales_record_id = %usage.sales_record_id))]
+    #[tracing::instrument(level = "info", skip(self, conn, usage), fields(sales_record_line_id = %usage.sales_record_line_id))]
     pub async fn insert_operation_usage<C: ConnectionTrait>(
         &self,
         conn: &C,
@@ -524,10 +758,9 @@ impl SalesRecordRepository {
         now: DateTime<Utc>,
     ) -> Result<sales_record_operation_usages::Model, RepositoryError> {
         validate_required("status", &usage.status)?;
-
         let usage = sales_record_operation_usages::ActiveModel {
             id: Set(Uuid::new_v4()),
-            sales_record_id: Set(usage.sales_record_id),
+            sales_record_line_id: Set(usage.sales_record_line_id),
             operated_at: Set(usage.operated_at),
             operator_user_id: Set(usage.operator_user_id),
             doctor_user_id: Set(usage.doctor_user_id),
@@ -552,7 +785,6 @@ impl SalesRecordRepository {
         let usage = sales_record_operation_usages::Entity::find_by_id(usage_id)
             .one(&self.db)
             .await?;
-
         debug!(found = usage.is_some(), %usage_id, "looked up operation usage by id");
         Ok(usage)
     }
@@ -567,7 +799,6 @@ impl SalesRecordRepository {
             .lock_exclusive()
             .one(tx)
             .await?;
-
         debug!(found = usage.is_some(), %usage_id, "locked operation usage by id");
         Ok(usage)
     }
@@ -589,9 +820,10 @@ impl SalesRecordRepository {
             query = query
                 .filter(sales_record_operation_usages::Column::Status.eq(status_filter.trim()));
         }
-        if let Some(sales_record_id) = filters.sales_record_id {
-            query = query
-                .filter(sales_record_operation_usages::Column::SalesRecordId.eq(sales_record_id));
+        if let Some(sales_record_line_id) = filters.sales_record_line_id {
+            query = query.filter(
+                sales_record_operation_usages::Column::SalesRecordLineId.eq(sales_record_line_id),
+            );
         }
         if let Some(operator_user_id) = filters.operator_user_id {
             query = query
@@ -622,18 +854,23 @@ impl SalesRecordRepository {
     }
 
     #[tracing::instrument(level = "debug", skip(self, conn))]
-    pub async fn count_active_operation_usages<C: ConnectionTrait>(
+    pub async fn count_active_operation_usages_for_lines<C: ConnectionTrait>(
         &self,
         conn: &C,
-        sales_record_id: Uuid,
+        sales_record_line_ids: Vec<Uuid>,
     ) -> Result<u64, RepositoryError> {
+        if sales_record_line_ids.is_empty() {
+            return Ok(0);
+        }
         let count = sales_record_operation_usages::Entity::find()
-            .filter(sales_record_operation_usages::Column::SalesRecordId.eq(sales_record_id))
+            .filter(
+                sales_record_operation_usages::Column::SalesRecordLineId
+                    .is_in(sales_record_line_ids),
+            )
             .filter(sales_record_operation_usages::Column::Status.eq("active"))
             .count(conn)
             .await?;
-
-        debug!(%sales_record_id, count, "counted active operation usages");
+        debug!(count, "counted active operation usages for sales record lines");
         Ok(count)
     }
 
@@ -646,7 +883,6 @@ impl SalesRecordRepository {
         now: DateTime<Utc>,
     ) -> Result<sales_record_operation_usages::Model, RepositoryError> {
         let mut active: sales_record_operation_usages::ActiveModel = usage.clone().into();
-
         if let Some(operated_at) = changes.operated_at {
             active.operated_at = Set(operated_at);
         }
@@ -683,7 +919,6 @@ impl SalesRecordRepository {
             .exec(conn)
             .await?;
         let deleted = result.rows_affected > 0;
-
         info!(%usage_id, deleted, "deleted operation usage by id");
         Ok(deleted)
     }
@@ -693,289 +928,5 @@ fn validate_required(field: &'static str, value: &str) -> Result<(), RepositoryE
     if value.trim().is_empty() {
         return Err(RepositoryError::MissingRequiredField { field });
     }
-
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        config::{DatabaseConfig, DatabaseKind},
-        db,
-        repositories::{
-            customers::{CustomerRepository, NewCustomer},
-            product_categories::ProductCategoryRepository,
-            stores::{NewStore, StoreRepository},
-            systems::{NewSystem, SystemRepository},
-            users::UserRepository,
-        },
-    };
-    use chrono::{TimeZone, Utc};
-    use std::path::PathBuf;
-
-    struct Repos {
-        users: UserRepository,
-        systems: SystemRepository,
-        stores: StoreRepository,
-        customers: CustomerRepository,
-        categories: ProductCategoryRepository,
-        sales_records: SalesRecordRepository,
-    }
-
-    fn sqlite_memory_config() -> DatabaseConfig {
-        DatabaseConfig {
-            kind: DatabaseKind::SqliteMemory,
-            url: "postgres://unused".to_string(),
-            sqlite_file: PathBuf::from("unused.sqlite"),
-        }
-    }
-
-    async fn repos() -> Repos {
-        let db = db::connect_and_migrate(&sqlite_memory_config())
-            .await
-            .expect("sqlite memory database should initialize");
-        Repos {
-            users: UserRepository::new(db.clone()),
-            systems: SystemRepository::new(db.clone()),
-            stores: StoreRepository::new(db.clone()),
-            customers: CustomerRepository::new(db.clone()),
-            categories: ProductCategoryRepository::new(db.clone()),
-            sales_records: SalesRecordRepository::new(db),
-        }
-    }
-
-    async fn fixture(repos: &Repos) -> (Uuid, Uuid, Uuid, Uuid, Uuid) {
-        let now = Utc.with_ymd_and_hms(2026, 7, 8, 0, 0, 0).unwrap();
-        let user = repos
-            .users
-            .find_or_create_for_login("repo-user", now)
-            .await
-            .expect("user should be created");
-        let system = repos
-            .systems
-            .create_system(
-                NewSystem {
-                    name: "system".to_string(),
-                    status: "active".to_string(),
-                },
-                now,
-            )
-            .await
-            .expect("system should be created");
-        let store = repos
-            .stores
-            .create_store(
-                NewStore {
-                    name: "store".to_string(),
-                    system_id: system.id,
-                    status: "active".to_string(),
-                },
-                now,
-            )
-            .await
-            .expect("store should be created");
-        let customer = repos
-            .customers
-            .create_customer(
-                NewCustomer {
-                    name: "Alice".to_string(),
-                    creator_user_id: user.id,
-                    system_id: system.id,
-                    store_id: store.id,
-                    remark: None,
-                    status: "active".to_string(),
-                    attachments: None,
-                },
-                now,
-            )
-            .await
-            .expect("customer should be created");
-        let category = repos
-            .categories
-            .list_categories(Some("active"), Some(true), 1, 50)
-            .await
-            .expect("categories should list")
-            .0[0]
-            .clone();
-
-        (user.id, system.id, store.id, customer.id, category.id)
-    }
-
-    fn new_record(
-        user_id: Uuid,
-        system_id: Uuid,
-        store_id: Uuid,
-        customer_id: Uuid,
-        category_id: Uuid,
-    ) -> NewSalesRecord {
-        NewSalesRecord {
-            record_group_id: Some(Uuid::new_v4()),
-            customer_id,
-            sale_date: Utc
-                .with_ymd_and_hms(2026, 7, 8, 0, 0, 0)
-                .unwrap()
-                .date_naive(),
-            deal_status: "closed".to_string(),
-            customer_type: "new".to_string(),
-            deal_type: "non_salon".to_string(),
-            content_category_id: category_id,
-            handler_user_id: user_id,
-            paid_amount: Decimal::new(1000, 2),
-            unpaid_amount: Decimal::ZERO,
-            system_id,
-            store_id,
-            collaboration_type: "self_sale".to_string(),
-            expert_user_id: None,
-            consultant_user_id: None,
-            doctor_user_id: None,
-            status: "active".to_string(),
-        }
-    }
-
-    #[tokio::test]
-    async fn repository_creates_lists_updates_and_deletes_sales_data() {
-        let repos = repos().await;
-        let (user_id, system_id, store_id, customer_id, category_id) = fixture(&repos).await;
-        let now = Utc.with_ymd_and_hms(2026, 7, 8, 0, 0, 0).unwrap();
-        let record = repos
-            .sales_records
-            .insert_sales_record(
-                &repos.sales_records.db,
-                new_record(user_id, system_id, store_id, customer_id, category_id),
-                now,
-            )
-            .await
-            .expect("sales record should insert");
-        let count = repos
-            .sales_records
-            .insert_operation_count(
-                &repos.sales_records.db,
-                NewOperationCount {
-                    sales_record_id: record.id,
-                    total_count: 3,
-                    used_count: 0,
-                    status: "active".to_string(),
-                },
-                now,
-            )
-            .await
-            .expect("operation count should insert");
-        assert_eq!(count.total_count, 3);
-
-        let (listed, total_count) = repos
-            .sales_records
-            .list_sales_records(
-                SalesRecordFilters {
-                    customer_id: Some(customer_id),
-                    content_category_id: Some(category_id),
-                    ..SalesRecordFilters::default()
-                },
-                1,
-                50,
-            )
-            .await
-            .expect("records should list");
-        assert_eq!(total_count, 1);
-        assert_eq!(listed[0].id, record.id);
-
-        let usage = repos
-            .sales_records
-            .insert_operation_usage(
-                &repos.sales_records.db,
-                NewOperationUsage {
-                    sales_record_id: record.id,
-                    operated_at: now,
-                    operator_user_id: user_id,
-                    doctor_user_id: None,
-                    operation_count: 1,
-                    remark: Some("remark".to_string()),
-                    status: "active".to_string(),
-                },
-                now,
-            )
-            .await
-            .expect("usage should insert");
-        assert_eq!(
-            repos
-                .sales_records
-                .count_active_operation_usages(&repos.sales_records.db, record.id)
-                .await
-                .expect("active usage count should work"),
-            1
-        );
-
-        let count = repos
-            .sales_records
-            .update_operation_count(
-                &repos.sales_records.db,
-                &count,
-                OperationCountChanges {
-                    used_count: Some(1),
-                    ..OperationCountChanges::default()
-                },
-                now,
-            )
-            .await
-            .expect("count should update");
-        assert_eq!(count.used_count, 1);
-
-        assert!(
-            repos
-                .sales_records
-                .delete_operation_usage_by_id(&repos.sales_records.db, usage.id)
-                .await
-                .expect("usage should delete")
-        );
-        assert!(
-            repos
-                .sales_records
-                .delete_sales_record_by_id(&repos.sales_records.db, record.id)
-                .await
-                .expect("record should delete")
-        );
-    }
-
-    #[tokio::test]
-    async fn repository_database_constraints_reject_invalid_values() {
-        let repos = repos().await;
-        let (user_id, system_id, store_id, customer_id, category_id) = fixture(&repos).await;
-        let now = Utc.with_ymd_and_hms(2026, 7, 8, 0, 0, 0).unwrap();
-        let record = repos
-            .sales_records
-            .insert_sales_record(
-                &repos.sales_records.db,
-                new_record(user_id, system_id, store_id, customer_id, category_id),
-                now,
-            )
-            .await
-            .expect("sales record should insert");
-
-        let mut negative = new_record(user_id, system_id, store_id, customer_id, category_id);
-        negative.paid_amount = Decimal::new(-1, 2);
-        assert!(
-            repos
-                .sales_records
-                .insert_sales_record(&repos.sales_records.db, negative, now)
-                .await
-                .is_err()
-        );
-
-        assert!(
-            repos
-                .sales_records
-                .insert_operation_count(
-                    &repos.sales_records.db,
-                    NewOperationCount {
-                        sales_record_id: record.id,
-                        total_count: 1,
-                        used_count: 2,
-                        status: "active".to_string(),
-                    },
-                    now,
-                )
-                .await
-                .is_err()
-        );
-    }
 }

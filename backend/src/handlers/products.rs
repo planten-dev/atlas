@@ -13,7 +13,9 @@ use uuid::Uuid;
 use crate::{
     dto::{
         auth::ErrorResponse,
-        products::{CreateProductRequest, ListProductsQuery, UpdateProductRequest},
+        products::{
+            CreateProductRequest, ListProductsQuery, ProductSuggestionsQuery, UpdateProductRequest,
+        },
     },
     repositories::RepositoryError,
     services::products::ProductError,
@@ -45,6 +47,21 @@ pub async fn product_detail(
     };
 
     match state.products.product_detail(product_id).await {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => product_error_response(error),
+    }
+}
+
+pub async fn product_suggestions(
+    State(state): State<AppState>,
+    query: Result<Query<ProductSuggestionsQuery>, QueryRejection>,
+) -> Response {
+    let query = match query {
+        Ok(Query(query)) => query,
+        Err(error) => return validation_error_response("invalid query parameters", error),
+    };
+
+    match state.products.product_suggestions(query).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => product_error_response(error),
     }
@@ -164,9 +181,8 @@ fn status_code(error: &ProductError) -> StatusCode {
             RepositoryError::MissingRequiredField { .. } => StatusCode::BAD_REQUEST,
             RepositoryError::DisabledUser => StatusCode::FORBIDDEN,
         },
-        ProductError::ProductNotFound | ProductError::ProductCategoryNotFound => {
-            StatusCode::NOT_FOUND
-        }
+        ProductError::ProductNotFound | ProductError::ProductCategoryNotFound => StatusCode::NOT_FOUND,
+        ProductError::ProductHasReferences => StatusCode::CONFLICT,
         ProductError::ProductCategoryDisabled
         | ProductError::MissingRequiredField { .. }
         | ProductError::FieldTooLong { .. }

@@ -1,13 +1,14 @@
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq)]
-#[sea_orm(table_name = "sales_record_operation_counts")]
+#[sea_orm(table_name = "sales_payment_allocations")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
-    pub sales_record_line_id: Uuid,
-    pub total_count: i32,
-    pub used_count: i32,
-    pub status: String,
+    pub id: Uuid,
+    pub payment_id: Uuid,
+    pub guide_user_id: Uuid,
+    pub allocation_ratio: Decimal,
+    pub allocated_amount: Decimal,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }
@@ -15,18 +16,18 @@ pub struct Model {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "super::sales_record_lines::Entity",
-        from = "Column::SalesRecordLineId",
-        to = "super::sales_record_lines::Column::Id",
+        belongs_to = "super::sales_payments::Entity",
+        from = "Column::PaymentId",
+        to = "super::sales_payments::Column::Id",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]
-    SalesRecordLine,
+    SalesPayment,
 }
 
-impl Related<super::sales_record_lines::Entity> for Entity {
+impl Related<super::sales_payments::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::SalesRecordLine.def()
+        Relation::SalesPayment.def()
     }
 }
 

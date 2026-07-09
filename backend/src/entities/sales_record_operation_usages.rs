@@ -5,7 +5,7 @@ use sea_orm::entity::prelude::*;
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
-    pub sales_record_id: Uuid,
+    pub sales_record_line_id: Uuid,
     pub operated_at: DateTimeUtc,
     pub operator_user_id: Uuid,
     pub doctor_user_id: Option<Uuid>,
@@ -19,18 +19,18 @@ pub struct Model {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "super::sales_records::Entity",
-        from = "Column::SalesRecordId",
-        to = "super::sales_records::Column::Id",
+        belongs_to = "super::sales_record_lines::Entity",
+        from = "Column::SalesRecordLineId",
+        to = "super::sales_record_lines::Column::Id",
         on_update = "NoAction",
-        on_delete = "Cascade"
+        on_delete = "NoAction"
     )]
-    SalesRecord,
+    SalesRecordLine,
 }
 
-impl Related<super::sales_records::Entity> for Entity {
+impl Related<super::sales_record_lines::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::SalesRecord.def()
+        Relation::SalesRecordLine.def()
     }
 }
 

@@ -98,6 +98,11 @@ pub fn router(state: AppState) -> Router {
                 .layer(require_permission(&state, "products:read"))),
         )
         .route(
+            "/api/v1/products/suggestions",
+            get(handlers::products::product_suggestions
+                .layer(require_permission(&state, "products:read"))),
+        )
+        .route(
             "/api/v1/products/create",
             post(
                 handlers::products::create_product
@@ -269,16 +274,16 @@ pub fn router(state: AppState) -> Router {
                 .layer(require_permission(&state, "sales:records:read"))),
         )
         .route(
-            "/api/v1/sales-records/create-batch",
+            "/api/v1/sales-records/create-sale",
             post(
-                handlers::sales_records::create_sales_record_batch
+                handlers::sales_records::create_sale_record
                     .layer(require_permission(&state, "sales:records:write")),
             ),
         )
         .route(
-            "/api/v1/sales-records/update/{sales_record_id}",
+            "/api/v1/sales-records/create-service",
             post(
-                handlers::sales_records::update_sales_record
+                handlers::sales_records::create_service_record
                     .layer(require_permission(&state, "sales:records:write")),
             ),
         )
@@ -290,9 +295,26 @@ pub fn router(state: AppState) -> Router {
             ),
         )
         .route(
-            "/api/v1/sales-records/delete/{sales_record_id}",
+            "/api/v1/sales-payments/list",
+            get(handlers::sales_records::list_sales_payments
+                .layer(require_permission(&state, "sales:records:read"))),
+        )
+        .route(
+            "/api/v1/sales-payments/detail/{payment_id}",
+            get(handlers::sales_records::sales_payment_detail
+                .layer(require_permission(&state, "sales:records:read"))),
+        )
+        .route(
+            "/api/v1/sales-payments/collect",
             post(
-                handlers::sales_records::delete_sales_record
+                handlers::sales_records::create_collection_payment
+                    .layer(require_permission(&state, "sales:records:write")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-payments/void/{payment_id}",
+            post(
+                handlers::sales_records::void_sales_payment
                     .layer(require_permission(&state, "sales:records:write")),
             ),
         )
@@ -302,12 +324,12 @@ pub fn router(state: AppState) -> Router {
                 .layer(require_permission(&state, "sales:operation-counts:read"))),
         )
         .route(
-            "/api/v1/sales-record-operation-counts/detail/{sales_record_id}",
+            "/api/v1/sales-record-operation-counts/detail/{sales_record_line_id}",
             get(handlers::sales_records::operation_count_detail
                 .layer(require_permission(&state, "sales:operation-counts:read"))),
         )
         .route(
-            "/api/v1/sales-record-operation-counts/update/{sales_record_id}",
+            "/api/v1/sales-record-operation-counts/update/{sales_record_line_id}",
             post(
                 handlers::sales_records::update_operation_count
                     .layer(require_permission(&state, "sales:operation-counts:write")),

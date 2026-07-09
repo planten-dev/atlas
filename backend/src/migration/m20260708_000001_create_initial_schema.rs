@@ -44,6 +44,30 @@ impl MigrationTrait for Migration {
         manager
             .drop_table(
                 Table::drop()
+                    .table(SalesPaymentAllocations::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(SalesPayments::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(SalesRecordLines::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_table(
+                Table::drop()
                     .table(SalesRecords::Table)
                     .if_exists()
                     .to_owned(),
@@ -1134,61 +1158,36 @@ async fn create_sales_record_tables(manager: &SchemaManager<'_>) -> Result<(), D
                         .not_null()
                         .primary_key(),
                 )
-                .col(ColumnDef::new(SalesRecords::RecordGroupId).uuid())
+                .col(
+                    ColumnDef::new(SalesRecords::RecordType)
+                        .string_len(32)
+                        .not_null(),
+                )
                 .col(ColumnDef::new(SalesRecords::CustomerId).uuid().not_null())
-                .col(ColumnDef::new(SalesRecords::SaleDate).date().not_null())
-                .col(
-                    ColumnDef::new(SalesRecords::DealStatus)
-                        .string_len(32)
-                        .not_null(),
-                )
-                .col(
-                    ColumnDef::new(SalesRecords::CustomerType)
-                        .string_len(32)
-                        .not_null(),
-                )
-                .col(
-                    ColumnDef::new(SalesRecords::DealType)
-                        .string_len(32)
-                        .not_null(),
-                )
-                .col(
-                    ColumnDef::new(SalesRecords::ContentCategoryId)
-                        .uuid()
-                        .not_null(),
-                )
+                .col(ColumnDef::new(SalesRecords::RecordDate).date().not_null())
+                .col(ColumnDef::new(SalesRecords::CustomerType).string_len(32))
+                .col(ColumnDef::new(SalesRecords::DealType).string_len(32))
+                .col(ColumnDef::new(SalesRecords::SystemId).uuid().not_null())
+                .col(ColumnDef::new(SalesRecords::StoreId).uuid().not_null())
                 .col(
                     ColumnDef::new(SalesRecords::HandlerUserId)
                         .uuid()
                         .not_null(),
                 )
-                .col(
-                    ColumnDef::new(SalesRecords::PaidAmount)
-                        .decimal_len(12, 2)
-                        .not_null()
-                        .default(0),
-                )
-                .col(
-                    ColumnDef::new(SalesRecords::UnpaidAmount)
-                        .decimal_len(12, 2)
-                        .not_null()
-                        .default(0),
-                )
-                .col(ColumnDef::new(SalesRecords::SystemId).uuid().not_null())
-                .col(ColumnDef::new(SalesRecords::StoreId).uuid().not_null())
-                .col(
-                    ColumnDef::new(SalesRecords::CollaborationType)
-                        .string_len(32)
-                        .not_null(),
-                )
                 .col(ColumnDef::new(SalesRecords::ExpertUserId).uuid())
                 .col(ColumnDef::new(SalesRecords::ConsultantUserId).uuid())
                 .col(ColumnDef::new(SalesRecords::DoctorUserId).uuid())
+                .col(ColumnDef::new(SalesRecords::Remark).text())
                 .col(
                     ColumnDef::new(SalesRecords::Status)
                         .string_len(32)
                         .not_null()
                         .default("active"),
+                )
+                .col(
+                    ColumnDef::new(SalesRecords::CreatedByUserId)
+                        .uuid()
+                        .not_null(),
                 )
                 .col(
                     ColumnDef::new(SalesRecords::CreatedAt)
@@ -1205,12 +1204,6 @@ async fn create_sales_record_tables(manager: &SchemaManager<'_>) -> Result<(), D
                         .name("fk_sales_records_customer_id")
                         .from(SalesRecords::Table, SalesRecords::CustomerId)
                         .to(Customers::Table, Customers::Id),
-                )
-                .foreign_key(
-                    ForeignKey::create()
-                        .name("fk_sales_records_content_category_id")
-                        .from(SalesRecords::Table, SalesRecords::ContentCategoryId)
-                        .to(ProductCategory::Table, ProductCategory::Id),
                 )
                 .foreign_key(
                     ForeignKey::create()
@@ -1248,16 +1241,245 @@ async fn create_sales_record_tables(manager: &SchemaManager<'_>) -> Result<(), D
                         .from(SalesRecords::Table, SalesRecords::DoctorUserId)
                         .to(Users::Table, Users::Id),
                 )
-                .check(Expr::col(SalesRecords::DealStatus).is_in(["closed", "not_closed"]))
-                .check(Expr::col(SalesRecords::CustomerType).is_in(["new", "returning"]))
-                .check(Expr::col(SalesRecords::DealType).is_in(["non_salon", "salon"]))
+                .foreign_key(
+                    ForeignKey::create()
+                        .name("fk_sales_records_created_by_user_id")
+                        .from(SalesRecords::Table, SalesRecords::CreatedByUserId)
+                        .to(Users::Table, Users::Id),
+                )
+                .check(Expr::col(SalesRecords::RecordType).is_in(["sale", "service"]))
                 .check(
-                    Expr::col(SalesRecords::CollaborationType)
-                        .is_in(["expert_consultation", "self_sale"]),
+                    Expr::col(SalesRecords::CustomerType)
+                        .is_null()
+                        .or(Expr::col(SalesRecords::CustomerType).is_in(["new", "returning"])),
+                )
+                .check(
+                    Expr::col(SalesRecords::DealType)
+                        .is_null()
+                        .or(Expr::col(SalesRecords::DealType).is_in(["non_salon", "salon"])),
                 )
                 .check(Expr::col(SalesRecords::Status).is_in(["active", "voided"]))
-                .check(Expr::col(SalesRecords::PaidAmount).gte(0))
-                .check(Expr::col(SalesRecords::UnpaidAmount).gte(0))
+                .to_owned(),
+        )
+        .await?;
+
+    manager
+        .create_table(
+            Table::create()
+                .table(SalesRecordLines::Table)
+                .if_not_exists()
+                .col(
+                    ColumnDef::new(SalesRecordLines::Id)
+                        .uuid()
+                        .not_null()
+                        .primary_key(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordLines::SalesRecordId)
+                        .uuid()
+                        .not_null(),
+                )
+                .col(ColumnDef::new(SalesRecordLines::ProductId).uuid().not_null())
+                .col(
+                    ColumnDef::new(SalesRecordLines::ItemName)
+                        .string_len(128)
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordLines::ReceivableAmount)
+                        .decimal_len(12, 2)
+                        .not_null()
+                        .default(0),
+                )
+                .col(ColumnDef::new(SalesRecordLines::OperationTotalCount).integer())
+                .col(ColumnDef::new(SalesRecordLines::Remark).text())
+                .col(
+                    ColumnDef::new(SalesRecordLines::Status)
+                        .string_len(32)
+                        .not_null()
+                        .default("active"),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordLines::CreatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordLines::UpdatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null()
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .name("fk_sales_record_lines_sales_record_id")
+                        .from(SalesRecordLines::Table, SalesRecordLines::SalesRecordId)
+                        .to(SalesRecords::Table, SalesRecords::Id)
+                        .on_delete(ForeignKeyAction::Cascade),
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .name("fk_sales_record_lines_product_id")
+                        .from(SalesRecordLines::Table, SalesRecordLines::ProductId)
+                        .to(Products::Table, Products::Id),
+                )
+                .check(Expr::col(SalesRecordLines::ReceivableAmount).gte(0))
+                .check(
+                    Expr::col(SalesRecordLines::OperationTotalCount)
+                        .is_null()
+                        .or(Expr::col(SalesRecordLines::OperationTotalCount).gt(0)),
+                )
+                .check(Expr::col(SalesRecordLines::Status).is_in(["active", "voided"]))
+                .to_owned(),
+        )
+        .await?;
+
+    manager
+        .create_table(
+            Table::create()
+                .table(SalesPayments::Table)
+                .if_not_exists()
+                .col(ColumnDef::new(SalesPayments::Id).uuid().not_null().primary_key())
+                .col(
+                    ColumnDef::new(SalesPayments::SalesRecordId)
+                        .uuid()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPayments::PaymentType)
+                        .string_len(32)
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPayments::PaidAmount)
+                        .decimal_len(12, 2)
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPayments::PaidAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPayments::PerformanceStatus)
+                        .string_len(32)
+                        .not_null()
+                        .default("pending"),
+                )
+                .col(
+                    ColumnDef::new(SalesPayments::Status)
+                        .string_len(32)
+                        .not_null()
+                        .default("active"),
+                )
+                .col(ColumnDef::new(SalesPayments::Remark).text())
+                .col(
+                    ColumnDef::new(SalesPayments::CreatedByUserId)
+                        .uuid()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPayments::CreatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPayments::UpdatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .name("fk_sales_payments_sales_record_id")
+                        .from(SalesPayments::Table, SalesPayments::SalesRecordId)
+                        .to(SalesRecords::Table, SalesRecords::Id),
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .name("fk_sales_payments_created_by_user_id")
+                        .from(SalesPayments::Table, SalesPayments::CreatedByUserId)
+                        .to(Users::Table, Users::Id),
+                )
+                .check(Expr::col(SalesPayments::PaymentType).is_in(["initial", "collection"]))
+                .check(Expr::col(SalesPayments::PaidAmount).gt(0))
+                .check(Expr::col(SalesPayments::PerformanceStatus).is_in(["pending", "posted"]))
+                .check(Expr::col(SalesPayments::Status).is_in(["active", "voided"]))
+                .to_owned(),
+        )
+        .await?;
+
+    manager
+        .create_table(
+            Table::create()
+                .table(SalesPaymentAllocations::Table)
+                .if_not_exists()
+                .col(
+                    ColumnDef::new(SalesPaymentAllocations::Id)
+                        .uuid()
+                        .not_null()
+                        .primary_key(),
+                )
+                .col(
+                    ColumnDef::new(SalesPaymentAllocations::PaymentId)
+                        .uuid()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPaymentAllocations::GuideUserId)
+                        .uuid()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPaymentAllocations::AllocationRatio)
+                        .decimal_len(5, 2)
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPaymentAllocations::AllocatedAmount)
+                        .decimal_len(12, 2)
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPaymentAllocations::CreatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPaymentAllocations::UpdatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .name("fk_sales_payment_allocations_payment_id")
+                        .from(SalesPaymentAllocations::Table, SalesPaymentAllocations::PaymentId)
+                        .to(SalesPayments::Table, SalesPayments::Id)
+                        .on_delete(ForeignKeyAction::Cascade),
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .name("fk_sales_payment_allocations_guide_user_id")
+                        .from(SalesPaymentAllocations::Table, SalesPaymentAllocations::GuideUserId)
+                        .to(Users::Table, Users::Id),
+                )
+                .check(
+                    Expr::col(SalesPaymentAllocations::AllocationRatio)
+                        .gt(0)
+                        .and(Expr::col(SalesPaymentAllocations::AllocationRatio).lte(100)),
+                )
+                .check(Expr::col(SalesPaymentAllocations::AllocatedAmount).gte(0))
+                .to_owned(),
+        )
+        .await?;
+
+    manager
+        .create_index(
+            Index::create()
+                .name("uq_sales_payment_allocations_payment_guide")
+                .table(SalesPaymentAllocations::Table)
+                .col(SalesPaymentAllocations::PaymentId)
+                .col(SalesPaymentAllocations::GuideUserId)
+                .unique()
+                .if_not_exists()
                 .to_owned(),
         )
         .await?;
@@ -1268,7 +1490,7 @@ async fn create_sales_record_tables(manager: &SchemaManager<'_>) -> Result<(), D
                 .table(SalesRecordOperationCounts::Table)
                 .if_not_exists()
                 .col(
-                    ColumnDef::new(SalesRecordOperationCounts::SalesRecordId)
+                    ColumnDef::new(SalesRecordOperationCounts::SalesRecordLineId)
                         .uuid()
                         .not_null()
                         .primary_key(),
@@ -1302,12 +1524,12 @@ async fn create_sales_record_tables(manager: &SchemaManager<'_>) -> Result<(), D
                 )
                 .foreign_key(
                     ForeignKey::create()
-                        .name("fk_sales_record_operation_counts_sales_record_id")
+                        .name("fk_sales_record_operation_counts_sales_record_line_id")
                         .from(
                             SalesRecordOperationCounts::Table,
-                            SalesRecordOperationCounts::SalesRecordId,
+                            SalesRecordOperationCounts::SalesRecordLineId,
                         )
-                        .to(SalesRecords::Table, SalesRecords::Id)
+                        .to(SalesRecordLines::Table, SalesRecordLines::Id)
                         .on_delete(ForeignKeyAction::Cascade),
                 )
                 .check(Expr::col(SalesRecordOperationCounts::TotalCount).gt(0))
@@ -1333,7 +1555,7 @@ async fn create_sales_record_tables(manager: &SchemaManager<'_>) -> Result<(), D
                         .primary_key(),
                 )
                 .col(
-                    ColumnDef::new(SalesRecordOperationUsages::SalesRecordId)
+                    ColumnDef::new(SalesRecordOperationUsages::SalesRecordLineId)
                         .uuid()
                         .not_null(),
                 )
@@ -1373,13 +1595,12 @@ async fn create_sales_record_tables(manager: &SchemaManager<'_>) -> Result<(), D
                 )
                 .foreign_key(
                     ForeignKey::create()
-                        .name("fk_sales_record_operation_usages_sales_record_id")
+                        .name("fk_sales_record_operation_usages_sales_record_line_id")
                         .from(
                             SalesRecordOperationUsages::Table,
-                            SalesRecordOperationUsages::SalesRecordId,
+                            SalesRecordOperationUsages::SalesRecordLineId,
                         )
-                        .to(SalesRecords::Table, SalesRecords::Id)
-                        .on_delete(ForeignKeyAction::Cascade),
+                        .to(SalesRecordLines::Table, SalesRecordLines::Id),
                 )
                 .foreign_key(
                     ForeignKey::create()
@@ -1407,9 +1628,14 @@ async fn create_sales_record_tables(manager: &SchemaManager<'_>) -> Result<(), D
 
     for (name, table, column) in [
         (
-            "idx_sales_records_sale_date",
+            "idx_sales_records_record_date",
             SalesRecords::Table.into_iden(),
-            SalesRecords::SaleDate.into_iden(),
+            SalesRecords::RecordDate.into_iden(),
+        ),
+        (
+            "idx_sales_records_record_type",
+            SalesRecords::Table.into_iden(),
+            SalesRecords::RecordType.into_iden(),
         ),
         (
             "idx_sales_records_customer_id",
@@ -1432,14 +1658,34 @@ async fn create_sales_record_tables(manager: &SchemaManager<'_>) -> Result<(), D
             SalesRecords::HandlerUserId.into_iden(),
         ),
         (
-            "idx_sales_records_content_category_id",
-            SalesRecords::Table.into_iden(),
-            SalesRecords::ContentCategoryId.into_iden(),
+            "idx_sales_record_lines_sales_record_id",
+            SalesRecordLines::Table.into_iden(),
+            SalesRecordLines::SalesRecordId.into_iden(),
         ),
         (
-            "idx_sales_records_record_group_id",
-            SalesRecords::Table.into_iden(),
-            SalesRecords::RecordGroupId.into_iden(),
+            "idx_sales_record_lines_product_id",
+            SalesRecordLines::Table.into_iden(),
+            SalesRecordLines::ProductId.into_iden(),
+        ),
+        (
+            "idx_sales_payments_sales_record_id",
+            SalesPayments::Table.into_iden(),
+            SalesPayments::SalesRecordId.into_iden(),
+        ),
+        (
+            "idx_sales_payments_paid_at",
+            SalesPayments::Table.into_iden(),
+            SalesPayments::PaidAt.into_iden(),
+        ),
+        (
+            "idx_sales_payment_allocations_payment_id",
+            SalesPaymentAllocations::Table.into_iden(),
+            SalesPaymentAllocations::PaymentId.into_iden(),
+        ),
+        (
+            "idx_sales_payment_allocations_guide_user_id",
+            SalesPaymentAllocations::Table.into_iden(),
+            SalesPaymentAllocations::GuideUserId.into_iden(),
         ),
         (
             "idx_sales_record_operation_counts_status",
@@ -1447,9 +1693,9 @@ async fn create_sales_record_tables(manager: &SchemaManager<'_>) -> Result<(), D
             SalesRecordOperationCounts::Status.into_iden(),
         ),
         (
-            "idx_sales_record_operation_usages_sales_record_id",
+            "idx_sales_record_operation_usages_sales_record_line_id",
             SalesRecordOperationUsages::Table.into_iden(),
-            SalesRecordOperationUsages::SalesRecordId.into_iden(),
+            SalesRecordOperationUsages::SalesRecordLineId.into_iden(),
         ),
         (
             "idx_sales_record_operation_usages_operated_at",
@@ -1675,23 +1921,63 @@ enum Customers {
 enum SalesRecords {
     Table,
     Id,
-    RecordGroupId,
+    RecordType,
     CustomerId,
-    SaleDate,
-    DealStatus,
+    RecordDate,
     CustomerType,
     DealType,
-    ContentCategoryId,
-    HandlerUserId,
-    PaidAmount,
-    UnpaidAmount,
     SystemId,
     StoreId,
-    CollaborationType,
+    HandlerUserId,
     ExpertUserId,
     ConsultantUserId,
     DoctorUserId,
+    Remark,
     Status,
+    CreatedByUserId,
+    CreatedAt,
+    UpdatedAt,
+}
+
+#[derive(DeriveIden, Copy, Clone)]
+enum SalesRecordLines {
+    Table,
+    Id,
+    SalesRecordId,
+    ProductId,
+    ItemName,
+    ReceivableAmount,
+    OperationTotalCount,
+    Remark,
+    Status,
+    CreatedAt,
+    UpdatedAt,
+}
+
+#[derive(DeriveIden, Copy, Clone)]
+enum SalesPayments {
+    Table,
+    Id,
+    SalesRecordId,
+    PaymentType,
+    PaidAmount,
+    PaidAt,
+    PerformanceStatus,
+    Status,
+    Remark,
+    CreatedByUserId,
+    CreatedAt,
+    UpdatedAt,
+}
+
+#[derive(DeriveIden, Copy, Clone)]
+enum SalesPaymentAllocations {
+    Table,
+    Id,
+    PaymentId,
+    GuideUserId,
+    AllocationRatio,
+    AllocatedAmount,
     CreatedAt,
     UpdatedAt,
 }
@@ -1699,7 +1985,7 @@ enum SalesRecords {
 #[derive(DeriveIden, Copy, Clone)]
 enum SalesRecordOperationCounts {
     Table,
-    SalesRecordId,
+    SalesRecordLineId,
     TotalCount,
     UsedCount,
     Status,
@@ -1711,7 +1997,7 @@ enum SalesRecordOperationCounts {
 enum SalesRecordOperationUsages {
     Table,
     Id,
-    SalesRecordId,
+    SalesRecordLineId,
     OperatedAt,
     OperatorUserId,
     DoctorUserId,

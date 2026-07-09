@@ -1,29 +1,36 @@
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::Decimal;
 use std::{collections::HashMap, str::FromStr};
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
     dto::sales_records::{
-        CreateOperationUsageRequest, CreateSalesRecordBatchRequest, CreateSalesRecordBatchResponse,
-        EnumParseError, ListOperationCountsQuery, ListOperationCountsResponse,
-        ListOperationUsagesQuery, ListOperationUsagesResponse, ListSalesRecordsQuery,
+        CreateCollectionPaymentRequest, CreateOperationUsageRequest, CreateSaleRecordRequest,
+        CreateServiceRecordRequest, EnumParseError, ListOperationCountsQuery,
+        ListOperationCountsResponse, ListOperationUsagesQuery, ListOperationUsagesResponse,
+        ListSalesPaymentsQuery, ListSalesPaymentsResponse, ListSalesRecordsQuery,
         ListSalesRecordsResponse, OperationCountResponse, OperationUsageResponse, PatchField,
-        SalesRecordResponse, UpdateOperationCountRequest, UpdateOperationUsageRequest,
-        UpdateSalesRecordRequest, parse_collaboration_type, parse_customer_type, parse_deal_status,
-        parse_deal_type, parse_status,
+        SalesPaymentAllocationInput, SalesPaymentAllocationResponse, SalesPaymentInput,
+        SalesPaymentResponse, SalesRecordLineInput, SalesRecordLineResponse, SalesRecordResponse,
+        UpdateOperationCountRequest, UpdateOperationUsageRequest, format_money,
+        parse_customer_type, parse_deal_type, parse_payment_type, parse_record_type, parse_status,
     },
-    entities::{product_category, sales_record_operation_counts, sales_records},
+    entities::{
+        product_category, products as product_entity, sales_payments, sales_record_lines,
+        sales_record_operation_counts, sales_records,
+    },
     repositories::{
         RepositoryError,
         customers::CustomerRepository,
         product_categories::ProductCategoryRepository,
+        products::ProductRepository,
         sales_records::{
-            NewOperationCount, NewOperationUsage, NewSalesRecord, OperationCountChanges,
-            OperationCountFilters, OperationUsageChanges, OperationUsageFilters,
-            SalesRecordChanges, SalesRecordFilters, SalesRecordRepository,
+            NewOperationCount, NewOperationUsage, NewSalesPayment, NewSalesPaymentAllocation,
+            NewSalesRecord, NewSalesRecordLine, OperationCountChanges, OperationCountFilters,
+            OperationUsageChanges, OperationUsageFilters, SalesPaymentFilters, SalesRecordFilters,
+            SalesRecordRepository,
         },
         stores::StoreRepository,
         systems::SystemRepository,
@@ -35,6 +42,7 @@ const DEFAULT_PAGE_NUMBER: u64 = 1;
 const DEFAULT_PAGE_SIZE: u64 = 50;
 const MAX_PAGE_SIZE: u64 = 200;
 
+const MAX_ITEM_NAME_LENGTH: usize = 128;
 const MAX_REMARK_LENGTH: usize = 2000;
 
 #[derive(Clone)]
@@ -43,6 +51,7 @@ pub struct SalesRecordService {
     customers: CustomerRepository,
     systems: SystemRepository,
     stores: StoreRepository,
+    products: ProductRepository,
     categories: ProductCategoryRepository,
     users: UserRepository,
 }
@@ -56,66 +65,214 @@ impl SalesRecordService {
         categories: ProductCategoryRepository,
         users: UserRepository,
     ) -> Self {
+        let products = ProductRepository::new(sales_records.db.clone());
         Self {
             sales_records,
             customers,
             systems,
             stores,
+            products,
             categories,
             users,
         }
     }
 
-    #[tracing::instrument(level = "info", skip(self, request))]
-    pub async fn create_sales_record_batch(
+    #[tracing::instrument(level = "info", skip(self, request), fields(customer_id = %request.customer_id))]
+    pub async fn create_sale_record(
         &self,
-        request: CreateSalesRecordBatchRequest,
-    ) -> Result<CreateSalesRecordBatchResponse, SalesRecordError> {
-        if request.records.is_empty() {
-            return Err(SalesRecordError::EmptyBatch);
-        }
+        created_by_user_id: Uuid,
+        request: CreateSaleRecordRequest,
+    ) -> Result<SalesRecordResponse, SalesRecordError> {
+        self.ensure_active_user("created_by_user_id", created_by_user_id)
+            .await?;
+        let scope = self.customer_scope(request.customer_id).await?;
+        let customer_type =
+            parse_customer_type("customer_type", &request.customer_type)?.to_string();
+        let deal_type = parse_deal_type("deal_type", &request.deal_type)?.to_string();
+        let remark = nullable_limited_text("remark", request.remark, MAX_REMARK_LENGTH)?;
+        self.ensure_record_users(RecordUserInput {
+            handler_user_id: request.handler_user_id,
+            expert_user_id: request.expert_user_id,
+            consultant_user_id: request.consultant_user_id,
+            doctor_user_id: request.doctor_user_id,
+        })
+        .await?;
 
-        let record_group_id = Uuid::new_v4();
-        let mut normalized = Vec::with_capacity(request.records.len());
-        for item in request.records {
-            normalized.push(self.new_sales_record(record_group_id, item).await?);
+        let lines = self.prepare_lines("sale", request.lines).await?;
+        let receivable_amount = active_receivable(&lines);
+        if receivable_amount <= Decimal::ZERO {
+            return Err(SalesRecordError::SaleReceivableRequired);
         }
+        let payment_draft = self
+            .prepare_payment(request.payment, receivable_amount)
+            .await?;
 
         let now = Utc::now();
         let tx = self.sales_records.begin().await?;
-        let mut created = Vec::with_capacity(normalized.len());
+        let record = self
+            .sales_records
+            .insert_sales_record(
+                &tx,
+                NewSalesRecord {
+                    record_type: "sale".to_string(),
+                    customer_id: request.customer_id,
+                    record_date: request.record_date,
+                    customer_type: Some(customer_type),
+                    deal_type: Some(deal_type),
+                    system_id: scope.system_id,
+                    store_id: scope.store_id,
+                    handler_user_id: request.handler_user_id,
+                    expert_user_id: request.expert_user_id,
+                    consultant_user_id: request.consultant_user_id,
+                    doctor_user_id: request.doctor_user_id,
+                    remark,
+                    status: "active".to_string(),
+                    created_by_user_id,
+                },
+                now,
+            )
+            .await?;
 
-        for (record, operation_total_count) in normalized {
-            let record = self
+        for line in lines {
+            let operation_total_count = line.operation_total_count;
+            let line = self
                 .sales_records
-                .insert_sales_record(&tx, record, now)
+                .insert_sales_record_line(
+                    &tx,
+                    NewSalesRecordLine {
+                        sales_record_id: record.id,
+                        product_id: line.product_id,
+                        item_name: line.item_name,
+                        receivable_amount: line.receivable_amount,
+                        operation_total_count,
+                        remark: line.remark,
+                        status: "active".to_string(),
+                    },
+                    now,
+                )
                 .await?;
-            let count = match operation_total_count {
-                Some(total_count) => Some(
-                    self.sales_records
-                        .insert_operation_count(
-                            &tx,
-                            NewOperationCount {
-                                sales_record_id: record.id,
-                                total_count,
-                                used_count: 0,
-                                status: "active".to_string(),
-                            },
-                            now,
-                        )
-                        .await?,
-                ),
-                None => None,
-            };
-            created.push(SalesRecordResponse::from_model(record, count));
+            if let Some(total_count) = operation_total_count {
+                self.sales_records
+                    .insert_operation_count(
+                        &tx,
+                        NewOperationCount {
+                            sales_record_line_id: line.id,
+                            total_count,
+                            used_count: 0,
+                            status: "active".to_string(),
+                        },
+                        now,
+                    )
+                    .await?;
+            }
         }
 
+        let payment = self
+            .sales_records
+            .insert_sales_payment(
+                &tx,
+                NewSalesPayment {
+                    sales_record_id: record.id,
+                    payment_type: "initial".to_string(),
+                    paid_amount: payment_draft.paid_amount,
+                    paid_at: payment_draft.paid_at,
+                    performance_status: "pending".to_string(),
+                    status: "active".to_string(),
+                    remark: payment_draft.remark,
+                    created_by_user_id,
+                },
+                now,
+            )
+            .await?;
+        self.insert_allocations(
+            &tx,
+            payment.id,
+            payment.paid_amount,
+            payment_draft.allocations,
+            now,
+        )
+        .await?;
+
+        let record_id = record.id;
         tx.commit().await.map_err(RepositoryError::from)?;
-        info!(%record_group_id, count = created.len(), "created sales record batch");
-        Ok(CreateSalesRecordBatchResponse {
-            record_group_id,
-            sales_records: created,
+        info!(%record_id, "created sale record through service");
+        self.sales_record_detail(record_id).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, request), fields(customer_id = %request.customer_id))]
+    pub async fn create_service_record(
+        &self,
+        created_by_user_id: Uuid,
+        request: CreateServiceRecordRequest,
+    ) -> Result<SalesRecordResponse, SalesRecordError> {
+        self.ensure_active_user("created_by_user_id", created_by_user_id)
+            .await?;
+        let scope = self.customer_scope(request.customer_id).await?;
+        let customer_type = optional_enum_text(
+            "customer_type",
+            request.customer_type,
+            parse_customer_type,
+        )?;
+        let deal_type = optional_enum_text("deal_type", request.deal_type, parse_deal_type)?;
+        let remark = nullable_limited_text("remark", request.remark, MAX_REMARK_LENGTH)?;
+        self.ensure_record_users(RecordUserInput {
+            handler_user_id: request.handler_user_id,
+            expert_user_id: request.expert_user_id,
+            consultant_user_id: request.consultant_user_id,
+            doctor_user_id: request.doctor_user_id,
         })
+        .await?;
+
+        let lines = self.prepare_lines("service", request.lines).await?;
+
+        let now = Utc::now();
+        let tx = self.sales_records.begin().await?;
+        let record = self
+            .sales_records
+            .insert_sales_record(
+                &tx,
+                NewSalesRecord {
+                    record_type: "service".to_string(),
+                    customer_id: request.customer_id,
+                    record_date: request.record_date,
+                    customer_type,
+                    deal_type,
+                    system_id: scope.system_id,
+                    store_id: scope.store_id,
+                    handler_user_id: request.handler_user_id,
+                    expert_user_id: request.expert_user_id,
+                    consultant_user_id: request.consultant_user_id,
+                    doctor_user_id: request.doctor_user_id,
+                    remark,
+                    status: "active".to_string(),
+                    created_by_user_id,
+                },
+                now,
+            )
+            .await?;
+
+        for line in lines {
+            self.sales_records
+                .insert_sales_record_line(
+                    &tx,
+                    NewSalesRecordLine {
+                        sales_record_id: record.id,
+                        product_id: line.product_id,
+                        item_name: line.item_name,
+                        receivable_amount: line.receivable_amount,
+                        operation_total_count: None,
+                        remark: line.remark,
+                        status: "active".to_string(),
+                    },
+                    now,
+                )
+                .await?;
+        }
+
+        let record_id = record.id;
+        tx.commit().await.map_err(RepositoryError::from)?;
+        info!(%record_id, "created service record through service");
+        self.sales_record_detail(record_id).await
     }
 
     #[tracing::instrument(level = "debug", skip(self, query))]
@@ -133,32 +290,32 @@ impl SalesRecordService {
             .as_deref()
             .map(|value| parse_status("status_filter", value))
             .transpose()?;
+        let record_type = query
+            .record_type
+            .as_deref()
+            .map(|value| parse_record_type("record_type", value))
+            .transpose()?;
         let (records, total_count) = self
             .sales_records
             .list_sales_records(
                 SalesRecordFilters {
                     status_filter,
-                    record_group_id: query.record_group_id,
+                    record_type,
                     customer_id: query.customer_id,
                     system_id: query.system_id,
                     store_id: query.store_id,
                     handler_user_id: query.handler_user_id,
-                    content_category_id: query.content_category_id,
-                    sale_date_from: query.sale_date_from,
-                    sale_date_to: query.sale_date_to,
+                    record_date_from: query.record_date_from,
+                    record_date_to: query.record_date_to,
                 },
                 page_number,
                 page_size,
             )
             .await?;
-        let records = self.sales_record_responses(records).await?;
+        let sales_records = self.sales_record_responses(records).await?;
 
-        debug!(
-            count = records.len(),
-            total_count, page_number, page_size, "listed sales records through service"
-        );
         Ok(ListSalesRecordsResponse {
-            sales_records: records,
+            sales_records,
             page_number,
             page_size,
             total_count,
@@ -175,37 +332,6 @@ impl SalesRecordService {
             .find_sales_record_by_id(sales_record_id)
             .await?
             .ok_or(SalesRecordError::SalesRecordNotFound)?;
-
-        debug!(%sales_record_id, "loaded sales record detail");
-        self.sales_record_response(record).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self, request))]
-    pub async fn update_sales_record(
-        &self,
-        sales_record_id: Uuid,
-        request: UpdateSalesRecordRequest,
-    ) -> Result<SalesRecordResponse, SalesRecordError> {
-        let record = self
-            .sales_records
-            .find_sales_record_by_id(sales_record_id)
-            .await?
-            .ok_or(SalesRecordError::SalesRecordNotFound)?;
-        if record.status == "voided" {
-            return Err(SalesRecordError::SalesRecordVoided);
-        }
-
-        let changes = self.sales_record_changes(&record, request).await?;
-        if changes.is_empty() {
-            debug!(%sales_record_id, "sales record update request had no changes");
-            return self.sales_record_response(record).await;
-        }
-
-        let record = self
-            .sales_records
-            .update_sales_record(&self.sales_records.db, &record, changes, Utc::now())
-            .await?;
-        info!(%sales_record_id, "updated sales record through service");
         self.sales_record_response(record).await
     }
 
@@ -221,60 +347,207 @@ impl SalesRecordService {
             .find_sales_record_by_id_for_update(&tx, sales_record_id)
             .await?
             .ok_or(SalesRecordError::SalesRecordNotFound)?;
-
         if record.status == "voided" {
             tx.commit().await.map_err(RepositoryError::from)?;
-            return self.sales_record_response(record).await;
+            return self.sales_record_detail(sales_record_id).await;
         }
-        self.ensure_no_active_usages(&tx, sales_record_id).await?;
+
+        let lines = self
+            .sales_records
+            .find_lines_by_sales_record_id_in(&tx, sales_record_id)
+            .await?;
+        let line_ids = lines.iter().map(|line| line.id).collect::<Vec<_>>();
+        self.ensure_no_active_usages(&tx, line_ids.clone()).await?;
 
         let record = self
             .sales_records
             .update_sales_record_status(&tx, &record, "voided", now)
             .await?;
-        if let Some(count) = self
+        let counts = self
             .sales_records
-            .find_operation_count_for_update(&tx, sales_record_id)
+            .find_operation_counts_by_line_ids_in(&tx, line_ids)
+            .await?;
+        for line in lines {
+            if line.status != "voided" {
+                self.sales_records
+                    .update_line_status(&tx, &line, "voided", now)
+                    .await?;
+            }
+        }
+        for count in counts {
+            if count.status != "voided" {
+                self.sales_records
+                    .update_operation_count(
+                        &tx,
+                        &count,
+                        OperationCountChanges {
+                            status: Some("voided".to_string()),
+                            ..OperationCountChanges::default()
+                        },
+                        now,
+                    )
+                    .await?;
+            }
+        }
+        for payment in self
+            .sales_records
+            .find_payments_by_sales_record_id_in(&tx, sales_record_id)
             .await?
         {
-            self.sales_records
-                .update_operation_count(
-                    &tx,
-                    &count,
-                    OperationCountChanges {
-                        status: Some("voided".to_string()),
-                        ..OperationCountChanges::default()
-                    },
-                    now,
-                )
-                .await?;
+            if payment.status != "voided" {
+                self.sales_records
+                    .update_payment_status(&tx, &payment, "voided", now)
+                    .await?;
+            }
         }
 
+        let record_id = record.id;
         tx.commit().await.map_err(RepositoryError::from)?;
-        info!(%sales_record_id, "voided sales record through service");
-        self.sales_record_response(record).await
+        info!(%record_id, "voided sales record through service");
+        self.sales_record_detail(record_id).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, request), fields(sales_record_id = %request.sales_record_id))]
+    pub async fn create_collection_payment(
+        &self,
+        created_by_user_id: Uuid,
+        request: CreateCollectionPaymentRequest,
+    ) -> Result<SalesPaymentResponse, SalesRecordError> {
+        self.ensure_active_user("created_by_user_id", created_by_user_id)
+            .await?;
+        let paid_amount = parse_positive_money("paid_amount", request.paid_amount)?;
+        let remark = nullable_limited_text("remark", request.remark, MAX_REMARK_LENGTH)?;
+        let allocations = self
+            .prepare_allocations(paid_amount, request.allocations)
+            .await?;
+
+        let now = Utc::now();
+        let tx = self.sales_records.begin().await?;
+        let record = self
+            .sales_records
+            .find_sales_record_by_id_for_update(&tx, request.sales_record_id)
+            .await?
+            .ok_or(SalesRecordError::SalesRecordNotFound)?;
+        if record.status == "voided" {
+            return Err(SalesRecordError::SalesRecordVoided);
+        }
+        if record.record_type != "sale" {
+            return Err(SalesRecordError::CollectionRequiresSaleRecord);
+        }
+
+        let remaining = self.sales_record_remaining_amount_in(&tx, record.id).await?;
+        if paid_amount > remaining {
+            return Err(SalesRecordError::PaymentExceedsOutstanding);
+        }
+
+        let payment = self
+            .sales_records
+            .insert_sales_payment(
+                &tx,
+                NewSalesPayment {
+                    sales_record_id: record.id,
+                    payment_type: "collection".to_string(),
+                    paid_amount,
+                    paid_at: request.paid_at,
+                    performance_status: "pending".to_string(),
+                    status: "active".to_string(),
+                    remark,
+                    created_by_user_id,
+                },
+                now,
+            )
+            .await?;
+        self.insert_allocations(&tx, payment.id, paid_amount, allocations, now)
+            .await?;
+
+        let payment_id = payment.id;
+        tx.commit().await.map_err(RepositoryError::from)?;
+        info!(%payment_id, "created collection payment through service");
+        self.sales_payment_detail(payment_id).await
+    }
+
+    #[tracing::instrument(level = "debug", skip(self, query))]
+    pub async fn list_sales_payments(
+        &self,
+        query: ListSalesPaymentsQuery,
+    ) -> Result<ListSalesPaymentsResponse, SalesRecordError> {
+        let page_number = query.page_number.unwrap_or(DEFAULT_PAGE_NUMBER);
+        let page_size = query.page_size.unwrap_or(DEFAULT_PAGE_SIZE);
+        validate_page_number(page_number)?;
+        validate_page_size(page_size)?;
+
+        let status_filter = query
+            .status_filter
+            .as_deref()
+            .map(|value| parse_status("status_filter", value))
+            .transpose()?;
+        let payment_type = query
+            .payment_type
+            .as_deref()
+            .map(|value| parse_payment_type("payment_type", value))
+            .transpose()?;
+        let (payments, total_count) = self
+            .sales_records
+            .list_sales_payments(
+                SalesPaymentFilters {
+                    status_filter,
+                    payment_type,
+                    sales_record_id: query.sales_record_id,
+                    paid_at_from: query.paid_at_from,
+                    paid_at_to: query.paid_at_to,
+                },
+                page_number,
+                page_size,
+            )
+            .await?;
+        let sales_payments = self.sales_payment_responses(payments).await?;
+
+        Ok(ListSalesPaymentsResponse {
+            sales_payments,
+            page_number,
+            page_size,
+            total_count,
+        })
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn sales_payment_detail(
+        &self,
+        payment_id: Uuid,
+    ) -> Result<SalesPaymentResponse, SalesRecordError> {
+        let payment = self
+            .sales_records
+            .find_payment_by_id(payment_id)
+            .await?
+            .ok_or(SalesRecordError::SalesPaymentNotFound)?;
+        let mut payments = self.sales_payment_responses(vec![payment]).await?;
+        Ok(payments.remove(0))
     }
 
     #[tracing::instrument(level = "info", skip(self))]
-    pub async fn delete_sales_record(&self, sales_record_id: Uuid) -> Result<(), SalesRecordError> {
+    pub async fn void_sales_payment(
+        &self,
+        payment_id: Uuid,
+    ) -> Result<SalesPaymentResponse, SalesRecordError> {
+        let now = Utc::now();
         let tx = self.sales_records.begin().await?;
-        self.sales_records
-            .find_sales_record_by_id_for_update(&tx, sales_record_id)
-            .await?
-            .ok_or(SalesRecordError::SalesRecordNotFound)?;
-        self.ensure_no_active_usages(&tx, sales_record_id).await?;
-
-        let deleted = self
+        let payment = self
             .sales_records
-            .delete_sales_record_by_id(&tx, sales_record_id)
-            .await?;
-        if !deleted {
-            return Err(SalesRecordError::SalesRecordNotFound);
+            .find_payment_by_id_for_update(&tx, payment_id)
+            .await?
+            .ok_or(SalesRecordError::SalesPaymentNotFound)?;
+        if payment.status == "voided" {
+            tx.commit().await.map_err(RepositoryError::from)?;
+            return self.sales_payment_detail(payment_id).await;
         }
-
+        let payment = self
+            .sales_records
+            .update_payment_status(&tx, &payment, "voided", now)
+            .await?;
+        let payment_id = payment.id;
         tx.commit().await.map_err(RepositoryError::from)?;
-        info!(%sales_record_id, "deleted sales record through service");
-        Ok(())
+        info!(%payment_id, "voided sales payment through service");
+        self.sales_payment_detail(payment_id).await
     }
 
     #[tracing::instrument(level = "debug", skip(self, query))]
@@ -297,7 +570,7 @@ impl SalesRecordService {
             .list_operation_counts(
                 OperationCountFilters {
                     status_filter,
-                    sales_record_id: query.sales_record_id,
+                    sales_record_line_id: query.sales_record_line_id,
                 },
                 page_number,
                 page_size,
@@ -305,10 +578,7 @@ impl SalesRecordService {
             .await?;
 
         Ok(ListOperationCountsResponse {
-            operation_counts: counts
-                .into_iter()
-                .map(OperationCountResponse::from)
-                .collect(),
+            operation_counts: counts.into_iter().map(OperationCountResponse::from).collect(),
             page_number,
             page_size,
             total_count,
@@ -318,37 +588,34 @@ impl SalesRecordService {
     #[tracing::instrument(level = "debug", skip(self))]
     pub async fn operation_count_detail(
         &self,
-        sales_record_id: Uuid,
+        sales_record_line_id: Uuid,
     ) -> Result<OperationCountResponse, SalesRecordError> {
         let count = self
             .sales_records
-            .find_operation_count(sales_record_id)
+            .find_operation_count(sales_record_line_id)
             .await?
             .ok_or(SalesRecordError::OperationCountNotFound)?;
-
         Ok(OperationCountResponse::from(count))
     }
 
     #[tracing::instrument(level = "info", skip(self, request))]
     pub async fn update_operation_count(
         &self,
-        sales_record_id: Uuid,
+        sales_record_line_id: Uuid,
         request: UpdateOperationCountRequest,
     ) -> Result<OperationCountResponse, SalesRecordError> {
         validate_positive_count("total_count", request.total_count)?;
         let now = Utc::now();
         let tx = self.sales_records.begin().await?;
-        let record = self
+        let line = self
             .sales_records
-            .find_sales_record_by_id_for_update(&tx, sales_record_id)
+            .find_line_by_id_for_update(&tx, sales_record_line_id)
             .await?
-            .ok_or(SalesRecordError::SalesRecordNotFound)?;
-        if record.status == "voided" {
-            return Err(SalesRecordError::SalesRecordVoided);
-        }
+            .ok_or(SalesRecordError::SalesRecordLineNotFound)?;
+        self.ensure_active_line_record(&tx, &line).await?;
         let count = self
             .sales_records
-            .find_operation_count_for_update(&tx, sales_record_id)
+            .find_operation_count_for_update(&tx, sales_record_line_id)
             .await?
             .ok_or(SalesRecordError::OperationCountNotFound)?;
         if count.status == "voided" {
@@ -357,7 +624,6 @@ impl SalesRecordService {
         if request.total_count < count.used_count {
             return Err(SalesRecordError::OperationCountBelowUsed);
         }
-
         let count = self
             .sales_records
             .update_operation_count(
@@ -371,7 +637,6 @@ impl SalesRecordService {
             )
             .await?;
         tx.commit().await.map_err(RepositoryError::from)?;
-        info!(%sales_record_id, "updated operation count through service");
         Ok(OperationCountResponse::from(count))
     }
 
@@ -395,7 +660,7 @@ impl SalesRecordService {
             .list_operation_usages(
                 OperationUsageFilters {
                     status_filter,
-                    sales_record_id: query.sales_record_id,
+                    sales_record_line_id: query.sales_record_line_id,
                     operator_user_id: query.operator_user_id,
                     doctor_user_id: query.doctor_user_id,
                     operated_at_from: query.operated_at_from,
@@ -407,10 +672,7 @@ impl SalesRecordService {
             .await?;
 
         Ok(ListOperationUsagesResponse {
-            operation_usages: usages
-                .into_iter()
-                .map(OperationUsageResponse::from)
-                .collect(),
+            operation_usages: usages.into_iter().map(OperationUsageResponse::from).collect(),
             page_number,
             page_size,
             total_count,
@@ -427,7 +689,6 @@ impl SalesRecordService {
             .find_operation_usage_by_id(usage_id)
             .await?
             .ok_or(SalesRecordError::OperationUsageNotFound)?;
-
         Ok(OperationUsageResponse::from(usage))
     }
 
@@ -445,23 +706,26 @@ impl SalesRecordService {
 
         let now = Utc::now();
         let tx = self.sales_records.begin().await?;
-        self.ensure_active_sales_record_for_usage(&tx, request.sales_record_id)
-            .await?;
+        let line = self
+            .sales_records
+            .find_line_by_id_for_update(&tx, request.sales_record_line_id)
+            .await?
+            .ok_or(SalesRecordError::SalesRecordLineNotFound)?;
+        self.ensure_active_line_record(&tx, &line).await?;
         let count = self
             .sales_records
-            .find_operation_count_for_update(&tx, request.sales_record_id)
+            .find_operation_count_for_update(&tx, request.sales_record_line_id)
             .await?
             .ok_or(SalesRecordError::OperationCountNotFound)?;
         let count = self
             .apply_usage_delta(&tx, &count, request.operation_count, now)
             .await?;
-
         let usage = self
             .sales_records
             .insert_operation_usage(
                 &tx,
                 NewOperationUsage {
-                    sales_record_id: request.sales_record_id,
+                    sales_record_line_id: request.sales_record_line_id,
                     operated_at: request.operated_at,
                     operator_user_id: request.operator_user_id,
                     doctor_user_id: request.doctor_user_id,
@@ -475,7 +739,7 @@ impl SalesRecordService {
         tx.commit().await.map_err(RepositoryError::from)?;
         info!(
             operation_usage_id = %usage.id,
-            sales_record_id = %usage.sales_record_id,
+            sales_record_line_id = %usage.sales_record_line_id,
             used_count = count.used_count,
             "created operation usage through service"
         );
@@ -488,7 +752,7 @@ impl SalesRecordService {
         usage_id: Uuid,
         request: UpdateOperationUsageRequest,
     ) -> Result<OperationUsageResponse, SalesRecordError> {
-        let changes = operation_usage_changes(request).await?;
+        let changes = operation_usage_changes(request)?;
         if let Some(operator_user_id) = changes.operator_user_id {
             self.ensure_active_user("operator_user_id", operator_user_id)
                 .await?;
@@ -512,27 +776,28 @@ impl SalesRecordService {
             tx.commit().await.map_err(RepositoryError::from)?;
             return Ok(OperationUsageResponse::from(usage));
         }
-
-        self.ensure_active_sales_record_for_usage(&tx, usage.sales_record_id)
-            .await?;
+        let line = self
+            .sales_records
+            .find_line_by_id_for_update(&tx, usage.sales_record_line_id)
+            .await?
+            .ok_or(SalesRecordError::SalesRecordLineNotFound)?;
+        self.ensure_active_line_record(&tx, &line).await?;
         if let Some(new_count) = changes.operation_count {
             let delta = new_count - usage.operation_count;
             if delta != 0 {
                 let count = self
                     .sales_records
-                    .find_operation_count_for_update(&tx, usage.sales_record_id)
+                    .find_operation_count_for_update(&tx, usage.sales_record_line_id)
                     .await?
                     .ok_or(SalesRecordError::OperationCountNotFound)?;
                 self.apply_usage_delta(&tx, &count, delta, now).await?;
             }
         }
-
         let usage = self
             .sales_records
             .update_operation_usage(&tx, &usage, changes, now)
             .await?;
         tx.commit().await.map_err(RepositoryError::from)?;
-        info!(%usage_id, "updated operation usage through service");
         Ok(OperationUsageResponse::from(usage))
     }
 
@@ -552,10 +817,9 @@ impl SalesRecordService {
             tx.commit().await.map_err(RepositoryError::from)?;
             return Ok(OperationUsageResponse::from(usage));
         }
-
         let count = self
             .sales_records
-            .find_operation_count_for_update(&tx, usage.sales_record_id)
+            .find_operation_count_for_update(&tx, usage.sales_record_line_id)
             .await?
             .ok_or(SalesRecordError::OperationCountNotFound)?;
         self.apply_usage_delta(&tx, &count, -usage.operation_count, now)
@@ -573,7 +837,6 @@ impl SalesRecordService {
             )
             .await?;
         tx.commit().await.map_err(RepositoryError::from)?;
-        info!(%usage_id, "voided operation usage through service");
         Ok(OperationUsageResponse::from(usage))
     }
 
@@ -589,7 +852,7 @@ impl SalesRecordService {
         if usage.status == "active" {
             let count = self
                 .sales_records
-                .find_operation_count_for_update(&tx, usage.sales_record_id)
+                .find_operation_count_for_update(&tx, usage.sales_record_line_id)
                 .await?
                 .ok_or(SalesRecordError::OperationCountNotFound)?;
             self.apply_usage_delta(&tx, &count, -usage.operation_count, now)
@@ -602,235 +865,203 @@ impl SalesRecordService {
         if !deleted {
             return Err(SalesRecordError::OperationUsageNotFound);
         }
-
         tx.commit().await.map_err(RepositoryError::from)?;
-        info!(%usage_id, "deleted operation usage through service");
         Ok(())
     }
 
-    async fn new_sales_record(
+    async fn prepare_lines(
         &self,
-        record_group_id: Uuid,
-        request: crate::dto::sales_records::CreateSalesRecordRequest,
-    ) -> Result<(NewSalesRecord, Option<i32>), SalesRecordError> {
-        let deal_status = parse_deal_status("deal_status", &request.deal_status)?.to_string();
-        let customer_type =
-            parse_customer_type("customer_type", &request.customer_type)?.to_string();
-        let deal_type = parse_deal_type("deal_type", &request.deal_type)?.to_string();
-        let collaboration_type =
-            parse_collaboration_type("collaboration_type", &request.collaboration_type)?
-                .to_string();
-        let paid_amount = parse_money("paid_amount", Some(request.paid_amount))?;
-        let unpaid_amount = parse_money("unpaid_amount", Some(request.unpaid_amount))?;
-        let category = self
-            .ensure_category(request.content_category_id, true)
-            .await?;
-        let operation_total_count = self.validate_operation_total_count(
-            category.requires_operation_count,
-            request.operation_total_count,
-        )?;
-
-        self.ensure_sales_record_references(
-            SalesRecordReferenceInput {
-                customer_id: request.customer_id,
-                system_id: request.system_id,
-                store_id: request.store_id,
-                handler_user_id: request.handler_user_id,
-                expert_user_id: request.expert_user_id,
-                consultant_user_id: request.consultant_user_id,
-                doctor_user_id: request.doctor_user_id,
-            },
-            &collaboration_type,
-        )
-        .await?;
-
-        Ok((
-            NewSalesRecord {
-                record_group_id: Some(record_group_id),
-                customer_id: request.customer_id,
-                sale_date: request.sale_date,
-                deal_status,
-                customer_type,
-                deal_type,
-                content_category_id: request.content_category_id,
-                handler_user_id: request.handler_user_id,
-                paid_amount,
-                unpaid_amount,
-                system_id: request.system_id,
-                store_id: request.store_id,
-                collaboration_type,
-                expert_user_id: request.expert_user_id,
-                consultant_user_id: request.consultant_user_id,
-                doctor_user_id: request.doctor_user_id,
-                status: "active".to_string(),
-            },
-            operation_total_count,
-        ))
-    }
-
-    async fn sales_record_changes(
-        &self,
-        record: &sales_records::Model,
-        request: UpdateSalesRecordRequest,
-    ) -> Result<SalesRecordChanges, SalesRecordError> {
-        let customer_id = required_uuid_change("customer_id", request.customer_id)?;
-        let sale_date = required_date_change("sale_date", request.sale_date)?;
-        let deal_status = enum_text_change("deal_status", request.deal_status, parse_deal_status)?;
-        let customer_type =
-            enum_text_change("customer_type", request.customer_type, parse_customer_type)?;
-        let deal_type = enum_text_change("deal_type", request.deal_type, parse_deal_type)?;
-        let content_category_id =
-            required_uuid_change("content_category_id", request.content_category_id)?;
-        let handler_user_id = required_uuid_change("handler_user_id", request.handler_user_id)?;
-        let paid_amount = money_change("paid_amount", request.paid_amount)?;
-        let unpaid_amount = money_change("unpaid_amount", request.unpaid_amount)?;
-        let system_id = required_uuid_change("system_id", request.system_id)?;
-        let store_id = required_uuid_change("store_id", request.store_id)?;
-        let collaboration_type = enum_text_change(
-            "collaboration_type",
-            request.collaboration_type,
-            parse_collaboration_type,
-        )?;
-        let expert_user_id = nullable_uuid_change("expert_user_id", request.expert_user_id)?;
-        let consultant_user_id =
-            nullable_uuid_change("consultant_user_id", request.consultant_user_id)?;
-        let doctor_user_id = nullable_uuid_change("doctor_user_id", request.doctor_user_id)?;
-
-        let final_customer_id = customer_id.unwrap_or(record.customer_id);
-        let final_system_id = system_id.unwrap_or(record.system_id);
-        let final_store_id = store_id.unwrap_or(record.store_id);
-        let final_handler_user_id = handler_user_id.unwrap_or(record.handler_user_id);
-        let final_collaboration_type = collaboration_type
-            .as_deref()
-            .unwrap_or(&record.collaboration_type)
-            .to_string();
-        let final_expert_user_id = expert_user_id.unwrap_or(record.expert_user_id);
-        let final_consultant_user_id = consultant_user_id.unwrap_or(record.consultant_user_id);
-        let final_doctor_user_id = doctor_user_id.unwrap_or(record.doctor_user_id);
-
-        self.ensure_sales_record_references(
-            SalesRecordReferenceInput {
-                customer_id: final_customer_id,
-                system_id: final_system_id,
-                store_id: final_store_id,
-                handler_user_id: final_handler_user_id,
-                expert_user_id: final_expert_user_id,
-                consultant_user_id: final_consultant_user_id,
-                doctor_user_id: final_doctor_user_id,
-            },
-            &final_collaboration_type,
-        )
-        .await?;
-
-        if let Some(content_category_id) = content_category_id {
-            let category = self.ensure_category(content_category_id, true).await?;
-            let has_count = self
-                .sales_records
-                .find_operation_count(record.id)
-                .await?
-                .is_some();
-            if has_count != category.requires_operation_count {
-                return Err(SalesRecordError::ContentCategoryOperationCountMismatch);
-            }
+        record_type: &'static str,
+        request_lines: Vec<SalesRecordLineInput>,
+    ) -> Result<Vec<LineDraft>, SalesRecordError> {
+        if request_lines.is_empty() {
+            return Err(SalesRecordError::SalesRecordLinesRequired);
         }
 
-        Ok(SalesRecordChanges {
-            customer_id,
-            sale_date,
-            deal_status,
-            customer_type,
-            deal_type,
-            content_category_id,
-            handler_user_id,
+        let mut lines = Vec::with_capacity(request_lines.len());
+        for line in request_lines {
+            let product = self.ensure_active_product(line.product_id).await?;
+            let category = self.ensure_active_category(product.category_id).await?;
+            let item_name = required_limited_text("item_name", line.item_name, MAX_ITEM_NAME_LENGTH)?;
+            let receivable_amount = parse_money("receivable_amount", Some(line.receivable_amount))?;
+            let remark = nullable_limited_text("remark", line.remark, MAX_REMARK_LENGTH)?;
+            let operation_total_count = match record_type {
+                "sale" => self.validate_sale_operation_count(
+                    category.requires_operation_count,
+                    line.operation_total_count,
+                )?,
+                "service" => {
+                    if receivable_amount != Decimal::ZERO {
+                        return Err(SalesRecordError::ServiceReceivableMustBeZero);
+                    }
+                    if line.operation_total_count.is_some() {
+                        return Err(SalesRecordError::ServiceOperationCountNotAllowed);
+                    }
+                    None
+                }
+                _ => return Err(SalesRecordError::InvalidRecordTypeInternal),
+            };
+
+            lines.push(LineDraft {
+                product_id: product.id,
+                item_name,
+                receivable_amount,
+                operation_total_count,
+                remark,
+            });
+        }
+
+        Ok(lines)
+    }
+
+    async fn prepare_payment(
+        &self,
+        request: SalesPaymentInput,
+        receivable_amount: Decimal,
+    ) -> Result<PaymentDraft, SalesRecordError> {
+        let paid_amount = parse_positive_money("paid_amount", request.paid_amount)?;
+        if paid_amount > receivable_amount {
+            return Err(SalesRecordError::PaymentExceedsOutstanding);
+        }
+        let allocations = self
+            .prepare_allocations(paid_amount, request.allocations)
+            .await?;
+        let remark = nullable_limited_text("remark", request.remark, MAX_REMARK_LENGTH)?;
+
+        Ok(PaymentDraft {
             paid_amount,
-            unpaid_amount,
-            system_id,
-            store_id,
-            collaboration_type,
-            expert_user_id,
-            consultant_user_id,
-            doctor_user_id,
+            paid_at: request.paid_at,
+            allocations,
+            remark,
         })
     }
 
-    async fn ensure_sales_record_references(
+    async fn prepare_allocations(
         &self,
-        refs: SalesRecordReferenceInput,
-        collaboration_type: &str,
+        paid_amount: Decimal,
+        allocations: Vec<SalesPaymentAllocationInput>,
+    ) -> Result<Vec<AllocationDraft>, SalesRecordError> {
+        if allocations.is_empty() {
+            return Err(SalesRecordError::PaymentAllocationsRequired);
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        let mut ratio_total = Decimal::ZERO;
+        let mut drafts = Vec::with_capacity(allocations.len());
+        for allocation in allocations {
+            if !seen.insert(allocation.guide_user_id) {
+                return Err(SalesRecordError::DuplicatePaymentGuide);
+            }
+            self.ensure_active_user("guide_user_id", allocation.guide_user_id)
+                .await?;
+            let ratio = parse_ratio("allocation_ratio", allocation.allocation_ratio)?;
+            ratio_total += ratio;
+            drafts.push(AllocationDraft {
+                guide_user_id: allocation.guide_user_id,
+                allocation_ratio: ratio,
+                allocated_amount: Decimal::ZERO,
+            });
+        }
+
+        if ratio_total != Decimal::new(10000, 2) {
+            return Err(SalesRecordError::PaymentAllocationRatioTotalInvalid);
+        }
+
+        let mut allocated_total = Decimal::ZERO;
+        let last_index = drafts.len().saturating_sub(1);
+        for (index, draft) in drafts.iter_mut().enumerate() {
+            if index == last_index {
+                draft.allocated_amount = paid_amount - allocated_total;
+            } else {
+                let amount = (paid_amount * draft.allocation_ratio / Decimal::new(100, 0))
+                    .round_dp(2);
+                draft.allocated_amount = amount;
+                allocated_total += amount;
+            }
+        }
+
+        Ok(drafts)
+    }
+
+    async fn insert_allocations(
+        &self,
+        tx: &sea_orm::DatabaseTransaction,
+        payment_id: Uuid,
+        paid_amount: Decimal,
+        allocations: Vec<AllocationDraft>,
+        now: DateTime<Utc>,
     ) -> Result<(), SalesRecordError> {
+        let mut allocated_total = Decimal::ZERO;
+        for allocation in allocations {
+            allocated_total += allocation.allocated_amount;
+            self.sales_records
+                .insert_sales_payment_allocation(
+                    tx,
+                    NewSalesPaymentAllocation {
+                        payment_id,
+                        guide_user_id: allocation.guide_user_id,
+                        allocation_ratio: allocation.allocation_ratio,
+                        allocated_amount: allocation.allocated_amount,
+                    },
+                    now,
+                )
+                .await?;
+        }
+        if allocated_total != paid_amount {
+            warn!(
+                %payment_id,
+                paid_amount = %format_money(paid_amount),
+                allocated_total = %format_money(allocated_total),
+                "payment allocation amount total did not match paid amount"
+            );
+            return Err(SalesRecordError::PaymentAllocationAmountTotalInvalid);
+        }
+        Ok(())
+    }
+
+    async fn customer_scope(&self, customer_id: Uuid) -> Result<CustomerScope, SalesRecordError> {
         let customer = self
             .customers
-            .find_by_id(refs.customer_id)
+            .find_by_id(customer_id)
             .await?
             .ok_or(SalesRecordError::CustomerNotFound)?;
         if customer.status != "active" {
             return Err(SalesRecordError::CustomerDisabled);
         }
-        self.systems
-            .find_by_id(refs.system_id)
+        let system = self
+            .systems
+            .find_by_id(customer.system_id)
             .await?
             .ok_or(SalesRecordError::SystemNotFound)?;
+        if system.status != "active" {
+            return Err(SalesRecordError::SystemDisabled);
+        }
         let store = self
             .stores
-            .find_by_id(refs.store_id)
+            .find_by_id(customer.store_id)
             .await?
             .ok_or(SalesRecordError::StoreNotFound)?;
-        if store.system_id != refs.system_id {
-            warn!(
-                store_id = %refs.store_id,
-                system_id = %refs.system_id,
-                store_system_id = %store.system_id,
-                "rejected sales record because store does not belong to system"
-            );
+        if store.status != "active" {
+            return Err(SalesRecordError::StoreDisabled);
+        }
+        if store.system_id != customer.system_id {
             return Err(SalesRecordError::StoreSystemMismatch);
         }
-
-        self.ensure_active_user("handler_user_id", refs.handler_user_id)
-            .await?;
-        self.ensure_optional_active_user("expert_user_id", refs.expert_user_id)
-            .await?;
-        self.ensure_optional_active_user("consultant_user_id", refs.consultant_user_id)
-            .await?;
-        self.ensure_optional_active_user("doctor_user_id", refs.doctor_user_id)
-            .await?;
-
-        match collaboration_type {
-            "expert_consultation" => {
-                if refs.expert_user_id.is_none() {
-                    return Err(SalesRecordError::MissingExpertFields);
-                }
-            }
-            "self_sale" => {
-                if refs.expert_user_id.is_some() {
-                    return Err(SalesRecordError::UnexpectedExpertFields);
-                }
-            }
-            _ => {
-                return Err(SalesRecordError::InvalidEnumValue {
-                    field: "collaboration_type",
-                    value: collaboration_type.to_string(),
-                    expected: "expert_consultation, self_sale",
-                });
-            }
-        }
-
-        Ok(())
+        Ok(CustomerScope {
+            system_id: customer.system_id,
+            store_id: customer.store_id,
+        })
     }
 
-    async fn ensure_category(
-        &self,
-        category_id: Uuid,
-        require_active: bool,
-    ) -> Result<product_category::Model, SalesRecordError> {
-        let category = self
-            .categories
-            .find_by_id(category_id)
-            .await?
-            .ok_or(SalesRecordError::ProductCategoryNotFound)?;
-        if require_active && category.status != "active" {
-            return Err(SalesRecordError::ProductCategoryDisabled);
-        }
-        Ok(category)
+    async fn ensure_record_users(&self, users: RecordUserInput) -> Result<(), SalesRecordError> {
+        self.ensure_active_user("handler_user_id", users.handler_user_id)
+            .await?;
+        self.ensure_optional_active_user("expert_user_id", users.expert_user_id)
+            .await?;
+        self.ensure_optional_active_user("consultant_user_id", users.consultant_user_id)
+            .await?;
+        self.ensure_optional_active_user("doctor_user_id", users.doctor_user_id)
+            .await
     }
 
     async fn ensure_active_user(
@@ -860,7 +1091,37 @@ impl SalesRecordService {
         Ok(())
     }
 
-    fn validate_operation_total_count(
+    async fn ensure_active_product(
+        &self,
+        product_id: Uuid,
+    ) -> Result<product_entity::Model, SalesRecordError> {
+        let product = self
+            .products
+            .find_by_id(product_id)
+            .await?
+            .ok_or(SalesRecordError::ProductNotFound)?;
+        if product.status != "active" {
+            return Err(SalesRecordError::ProductDisabled);
+        }
+        Ok(product)
+    }
+
+    async fn ensure_active_category(
+        &self,
+        category_id: Uuid,
+    ) -> Result<product_category::Model, SalesRecordError> {
+        let category = self
+            .categories
+            .find_by_id(category_id)
+            .await?
+            .ok_or(SalesRecordError::ProductCategoryNotFound)?;
+        if category.status != "active" {
+            return Err(SalesRecordError::ProductCategoryDisabled);
+        }
+        Ok(category)
+    }
+
+    fn validate_sale_operation_count(
         &self,
         requires_operation_count: bool,
         total_count: Option<i32>,
@@ -876,33 +1137,131 @@ impl SalesRecordService {
         }
     }
 
+    async fn sales_record_remaining_amount_in<C: sea_orm::ConnectionTrait>(
+        &self,
+        conn: &C,
+        sales_record_id: Uuid,
+    ) -> Result<Decimal, SalesRecordError> {
+        let lines = self
+            .sales_records
+            .find_lines_by_sales_record_id_in(conn, sales_record_id)
+            .await?;
+        let payments = self
+            .sales_records
+            .find_payments_by_sales_record_id_in(conn, sales_record_id)
+            .await?;
+        let receivable = lines
+            .into_iter()
+            .filter(|line| line.status == "active")
+            .map(|line| line.receivable_amount)
+            .sum::<Decimal>();
+        let paid = payments
+            .into_iter()
+            .filter(|payment| payment.status == "active")
+            .map(|payment| payment.paid_amount)
+            .sum::<Decimal>();
+        Ok(receivable - paid)
+    }
+
     async fn sales_record_response(
         &self,
         record: sales_records::Model,
     ) -> Result<SalesRecordResponse, SalesRecordError> {
-        let count = self.sales_records.find_operation_count(record.id).await?;
-        Ok(SalesRecordResponse::from_model(record, count))
+        let mut records = self.sales_record_responses(vec![record]).await?;
+        Ok(records.remove(0))
     }
 
     async fn sales_record_responses(
         &self,
         records: Vec<sales_records::Model>,
     ) -> Result<Vec<SalesRecordResponse>, SalesRecordError> {
-        let record_ids = records.iter().map(|record| record.id).collect();
+        let record_ids = records.iter().map(|record| record.id).collect::<Vec<_>>();
+        let lines = self
+            .sales_records
+            .find_lines_by_sales_record_ids(record_ids.clone())
+            .await?;
+        let line_ids = lines.iter().map(|line| line.id).collect::<Vec<_>>();
         let counts = self
             .sales_records
-            .find_operation_counts_by_sales_record_ids(record_ids)
+            .find_operation_counts_by_line_ids(line_ids)
             .await?;
-        let counts_by_record_id: HashMap<Uuid, sales_record_operation_counts::Model> = counts
+        let payments = self
+            .sales_records
+            .find_payments_by_sales_record_ids(record_ids)
+            .await?;
+        let payment_ids = payments.iter().map(|payment| payment.id).collect::<Vec<_>>();
+        let allocations = self
+            .sales_records
+            .find_allocations_by_payment_ids(payment_ids)
+            .await?;
+
+        let counts_by_line_id: HashMap<Uuid, sales_record_operation_counts::Model> = counts
             .into_iter()
-            .map(|count| (count.sales_record_id, count))
+            .map(|count| (count.sales_record_line_id, count))
             .collect();
+        let mut lines_by_record_id: HashMap<Uuid, Vec<SalesRecordLineResponse>> = HashMap::new();
+        for line in lines {
+            let count = counts_by_line_id.get(&line.id).cloned();
+            lines_by_record_id
+                .entry(line.sales_record_id)
+                .or_default()
+                .push(SalesRecordLineResponse::from_model(line, count));
+        }
+
+        let mut allocations_by_payment_id: HashMap<Uuid, Vec<SalesPaymentAllocationResponse>> =
+            HashMap::new();
+        for allocation in allocations {
+            allocations_by_payment_id
+                .entry(allocation.payment_id)
+                .or_default()
+                .push(SalesPaymentAllocationResponse::from(allocation));
+        }
+        let mut payments_by_record_id: HashMap<Uuid, Vec<SalesPaymentResponse>> = HashMap::new();
+        for payment in payments {
+            let allocations = allocations_by_payment_id
+                .remove(&payment.id)
+                .unwrap_or_default();
+            payments_by_record_id
+                .entry(payment.sales_record_id)
+                .or_default()
+                .push(SalesPaymentResponse::from_parts(payment, allocations));
+        }
 
         Ok(records
             .into_iter()
             .map(|record| {
-                let count = counts_by_record_id.get(&record.id).cloned();
-                SalesRecordResponse::from_model(record, count)
+                let lines = lines_by_record_id.remove(&record.id).unwrap_or_default();
+                let payments = payments_by_record_id.remove(&record.id).unwrap_or_default();
+                SalesRecordResponse::from_parts(record, lines, payments)
+            })
+            .collect())
+    }
+
+    async fn sales_payment_responses(
+        &self,
+        payments: Vec<sales_payments::Model>,
+    ) -> Result<Vec<SalesPaymentResponse>, SalesRecordError> {
+        let payment_ids = payments.iter().map(|payment| payment.id).collect::<Vec<_>>();
+        let allocations = self
+            .sales_records
+            .find_allocations_by_payment_ids(payment_ids)
+            .await?;
+        let mut allocations_by_payment_id: HashMap<Uuid, Vec<SalesPaymentAllocationResponse>> =
+            HashMap::new();
+        for allocation in allocations {
+            allocations_by_payment_id
+                .entry(allocation.payment_id)
+                .or_default()
+                .push(SalesPaymentAllocationResponse::from(allocation));
+        }
+
+        Ok(payments
+            .into_iter()
+            .map(|payment| {
+                let allocations = allocations_by_payment_id
+                    .remove(&payment.id)
+                    .unwrap_or_default();
+                SalesPaymentResponse::from_parts(payment, allocations)
             })
             .collect())
     }
@@ -910,11 +1269,11 @@ impl SalesRecordService {
     async fn ensure_no_active_usages(
         &self,
         tx: &sea_orm::DatabaseTransaction,
-        sales_record_id: Uuid,
+        sales_record_line_ids: Vec<Uuid>,
     ) -> Result<(), SalesRecordError> {
         let active_usage_count = self
             .sales_records
-            .count_active_operation_usages(tx, sales_record_id)
+            .count_active_operation_usages_for_lines(tx, sales_record_line_ids)
             .await?;
         if active_usage_count > 0 {
             return Err(SalesRecordError::SalesRecordHasActiveUsages);
@@ -922,18 +1281,24 @@ impl SalesRecordService {
         Ok(())
     }
 
-    async fn ensure_active_sales_record_for_usage(
+    async fn ensure_active_line_record(
         &self,
         tx: &sea_orm::DatabaseTransaction,
-        sales_record_id: Uuid,
+        line: &sales_record_lines::Model,
     ) -> Result<(), SalesRecordError> {
+        if line.status == "voided" {
+            return Err(SalesRecordError::SalesRecordLineVoided);
+        }
         let record = self
             .sales_records
-            .find_sales_record_by_id_for_update(tx, sales_record_id)
+            .find_sales_record_by_id_for_update(tx, line.sales_record_id)
             .await?
             .ok_or(SalesRecordError::SalesRecordNotFound)?;
         if record.status == "voided" {
             return Err(SalesRecordError::SalesRecordVoided);
+        }
+        if record.record_type != "sale" {
+            return Err(SalesRecordError::OperationCountRequiresSaleRecord);
         }
         Ok(())
     }
@@ -972,14 +1337,41 @@ impl SalesRecordService {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct SalesRecordReferenceInput {
-    customer_id: Uuid,
+struct CustomerScope {
     system_id: Uuid,
     store_id: Uuid,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RecordUserInput {
     handler_user_id: Uuid,
     expert_user_id: Option<Uuid>,
     consultant_user_id: Option<Uuid>,
     doctor_user_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone)]
+struct LineDraft {
+    product_id: Uuid,
+    item_name: String,
+    receivable_amount: Decimal,
+    operation_total_count: Option<i32>,
+    remark: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct PaymentDraft {
+    paid_amount: Decimal,
+    paid_at: DateTime<Utc>,
+    allocations: Vec<AllocationDraft>,
+    remark: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct AllocationDraft {
+    guide_user_id: Uuid,
+    allocation_ratio: Decimal,
+    allocated_amount: Decimal,
 }
 
 #[derive(Debug, Error)]
@@ -988,6 +1380,10 @@ pub enum SalesRecordError {
     Repository(#[from] RepositoryError),
     #[error("sales record was not found")]
     SalesRecordNotFound,
+    #[error("sales record line was not found")]
+    SalesRecordLineNotFound,
+    #[error("sales payment was not found")]
+    SalesPaymentNotFound,
     #[error("operation count was not found")]
     OperationCountNotFound,
     #[error("operation usage was not found")]
@@ -998,8 +1394,16 @@ pub enum SalesRecordError {
     CustomerDisabled,
     #[error("system was not found")]
     SystemNotFound,
+    #[error("system is disabled")]
+    SystemDisabled,
     #[error("store was not found")]
     StoreNotFound,
+    #[error("store is disabled")]
+    StoreDisabled,
+    #[error("product was not found")]
+    ProductNotFound,
+    #[error("product is disabled")]
+    ProductDisabled,
     #[error("product category was not found")]
     ProductCategoryNotFound,
     #[error("product category is disabled")]
@@ -1010,8 +1414,12 @@ pub enum SalesRecordError {
     ReferencedUserDisabled { field: &'static str },
     #[error("store does not belong to the selected system")]
     StoreSystemMismatch,
-    #[error("sales record batch must include at least one record")]
-    EmptyBatch,
+    #[error("sales record must include at least one line")]
+    SalesRecordLinesRequired,
+    #[error("payment allocations must include at least one guide")]
+    PaymentAllocationsRequired,
+    #[error("guide_user_id cannot repeat in one payment")]
+    DuplicatePaymentGuide,
     #[error("{field} is required")]
     MissingRequiredField { field: &'static str },
     #[error("{field} must be at most {maximum} characters")]
@@ -1026,24 +1434,40 @@ pub enum SalesRecordError {
     InvalidMoney { field: &'static str, value: String },
     #[error("{field} must be greater than or equal to 0.00")]
     NegativeMoney { field: &'static str, value: String },
+    #[error("{field} must be greater than 0.00")]
+    NonPositiveMoney { field: &'static str, value: String },
     #[error("{field} must be less than or equal to 9999999999.99")]
     MoneyTooLarge { field: &'static str, value: String },
+    #[error("{field} must be a decimal string with at most two decimal places")]
+    InvalidRatio { field: &'static str, value: String },
+    #[error("{field} must be greater than 0.00 and less than or equal to 100.00")]
+    RatioOutOfRange { field: &'static str, value: String },
+    #[error("payment allocation ratios must total 100.00")]
+    PaymentAllocationRatioTotalInvalid,
+    #[error("payment allocation amounts must total paid_amount")]
+    PaymentAllocationAmountTotalInvalid,
     #[error("{field} must be greater than or equal to {minimum}")]
     InvalidCountMinimum { field: &'static str, minimum: i32 },
-    #[error("operation_total_count is required for this content category")]
+    #[error("operation_total_count is required for this product category")]
     OperationTotalCountRequired,
-    #[error("operation_total_count is not allowed for this content category")]
+    #[error("operation_total_count is not allowed for this product category")]
     OperationTotalCountNotAllowed,
-    #[error("expert_user_id is required for expert consultation")]
-    MissingExpertFields,
-    #[error("expert_user_id must be empty for self sale")]
-    UnexpectedExpertFields,
-    #[error(
-        "sales record content category cannot switch between operation-count and non-operation-count categories"
-    )]
-    ContentCategoryOperationCountMismatch,
+    #[error("service records cannot create operation counts")]
+    ServiceOperationCountNotAllowed,
+    #[error("sale records must have receivable amount greater than 0.00")]
+    SaleReceivableRequired,
+    #[error("service record line receivable_amount must be 0.00")]
+    ServiceReceivableMustBeZero,
+    #[error("payment amount exceeds outstanding amount")]
+    PaymentExceedsOutstanding,
+    #[error("collection payment must reference a sale record")]
+    CollectionRequiresSaleRecord,
+    #[error("operation counts can only be used on sale record lines")]
+    OperationCountRequiresSaleRecord,
     #[error("sales record is voided")]
     SalesRecordVoided,
+    #[error("sales record line is voided")]
+    SalesRecordLineVoided,
     #[error("operation count is voided")]
     OperationCountVoided,
     #[error("operation usage is voided")]
@@ -1058,6 +1482,8 @@ pub enum SalesRecordError {
     InvalidPaginationMinimum { field: &'static str, minimum: u64 },
     #[error("{field} must be less than or equal to {maximum}")]
     InvalidPaginationMaximum { field: &'static str, maximum: u64 },
+    #[error("invalid record type")]
+    InvalidRecordTypeInternal,
 }
 
 impl SalesRecordError {
@@ -1069,38 +1495,56 @@ impl SalesRecordError {
                 RepositoryError::Database(_) => "database_error",
             },
             Self::SalesRecordNotFound => "sales_record_not_found",
+            Self::SalesRecordLineNotFound => "sales_record_line_not_found",
+            Self::SalesPaymentNotFound => "sales_payment_not_found",
             Self::OperationCountNotFound => "operation_count_not_found",
             Self::OperationUsageNotFound => "operation_usage_not_found",
             Self::CustomerNotFound => "customer_not_found",
-            Self::CustomerDisabled => "customer_disabled",
             Self::SystemNotFound => "system_not_found",
             Self::StoreNotFound => "store_not_found",
+            Self::ProductNotFound => "product_not_found",
             Self::ProductCategoryNotFound => "product_category_not_found",
-            Self::ProductCategoryDisabled => "product_category_disabled",
             Self::UserNotFound { .. } => "user_not_found",
+            Self::CustomerDisabled => "customer_disabled",
+            Self::SystemDisabled => "system_disabled",
+            Self::StoreDisabled => "store_disabled",
+            Self::ProductDisabled => "product_disabled",
+            Self::ProductCategoryDisabled => "product_category_disabled",
             Self::ReferencedUserDisabled { .. } => "referenced_user_disabled",
             Self::StoreSystemMismatch => "store_system_mismatch",
+            Self::PaymentExceedsOutstanding => "payment_exceeds_outstanding",
+            Self::CollectionRequiresSaleRecord => "collection_requires_sale_record",
+            Self::SalesRecordVoided => "sales_record_voided",
+            Self::SalesRecordLineVoided => "sales_record_line_voided",
+            Self::OperationCountVoided => "operation_count_voided",
+            Self::OperationUsageVoided => "operation_usage_voided",
             Self::OperationCountInsufficient => "operation_count_insufficient",
             Self::OperationCountBelowUsed => "operation_count_below_used",
             Self::SalesRecordHasActiveUsages => "sales_record_has_active_operation_usages",
-            Self::SalesRecordVoided => "sales_record_voided",
-            Self::OperationCountVoided => "operation_count_voided",
-            Self::OperationUsageVoided => "operation_usage_voided",
-            Self::EmptyBatch
+            Self::OperationCountRequiresSaleRecord => "operation_count_requires_sale_record",
+            Self::SalesRecordLinesRequired
+            | Self::PaymentAllocationsRequired
+            | Self::DuplicatePaymentGuide
             | Self::MissingRequiredField { .. }
             | Self::FieldTooLong { .. }
             | Self::InvalidEnumValue { .. }
             | Self::InvalidMoney { .. }
             | Self::NegativeMoney { .. }
+            | Self::NonPositiveMoney { .. }
             | Self::MoneyTooLarge { .. }
+            | Self::InvalidRatio { .. }
+            | Self::RatioOutOfRange { .. }
+            | Self::PaymentAllocationRatioTotalInvalid
+            | Self::PaymentAllocationAmountTotalInvalid
             | Self::InvalidCountMinimum { .. }
             | Self::OperationTotalCountRequired
             | Self::OperationTotalCountNotAllowed
-            | Self::MissingExpertFields
-            | Self::UnexpectedExpertFields
-            | Self::ContentCategoryOperationCountMismatch
+            | Self::ServiceOperationCountNotAllowed
+            | Self::SaleReceivableRequired
+            | Self::ServiceReceivableMustBeZero
             | Self::InvalidPaginationMinimum { .. }
-            | Self::InvalidPaginationMaximum { .. } => "validation_error",
+            | Self::InvalidPaginationMaximum { .. }
+            | Self::InvalidRecordTypeInternal => "validation_error",
         }
     }
 }
@@ -1121,113 +1565,43 @@ impl From<EnumParseError> for SalesRecordError {
     }
 }
 
-fn required_uuid_change(
-    field: &'static str,
-    value: PatchField<Uuid>,
-) -> Result<Option<Uuid>, SalesRecordError> {
-    match value {
-        PatchField::Unset => Ok(None),
-        PatchField::Null => Err(SalesRecordError::MissingRequiredField { field }),
-        PatchField::Value(value) => Ok(Some(value)),
-    }
+fn active_receivable(lines: &[LineDraft]) -> Decimal {
+    lines
+        .iter()
+        .map(|line| line.receivable_amount)
+        .sum::<Decimal>()
 }
 
-fn nullable_uuid_change(
-    _field: &'static str,
-    value: PatchField<Uuid>,
-) -> Result<Option<Option<Uuid>>, SalesRecordError> {
-    match value {
-        PatchField::Unset => Ok(None),
-        PatchField::Null => Ok(Some(None)),
-        PatchField::Value(value) => Ok(Some(Some(value))),
-    }
-}
-
-fn required_date_change(
+fn optional_enum_text(
     field: &'static str,
-    value: PatchField<NaiveDate>,
-) -> Result<Option<NaiveDate>, SalesRecordError> {
-    match value {
-        PatchField::Unset => Ok(None),
-        PatchField::Null => Err(SalesRecordError::MissingRequiredField { field }),
-        PatchField::Value(value) => Ok(Some(value)),
-    }
-}
-
-fn enum_text_change(
-    field: &'static str,
-    value: PatchField<String>,
+    value: Option<String>,
     parser: fn(&'static str, &str) -> Result<&'static str, EnumParseError>,
 ) -> Result<Option<String>, SalesRecordError> {
-    match value {
-        PatchField::Unset => Ok(None),
-        PatchField::Null => Err(SalesRecordError::MissingRequiredField { field }),
-        PatchField::Value(value) => parser(field, &value)
-            .map(str::to_string)
-            .map(Some)
-            .map_err(Into::into),
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
     }
+    parser(field, value)
+        .map(|value| Some(value.to_string()))
+        .map_err(Into::into)
 }
 
-fn money_change(
+fn required_limited_text(
     field: &'static str,
-    value: PatchField<String>,
-) -> Result<Option<Decimal>, SalesRecordError> {
-    match value {
-        PatchField::Unset => Ok(None),
-        PatchField::Null => Err(SalesRecordError::MissingRequiredField { field }),
-        PatchField::Value(value) => parse_money(field, Some(value)).map(Some),
-    }
-}
-
-async fn operation_usage_changes(
-    request: UpdateOperationUsageRequest,
-) -> Result<OperationUsageChanges, SalesRecordError> {
-    Ok(OperationUsageChanges {
-        operated_at: required_datetime_change("operated_at", request.operated_at)?,
-        operator_user_id: required_uuid_change("operator_user_id", request.operator_user_id)?,
-        doctor_user_id: nullable_uuid_change("doctor_user_id", request.doctor_user_id)?,
-        operation_count: count_change("operation_count", request.operation_count)?,
-        remark: nullable_text_change("remark", request.remark, MAX_REMARK_LENGTH)?,
-        status: None,
-    })
-}
-
-fn required_datetime_change(
-    field: &'static str,
-    value: PatchField<DateTime<Utc>>,
-) -> Result<Option<DateTime<Utc>>, SalesRecordError> {
-    match value {
-        PatchField::Unset => Ok(None),
-        PatchField::Null => Err(SalesRecordError::MissingRequiredField { field }),
-        PatchField::Value(value) => Ok(Some(value)),
-    }
-}
-
-fn count_change(
-    field: &'static str,
-    value: PatchField<i32>,
-) -> Result<Option<i32>, SalesRecordError> {
-    match value {
-        PatchField::Unset => Ok(None),
-        PatchField::Null => Err(SalesRecordError::MissingRequiredField { field }),
-        PatchField::Value(value) => {
-            validate_positive_count(field, value)?;
-            Ok(Some(value))
-        }
-    }
-}
-
-fn nullable_text_change(
-    field: &'static str,
-    value: PatchField<String>,
+    value: String,
     maximum: usize,
-) -> Result<Option<Option<String>>, SalesRecordError> {
-    match value {
-        PatchField::Unset => Ok(None),
-        PatchField::Null => Ok(Some(None)),
-        PatchField::Value(value) => nullable_limited_text(field, Some(value), maximum).map(Some),
+) -> Result<String, SalesRecordError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(SalesRecordError::MissingRequiredField { field });
     }
+    if value.chars().count() > maximum {
+        return Err(SalesRecordError::FieldTooLong { field, maximum });
+    }
+    Ok(value.to_string())
 }
 
 fn nullable_limited_text(
@@ -1269,7 +1643,34 @@ fn parse_money(field: &'static str, value: Option<String>) -> Result<Decimal, Sa
     if decimal > max_money() {
         return Err(SalesRecordError::MoneyTooLarge { field, value });
     }
+    let mut normalized = decimal;
+    normalized.rescale(2);
+    Ok(normalized)
+}
 
+fn parse_positive_money(field: &'static str, value: String) -> Result<Decimal, SalesRecordError> {
+    let parsed = parse_money(field, Some(value.clone()))?;
+    if parsed <= Decimal::ZERO {
+        return Err(SalesRecordError::NonPositiveMoney { field, value });
+    }
+    Ok(parsed)
+}
+
+fn parse_ratio(field: &'static str, value: String) -> Result<Decimal, SalesRecordError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(SalesRecordError::MissingRequiredField { field });
+    }
+    let decimal = Decimal::from_str(trimmed).map_err(|_| SalesRecordError::InvalidRatio {
+        field,
+        value: value.clone(),
+    })?;
+    if decimal.scale() > 2 {
+        return Err(SalesRecordError::InvalidRatio { field, value });
+    }
+    if decimal <= Decimal::ZERO || decimal > Decimal::new(10000, 2) {
+        return Err(SalesRecordError::RatioOutOfRange { field, value });
+    }
     let mut normalized = decimal;
     normalized.rescale(2);
     Ok(normalized)
@@ -1312,6 +1713,75 @@ fn validate_page_size(page_size: u64) -> Result<(), SalesRecordError> {
     Ok(())
 }
 
+fn operation_usage_changes(
+    request: UpdateOperationUsageRequest,
+) -> Result<OperationUsageChanges, SalesRecordError> {
+    Ok(OperationUsageChanges {
+        operated_at: required_datetime_change("operated_at", request.operated_at)?,
+        operator_user_id: required_uuid_change("operator_user_id", request.operator_user_id)?,
+        doctor_user_id: nullable_uuid_change(request.doctor_user_id),
+        operation_count: count_change("operation_count", request.operation_count)?,
+        remark: nullable_text_change("remark", request.remark, MAX_REMARK_LENGTH)?,
+        status: None,
+    })
+}
+
+fn required_uuid_change(
+    field: &'static str,
+    value: PatchField<Uuid>,
+) -> Result<Option<Uuid>, SalesRecordError> {
+    match value {
+        PatchField::Unset => Ok(None),
+        PatchField::Null => Err(SalesRecordError::MissingRequiredField { field }),
+        PatchField::Value(value) => Ok(Some(value)),
+    }
+}
+
+fn nullable_uuid_change(value: PatchField<Uuid>) -> Option<Option<Uuid>> {
+    match value {
+        PatchField::Unset => None,
+        PatchField::Null => Some(None),
+        PatchField::Value(value) => Some(Some(value)),
+    }
+}
+
+fn required_datetime_change(
+    field: &'static str,
+    value: PatchField<DateTime<Utc>>,
+) -> Result<Option<DateTime<Utc>>, SalesRecordError> {
+    match value {
+        PatchField::Unset => Ok(None),
+        PatchField::Null => Err(SalesRecordError::MissingRequiredField { field }),
+        PatchField::Value(value) => Ok(Some(value)),
+    }
+}
+
+fn count_change(
+    field: &'static str,
+    value: PatchField<i32>,
+) -> Result<Option<i32>, SalesRecordError> {
+    match value {
+        PatchField::Unset => Ok(None),
+        PatchField::Null => Err(SalesRecordError::MissingRequiredField { field }),
+        PatchField::Value(value) => {
+            validate_positive_count(field, value)?;
+            Ok(Some(value))
+        }
+    }
+}
+
+fn nullable_text_change(
+    field: &'static str,
+    value: PatchField<String>,
+    maximum: usize,
+) -> Result<Option<Option<String>>, SalesRecordError> {
+    match value {
+        PatchField::Unset => Ok(None),
+        PatchField::Null => Ok(Some(None)),
+        PatchField::Value(value) => nullable_limited_text(field, Some(value), maximum).map(Some),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1319,19 +1789,21 @@ mod tests {
         config::{DatabaseConfig, DatabaseKind},
         db,
         dto::sales_records::{
-            CreateOperationUsageRequest, CreateSalesRecordRequest, ListOperationCountsQuery,
-            ListOperationUsagesQuery, ListSalesRecordsQuery, UpdateOperationCountRequest,
+            CreateCollectionPaymentRequest, CreateOperationUsageRequest, CreateSaleRecordRequest,
+            CreateServiceRecordRequest, SalesPaymentAllocationInput, SalesPaymentInput,
+            SalesRecordLineInput,
         },
         repositories::{
             customers::{CustomerRepository, NewCustomer},
             product_categories::ProductCategoryRepository,
+            products::{NewProduct, ProductRepository},
+            sales_records::SalesRecordRepository,
             stores::{NewStore, StoreRepository},
             systems::{NewSystem, SystemRepository},
             users::UserRepository,
         },
     };
     use chrono::{TimeZone, Utc};
-    use serde_json::json;
     use std::path::PathBuf;
 
     struct Harness {
@@ -1339,6 +1811,7 @@ mod tests {
         systems: SystemRepository,
         stores: StoreRepository,
         customers: CustomerRepository,
+        products: ProductRepository,
         categories: ProductCategoryRepository,
         service: SalesRecordService,
     }
@@ -1360,6 +1833,7 @@ mod tests {
             let systems = SystemRepository::new(db.clone());
             let stores = StoreRepository::new(db.clone());
             let customers = CustomerRepository::new(db.clone());
+            let products = ProductRepository::new(db.clone());
             let categories = ProductCategoryRepository::new(db.clone());
             let sales_records = SalesRecordRepository::new(db);
             let service = SalesRecordService::new(
@@ -1370,12 +1844,12 @@ mod tests {
                 categories.clone(),
                 users.clone(),
             );
-
             Self {
                 users,
                 systems,
                 stores,
                 customers,
+                products,
                 categories,
                 service,
             }
@@ -1414,7 +1888,6 @@ mod tests {
                 )
                 .await
                 .expect("store should be created");
-
             (system.id, store.id)
         }
 
@@ -1448,307 +1921,252 @@ mod tests {
                 .expect("seed category should exist")
                 .id
         }
-    }
 
-    fn sales_request(
-        customer_id: Uuid,
-        system_id: Uuid,
-        store_id: Uuid,
-        category_id: Uuid,
-        handler_user_id: Uuid,
-        operation_total_count: Option<i32>,
-    ) -> CreateSalesRecordRequest {
-        CreateSalesRecordRequest {
-            customer_id,
-            sale_date: Utc
-                .with_ymd_and_hms(2026, 7, 8, 0, 0, 0)
-                .unwrap()
-                .date_naive(),
-            deal_status: "closed".to_string(),
-            customer_type: "new".to_string(),
-            deal_type: "non_salon".to_string(),
-            content_category_id: category_id,
-            handler_user_id,
-            paid_amount: "100.50".to_string(),
-            unpaid_amount: "0".to_string(),
-            system_id,
-            store_id,
-            collaboration_type: "self_sale".to_string(),
-            expert_user_id: None,
-            consultant_user_id: None,
-            doctor_user_id: None,
-            operation_total_count,
+        async fn product(&self, name: &str, requires_operation_count: bool) -> Uuid {
+            let category_id = self.category(requires_operation_count).await;
+            self.products
+                .create_product(
+                    NewProduct {
+                        name: name.to_string(),
+                        category_id,
+                        series: None,
+                        brand_name: None,
+                        specification: None,
+                        unit: Some("unit".to_string()),
+                        unit_price: Decimal::new(10000, 2),
+                        status: "active".to_string(),
+                    },
+                    Utc::now(),
+                )
+                .await
+                .expect("product should be created")
+                .id
         }
     }
 
-    async fn create_operation_sales_record(h: &Harness, total_count: i32) -> Uuid {
-        let handler = h.user("handler").await;
+    fn allocation(guide_user_id: Uuid, ratio: &str) -> SalesPaymentAllocationInput {
+        SalesPaymentAllocationInput {
+            guide_user_id,
+            allocation_ratio: ratio.to_string(),
+        }
+    }
+
+    fn sale_line(product_id: Uuid, amount: &str, count: Option<i32>) -> SalesRecordLineInput {
+        SalesRecordLineInput {
+            product_id,
+            item_name: "item".to_string(),
+            receivable_amount: amount.to_string(),
+            operation_total_count: count,
+            remark: None,
+        }
+    }
+
+    fn payment(guide_user_id: Uuid, amount: &str) -> SalesPaymentInput {
+        SalesPaymentInput {
+            paid_amount: amount.to_string(),
+            paid_at: Utc.with_ymd_and_hms(2026, 7, 8, 10, 0, 0).unwrap(),
+            allocations: vec![allocation(guide_user_id, "100.00")],
+            remark: None,
+        }
+    }
+
+    async fn sale_request(h: &Harness, amount: &str, paid: &str) -> (Uuid, CreateSaleRecordRequest) {
+        let actor = h.user("actor").await;
+        let guide = h.user("guide").await;
         let (system_id, store_id) = h.scope("scope-a").await;
-        let customer_id = h.customer(handler, system_id, store_id).await;
-        let category_id = h.category(true).await;
-        h.service
-            .create_sales_record_batch(CreateSalesRecordBatchRequest {
-                records: vec![sales_request(
-                    customer_id,
-                    system_id,
-                    store_id,
-                    category_id,
-                    handler,
-                    Some(total_count),
-                )],
-            })
-            .await
-            .expect("sales record should be created")
-            .sales_records[0]
-            .id
+        let customer_id = h.customer(actor, system_id, store_id).await;
+        let product_id = h.product("operation item", true).await;
+        (
+            actor,
+            CreateSaleRecordRequest {
+                customer_id,
+                record_date: Utc.with_ymd_and_hms(2026, 7, 8, 0, 0, 0).unwrap().date_naive(),
+                customer_type: "new".to_string(),
+                deal_type: "non_salon".to_string(),
+                handler_user_id: actor,
+                expert_user_id: None,
+                consultant_user_id: None,
+                doctor_user_id: None,
+                remark: Some(" sale ".to_string()),
+                lines: vec![sale_line(product_id, amount, Some(3))],
+                payment: payment(guide, paid),
+            },
+        )
     }
 
     #[tokio::test]
-    async fn creates_batch_and_lists_records_with_counts() {
+    async fn creates_sale_record_with_initial_payment_and_operation_count() {
         let h = Harness::new().await;
-        let handler = h.user("handler").await;
-        let (system_id, store_id) = h.scope("scope-a").await;
-        let customer_id = h.customer(handler, system_id, store_id).await;
-        let product_category = h.category(false).await;
-        let operation_category = h.category(true).await;
+        let (actor, request) = sale_request(&h, "300.00", "100.00").await;
 
-        let response = h
+        let created = h
             .service
-            .create_sales_record_batch(CreateSalesRecordBatchRequest {
-                records: vec![
-                    sales_request(
-                        customer_id,
-                        system_id,
-                        store_id,
-                        product_category,
-                        handler,
-                        None,
-                    ),
-                    sales_request(
-                        customer_id,
-                        system_id,
-                        store_id,
-                        operation_category,
-                        handler,
-                        Some(5),
-                    ),
-                ],
-            })
+            .create_sale_record(actor, request)
             .await
-            .expect("batch should be created");
+            .expect("sale record should be created");
 
-        assert_eq!(response.sales_records.len(), 2);
-        assert!(
-            response
-                .sales_records
-                .iter()
-                .all(|record| record.record_group_id == Some(response.record_group_id))
-        );
-        assert!(response.sales_records[0].operation_count.is_none());
+        assert_eq!(created.record_type, "sale");
+        assert_eq!(created.receivable_amount, "300.00");
+        assert_eq!(created.paid_amount, "100.00");
+        assert_eq!(created.outstanding_amount, "200.00");
+        assert_eq!(created.lines.len(), 1);
         assert_eq!(
-            response.sales_records[1]
-                .operation_count
-                .as_ref()
-                .map(|count| count.total_count),
-            Some(5)
+            created.lines[0].operation_count.as_ref().map(|count| count.total_count),
+            Some(3)
         );
-
-        let list = h
-            .service
-            .list_sales_records(ListSalesRecordsQuery {
-                record_group_id: Some(response.record_group_id),
-                page_number: Some(1),
-                page_size: Some(20),
-                ..ListSalesRecordsQuery::default()
-            })
-            .await
-            .expect("records should list");
-        assert_eq!(list.total_count, 2);
+        assert_eq!(created.payments.len(), 1);
+        assert_eq!(created.payments[0].payment_type, "initial");
+        assert_eq!(created.payments[0].allocations[0].allocated_amount, "100.00");
     }
 
     #[tokio::test]
-    async fn validates_sales_record_inputs() {
+    async fn creates_service_record_without_payment_or_counts() {
         let h = Harness::new().await;
-        let handler = h.user("handler").await;
+        let actor = h.user("actor").await;
         let (system_id, store_id) = h.scope("scope-a").await;
-        let customer_id = h.customer(handler, system_id, store_id).await;
-        let product_category = h.category(false).await;
-        let operation_category = h.category(true).await;
+        let customer_id = h.customer(actor, system_id, store_id).await;
+        let product_id = h.product("service content", true).await;
 
-        assert!(matches!(
-            h.service
-                .create_sales_record_batch(CreateSalesRecordBatchRequest { records: vec![] })
-                .await,
-            Err(SalesRecordError::EmptyBatch)
-        ));
-        assert!(matches!(
-            h.service
-                .create_sales_record_batch(CreateSalesRecordBatchRequest {
-                    records: vec![sales_request(
-                        customer_id,
-                        system_id,
-                        store_id,
-                        operation_category,
-                        handler,
-                        None,
-                    )],
-                })
-                .await,
-            Err(SalesRecordError::OperationTotalCountRequired)
-        ));
-        assert!(matches!(
-            h.service
-                .create_sales_record_batch(CreateSalesRecordBatchRequest {
-                    records: vec![sales_request(
-                        customer_id,
-                        system_id,
-                        store_id,
-                        product_category,
-                        handler,
-                        Some(1),
-                    )],
-                })
-                .await,
-            Err(SalesRecordError::OperationTotalCountNotAllowed)
-        ));
-
-        let mut invalid = sales_request(
-            customer_id,
-            system_id,
-            store_id,
-            product_category,
-            handler,
-            None,
-        );
-        invalid.paid_amount = "-0.01".to_string();
-        assert!(matches!(
-            h.service
-                .create_sales_record_batch(CreateSalesRecordBatchRequest {
-                    records: vec![invalid],
-                })
-                .await,
-            Err(SalesRecordError::NegativeMoney { .. })
-        ));
-
-        let mut invalid = sales_request(
-            customer_id,
-            system_id,
-            store_id,
-            product_category,
-            handler,
-            None,
-        );
-        invalid.deal_status = "pending".to_string();
-        assert!(matches!(
-            h.service
-                .create_sales_record_batch(CreateSalesRecordBatchRequest {
-                    records: vec![invalid],
-                })
-                .await,
-            Err(SalesRecordError::InvalidEnumValue {
-                field: "deal_status",
-                ..
-            })
-        ));
-
-        let mut invalid = sales_request(
-            customer_id,
-            system_id,
-            store_id,
-            product_category,
-            handler,
-            None,
-        );
-        invalid.expert_user_id = Some(handler);
-        assert!(matches!(
-            h.service
-                .create_sales_record_batch(CreateSalesRecordBatchRequest {
-                    records: vec![invalid],
-                })
-                .await,
-            Err(SalesRecordError::UnexpectedExpertFields)
-        ));
-
-        let mut expert_missing_user = sales_request(
-            customer_id,
-            system_id,
-            store_id,
-            product_category,
-            handler,
-            None,
-        );
-        expert_missing_user.collaboration_type = "expert_consultation".to_string();
-        assert!(matches!(
-            h.service
-                .create_sales_record_batch(CreateSalesRecordBatchRequest {
-                    records: vec![expert_missing_user],
-                })
-                .await,
-            Err(SalesRecordError::MissingExpertFields)
-        ));
-
-        let expert = h.user("expert").await;
-        let mut expert_consultation = sales_request(
-            customer_id,
-            system_id,
-            store_id,
-            product_category,
-            handler,
-            None,
-        );
-        expert_consultation.collaboration_type = "expert_consultation".to_string();
-        expert_consultation.expert_user_id = Some(expert);
-        h.service
-            .create_sales_record_batch(CreateSalesRecordBatchRequest {
-                records: vec![expert_consultation],
-            })
+        let created = h
+            .service
+            .create_service_record(
+                actor,
+                CreateServiceRecordRequest {
+                    customer_id,
+                    record_date: Utc.with_ymd_and_hms(2026, 7, 8, 0, 0, 0).unwrap().date_naive(),
+                    customer_type: None,
+                    deal_type: None,
+                    handler_user_id: actor,
+                    expert_user_id: None,
+                    consultant_user_id: None,
+                    doctor_user_id: None,
+                    remark: None,
+                    lines: vec![sale_line(product_id, "0.00", None)],
+                },
+            )
             .await
-            .expect("expert consultation should only require an expert user");
+            .expect("service record should be created");
+
+        assert_eq!(created.record_type, "service");
+        assert_eq!(created.receivable_amount, "0.00");
+        assert_eq!(created.paid_amount, "0.00");
+        assert_eq!(created.outstanding_amount, "0.00");
+        assert!(created.lines[0].operation_count.is_none());
+        assert!(created.payments.is_empty());
+
+        assert!(matches!(
+            h.service
+                .create_service_record(
+                    actor,
+                    CreateServiceRecordRequest {
+                        lines: vec![sale_line(product_id, "1.00", None)],
+                        ..CreateServiceRecordRequest {
+                            customer_id,
+                            record_date: Utc
+                                .with_ymd_and_hms(2026, 7, 8, 0, 0, 0)
+                                .unwrap()
+                                .date_naive(),
+                            customer_type: None,
+                            deal_type: None,
+                            handler_user_id: actor,
+                            expert_user_id: None,
+                            consultant_user_id: None,
+                            doctor_user_id: None,
+                            remark: None,
+                            lines: Vec::new(),
+                        }
+                    },
+                )
+                .await,
+            Err(SalesRecordError::ServiceReceivableMustBeZero)
+        ));
     }
 
     #[tokio::test]
-    async fn operation_usage_lifecycle_maintains_used_count() {
+    async fn collection_payment_updates_outstanding_amount() {
         let h = Harness::new().await;
-        let sales_record_id = create_operation_sales_record(&h, 3).await;
+        let (actor, request) = sale_request(&h, "300.00", "100.00").await;
+        let created = h
+            .service
+            .create_sale_record(actor, request)
+            .await
+            .expect("sale record should be created");
+        let guide = h.user("second-guide").await;
+
+        let over_collection = h
+            .service
+            .create_collection_payment(
+                actor,
+                CreateCollectionPaymentRequest {
+                    sales_record_id: created.id,
+                    paid_amount: "201.00".to_string(),
+                    paid_at: Utc.with_ymd_and_hms(2026, 7, 9, 10, 0, 0).unwrap(),
+                    allocations: vec![allocation(guide, "100.00")],
+                    remark: None,
+                },
+            )
+            .await;
+        assert!(
+            matches!(
+                over_collection,
+                Err(SalesRecordError::PaymentExceedsOutstanding)
+            ),
+            "{over_collection:?}"
+        );
+
+        let payment = h
+            .service
+            .create_collection_payment(
+                actor,
+                CreateCollectionPaymentRequest {
+                    sales_record_id: created.id,
+                    paid_amount: "200.00".to_string(),
+                    paid_at: Utc.with_ymd_and_hms(2026, 7, 9, 10, 0, 0).unwrap(),
+                    allocations: vec![allocation(guide, "100.00")],
+                    remark: Some("collection".to_string()),
+                },
+            )
+            .await
+            .expect("collection should be created");
+        assert_eq!(payment.payment_type, "collection");
+        assert_eq!(payment.paid_amount, "200.00");
+
+        let detail = h
+            .service
+            .sales_record_detail(created.id)
+            .await
+            .expect("record should load");
+        assert_eq!(detail.paid_amount, "300.00");
+        assert_eq!(detail.outstanding_amount, "0.00");
+    }
+
+    #[tokio::test]
+    async fn operation_usage_lifecycle_uses_sales_record_line_id() {
+        let h = Harness::new().await;
+        let (actor, request) = sale_request(&h, "300.00", "100.00").await;
+        let created = h
+            .service
+            .create_sale_record(actor, request)
+            .await
+            .expect("sale record should be created");
+        let line_id = created.lines[0].id;
         let operator = h.user("operator").await;
-        let operated_at = Utc.with_ymd_and_hms(2026, 7, 8, 9, 0, 0).unwrap();
 
         let usage = h
             .service
             .create_operation_usage(CreateOperationUsageRequest {
-                sales_record_id,
-                operated_at,
+                sales_record_line_id: line_id,
+                operated_at: Utc.with_ymd_and_hms(2026, 7, 9, 9, 0, 0).unwrap(),
                 operator_user_id: operator,
                 doctor_user_id: None,
-                operation_count: 1,
-                remark: Some(" first ".to_string()),
+                operation_count: 2,
+                remark: None,
             })
             .await
             .expect("usage should be created");
-        assert_eq!(usage.operation_count, 1);
         assert_eq!(
             h.service
-                .operation_count_detail(sales_record_id)
-                .await
-                .expect("count should load")
-                .used_count,
-            1
-        );
-
-        let updated = h
-            .service
-            .update_operation_usage(
-                usage.id,
-                serde_json::from_value(json!({"operation_count": 2, "remark": null}))
-                    .expect("update request should deserialize"),
-            )
-            .await
-            .expect("usage should update");
-        assert_eq!(updated.operation_count, 2);
-        assert_eq!(updated.remark, None);
-        assert_eq!(
-            h.service
-                .operation_count_detail(sales_record_id)
+                .operation_count_detail(line_id)
                 .await
                 .expect("count should load")
                 .used_count,
@@ -1756,180 +2174,16 @@ mod tests {
         );
 
         h.service
-            .create_operation_usage(CreateOperationUsageRequest {
-                sales_record_id,
-                operated_at,
-                operator_user_id: operator,
-                doctor_user_id: None,
-                operation_count: 1,
-                remark: None,
-            })
-            .await
-            .expect("second usage should fit");
-        assert!(matches!(
-            h.service
-                .create_operation_usage(CreateOperationUsageRequest {
-                    sales_record_id,
-                    operated_at,
-                    operator_user_id: operator,
-                    doctor_user_id: None,
-                    operation_count: 1,
-                    remark: None,
-                })
-                .await,
-            Err(SalesRecordError::OperationCountInsufficient)
-        ));
-        assert!(matches!(
-            h.service
-                .update_operation_count(
-                    sales_record_id,
-                    UpdateOperationCountRequest { total_count: 2 }
-                )
-                .await,
-            Err(SalesRecordError::OperationCountBelowUsed)
-        ));
-
-        h.service
             .void_operation_usage(usage.id)
             .await
             .expect("usage should void");
         assert_eq!(
             h.service
-                .operation_count_detail(sales_record_id)
+                .operation_count_detail(line_id)
                 .await
                 .expect("count should load")
                 .used_count,
-            1
+            0
         );
-        h.service
-            .delete_operation_usage(usage.id)
-            .await
-            .expect("voided usage should delete without another decrement");
-        assert_eq!(
-            h.service
-                .operation_count_detail(sales_record_id)
-                .await
-                .expect("count should load")
-                .used_count,
-            1
-        );
-    }
-
-    #[tokio::test]
-    async fn sales_record_void_and_delete_require_no_active_usages() {
-        let h = Harness::new().await;
-        let sales_record_id = create_operation_sales_record(&h, 2).await;
-        let operator = h.user("operator").await;
-        let usage = h
-            .service
-            .create_operation_usage(CreateOperationUsageRequest {
-                sales_record_id,
-                operated_at: Utc::now(),
-                operator_user_id: operator,
-                doctor_user_id: None,
-                operation_count: 1,
-                remark: None,
-            })
-            .await
-            .expect("usage should be created");
-
-        assert!(matches!(
-            h.service.void_sales_record(sales_record_id).await,
-            Err(SalesRecordError::SalesRecordHasActiveUsages)
-        ));
-        assert!(matches!(
-            h.service.delete_sales_record(sales_record_id).await,
-            Err(SalesRecordError::SalesRecordHasActiveUsages)
-        ));
-
-        h.service
-            .void_operation_usage(usage.id)
-            .await
-            .expect("usage should void");
-        let voided = h
-            .service
-            .void_sales_record(sales_record_id)
-            .await
-            .expect("sales record should void");
-        assert_eq!(voided.status, "voided");
-        assert_eq!(
-            voided
-                .operation_count
-                .as_ref()
-                .map(|count| count.status.as_str()),
-            Some("voided")
-        );
-        h.service
-            .delete_sales_record(sales_record_id)
-            .await
-            .expect("voided sales record should delete");
-        assert!(matches!(
-            h.service.sales_record_detail(sales_record_id).await,
-            Err(SalesRecordError::SalesRecordNotFound)
-        ));
-    }
-
-    #[tokio::test]
-    async fn validates_lists_updates_and_category_count_shape() {
-        let h = Harness::new().await;
-        let sales_record_id = create_operation_sales_record(&h, 3).await;
-        let product_category = h.category(false).await;
-
-        assert!(matches!(
-            h.service
-                .update_sales_record(
-                    sales_record_id,
-                    serde_json::from_value(json!({"content_category_id": product_category}))
-                        .expect("update request should deserialize"),
-                )
-                .await,
-            Err(SalesRecordError::ContentCategoryOperationCountMismatch)
-        ));
-
-        let updated = h
-            .service
-            .update_sales_record(
-                sales_record_id,
-                serde_json::from_value(json!({"paid_amount": "200.00"}))
-                    .expect("update request should deserialize"),
-            )
-            .await
-            .expect("sales record should update");
-        assert_eq!(updated.paid_amount, "200.00");
-
-        let counts = h
-            .service
-            .list_operation_counts(ListOperationCountsQuery {
-                sales_record_id: Some(sales_record_id),
-                ..ListOperationCountsQuery::default()
-            })
-            .await
-            .expect("counts should list");
-        assert_eq!(counts.total_count, 1);
-
-        let usages = h
-            .service
-            .list_operation_usages(ListOperationUsagesQuery {
-                sales_record_id: Some(sales_record_id),
-                page_number: Some(1),
-                page_size: Some(20),
-                ..ListOperationUsagesQuery::default()
-            })
-            .await
-            .expect("usages should list");
-        assert_eq!(usages.total_count, 0);
-
-        assert!(matches!(
-            h.service
-                .list_sales_records(ListSalesRecordsQuery {
-                    page_number: Some(0),
-                    ..ListSalesRecordsQuery::default()
-                })
-                .await,
-            Err(SalesRecordError::InvalidPaginationMinimum {
-                field: "page_number",
-                ..
-            })
-        ));
     }
 }
