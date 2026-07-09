@@ -65,13 +65,15 @@ async fn main() -> Result<()> {
     let authz = AuthzService::with_catalog(AuthzRepository::new(db.clone()), catalog)
         .await
         .context("failed to initialize authorization service")?;
-    let auth = AuthService::new_with_super_admin_bootstrap(
+    let auth = AuthService::new_with_super_admin_bootstrap_and_session_policy(
         config.dingtalk.clone(),
         users.clone(),
         profiles.clone(),
         EventRepository::new(db.clone()),
         sessions.clone(),
         config.session.ttl_seconds,
+        config.session.absolute_ttl_seconds,
+        config.session.renew_before_seconds,
     );
     let users_service = UserService::new(users.clone(), profiles, sessions);
     let product_categories_service =

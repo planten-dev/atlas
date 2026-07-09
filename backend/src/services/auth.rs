@@ -7,7 +7,9 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
-    config::DingTalkConfig,
+    config::{
+        DEFAULT_SESSION_ABSOLUTE_TTL_SECONDS, DEFAULT_SESSION_RENEW_BEFORE_SECONDS, DingTalkConfig,
+    },
     dto::users::{UserProfileResponse, UserResponse},
     entities::{
         events::{ApprovalStatus, EventType},
@@ -19,7 +21,7 @@ use crate::{
     repositories::{
         RepositoryError,
         events::{EventRepository, NewEvent},
-        sessions::{SessionRepository, hash_secret},
+        sessions::{AuthenticatedSessionRecord, SessionRepository, hash_secret},
         user_profiles::{UserProfileRepository, UserProfileUpsert},
         users::{LoginUser, UserRepository},
     },
@@ -36,6 +38,8 @@ pub struct AuthService {
     events: EventRepository,
     sessions: SessionRepository,
     session_ttl_seconds: u64,
+    session_absolute_ttl_seconds: u64,
+    session_renew_before_seconds: u64,
     super_admin_bootstrap_enabled: bool,
 }
 
@@ -48,6 +52,28 @@ impl AuthService {
         sessions: SessionRepository,
         session_ttl_seconds: u64,
     ) -> Self {
+        Self::new_with_session_policy(
+            dingtalk_config,
+            users,
+            profiles,
+            events,
+            sessions,
+            session_ttl_seconds,
+            DEFAULT_SESSION_ABSOLUTE_TTL_SECONDS,
+            DEFAULT_SESSION_RENEW_BEFORE_SECONDS,
+        )
+    }
+
+    pub fn new_with_session_policy(
+        dingtalk_config: DingTalkConfig,
+        users: UserRepository,
+        profiles: UserProfileRepository,
+        events: EventRepository,
+        sessions: SessionRepository,
+        session_ttl_seconds: u64,
+        session_absolute_ttl_seconds: u64,
+        session_renew_before_seconds: u64,
+    ) -> Self {
         Self {
             dingtalk_config,
             users,
@@ -55,6 +81,8 @@ impl AuthService {
             events,
             sessions,
             session_ttl_seconds,
+            session_absolute_ttl_seconds,
+            session_renew_before_seconds,
             super_admin_bootstrap_enabled: false,
         }
     }
@@ -67,6 +95,28 @@ impl AuthService {
         sessions: SessionRepository,
         session_ttl_seconds: u64,
     ) -> Self {
+        Self::new_with_super_admin_bootstrap_and_session_policy(
+            dingtalk_config,
+            users,
+            profiles,
+            events,
+            sessions,
+            session_ttl_seconds,
+            DEFAULT_SESSION_ABSOLUTE_TTL_SECONDS,
+            DEFAULT_SESSION_RENEW_BEFORE_SECONDS,
+        )
+    }
+
+    pub fn new_with_super_admin_bootstrap_and_session_policy(
+        dingtalk_config: DingTalkConfig,
+        users: UserRepository,
+        profiles: UserProfileRepository,
+        events: EventRepository,
+        sessions: SessionRepository,
+        session_ttl_seconds: u64,
+        session_absolute_ttl_seconds: u64,
+        session_renew_before_seconds: u64,
+    ) -> Self {
         Self {
             dingtalk_config,
             users,
@@ -74,6 +124,8 @@ impl AuthService {
             events,
             sessions,
             session_ttl_seconds,
+            session_absolute_ttl_seconds,
+            session_renew_before_seconds,
             super_admin_bootstrap_enabled: true,
         }
     }
@@ -167,9 +219,10 @@ impl AuthService {
         now: DateTime<Utc>,
     ) -> Result<LoginSession, AuthError> {
         let login_user = self.resolve_login_user(identity, now).await?;
+        let should_sync_profile = login_user.created;
         let user = login_user.user;
 
-        if sync_personal_profile {
+        if should_sync_profile && sync_personal_profile {
             if let Err(error) = self
                 .sync_dingtalk_personal_profile(identity, user.id, now)
                 .await
@@ -182,22 +235,26 @@ impl AuthService {
             }
         }
 
-        if let Err(error) = self
-            .sync_dingtalk_org_profile(
-                &client,
-                &identity.dingtalk_user_id,
-                user.id,
-                user.id,
-                ProfileSyncTrigger::Login,
-                now,
-            )
-            .await
-        {
-            warn!(
-                user_id = %user.id,
-                error_code = error.code(),
-                "DingTalk profile sync failed; continuing login"
-            );
+        if should_sync_profile {
+            if let Err(error) = self
+                .sync_dingtalk_org_profile(
+                    &client,
+                    &identity.dingtalk_user_id,
+                    user.id,
+                    user.id,
+                    ProfileSyncTrigger::Login,
+                    now,
+                )
+                .await
+            {
+                warn!(
+                    user_id = %user.id,
+                    error_code = error.code(),
+                    "DingTalk profile sync failed; continuing login"
+                );
+            }
+        } else {
+            debug!(user_id = %user.id, "skipped DingTalk profile sync for existing login user");
         }
 
         let session_token = generate_secret();
@@ -235,13 +292,10 @@ impl AuthService {
                 )
                 .await?)
         } else {
-            Ok(LoginUser {
-                user: self
-                    .users
-                    .find_or_create_for_login(&identity.dingtalk_user_id, now)
-                    .await?,
-                assigned_super_admin: false,
-            })
+            Ok(self
+                .users
+                .find_or_create_login_user(&identity.dingtalk_user_id, now)
+                .await?)
         }
     }
 
@@ -390,15 +444,43 @@ impl AuthService {
         &self,
         session_token: Option<&str>,
     ) -> Result<CurrentSession, AuthError> {
+        self.authenticate_session_at(session_token, Utc::now())
+            .await
+    }
+
+    async fn authenticate_session_at(
+        &self,
+        session_token: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<CurrentSession, AuthError> {
         let session_token = session_token.ok_or(AuthError::MissingSession)?;
         let session = self
             .sessions
-            .find_session_and_user_by_valid_session(&hash_secret(session_token), Utc::now())
+            .find_session_and_user_by_valid_session(&hash_secret(session_token), now)
             .await?
             .ok_or(AuthError::InvalidSession)?;
+        let renewal = session_renewal(
+            &session,
+            now,
+            self.session_ttl_seconds,
+            self.session_absolute_ttl_seconds,
+            self.session_renew_before_seconds,
+        )?;
+
+        if let Some(renewal) = renewal.as_ref() {
+            let renewed = self
+                .sessions
+                .renew_session_by_id(session.session_id, now, renewal.expires_at)
+                .await?;
+            if !renewed {
+                return Err(AuthError::InvalidSession);
+            }
+        }
+
         let current = CurrentSession {
             session_id: session.session_id,
             user: UserResponse::from(session.user),
+            renewal,
         };
 
         debug!(
@@ -646,6 +728,13 @@ pub struct LoginSession {
 pub struct CurrentSession {
     pub session_id: Uuid,
     pub user: UserResponse,
+    pub renewal: Option<SessionRenewal>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionRenewal {
+    pub expires_at: DateTime<Utc>,
+    pub max_age_seconds: u64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -713,4 +802,115 @@ fn generate_secret() -> String {
 fn session_ttl(ttl_seconds: u64) -> Result<Duration, AuthError> {
     let ttl_seconds = i64::try_from(ttl_seconds).map_err(|_| AuthError::InvalidSessionTtl)?;
     Duration::try_seconds(ttl_seconds).ok_or(AuthError::InvalidSessionTtl)
+}
+
+fn session_renewal(
+    session: &AuthenticatedSessionRecord,
+    now: DateTime<Utc>,
+    ttl_seconds: u64,
+    absolute_ttl_seconds: u64,
+    renew_before_seconds: u64,
+) -> Result<Option<SessionRenewal>, AuthError> {
+    let absolute_expires_at = session.created_at + session_ttl(absolute_ttl_seconds)?;
+    if now >= absolute_expires_at {
+        warn!(
+            session_id = %session.session_id,
+            "session exceeded absolute ttl"
+        );
+        return Err(AuthError::InvalidSession);
+    }
+
+    let renew_before = session_ttl(renew_before_seconds)?;
+    if session.expires_at - now > renew_before {
+        return Ok(None);
+    }
+
+    let idle_expires_at = now + session_ttl(ttl_seconds)?;
+    let renewed_expires_at = idle_expires_at.min(absolute_expires_at);
+    if renewed_expires_at <= session.expires_at {
+        return Ok(None);
+    }
+
+    Ok(Some(SessionRenewal {
+        expires_at: renewed_expires_at,
+        max_age_seconds: seconds_between(now, renewed_expires_at)?,
+    }))
+}
+
+fn seconds_between(start: DateTime<Utc>, end: DateTime<Utc>) -> Result<u64, AuthError> {
+    u64::try_from((end - start).num_seconds()).map_err(|_| AuthError::InvalidSessionTtl)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn session_record(
+        created_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> AuthenticatedSessionRecord {
+        AuthenticatedSessionRecord {
+            session_id: Uuid::new_v4(),
+            created_at,
+            expires_at,
+            user: crate::entities::users::Model {
+                id: Uuid::new_v4(),
+                dingtalk_user_id: "ding-user-1".to_string(),
+                status: "active".to_string(),
+                created_at,
+                updated_at: created_at,
+                last_login_at: Some(created_at),
+            },
+        }
+    }
+
+    #[test]
+    fn session_renewal_waits_until_renew_window() {
+        let now = Utc.with_ymd_and_hms(2026, 7, 7, 8, 0, 0).unwrap();
+        let session = session_record(now, now + Duration::hours(3));
+
+        let renewal = session_renewal(&session, now, 86_400, 604_800, 7_200)
+            .expect("renewal decision should succeed");
+
+        assert!(renewal.is_none());
+    }
+
+    #[test]
+    fn session_renewal_extends_near_expiry_session() {
+        let now = Utc.with_ymd_and_hms(2026, 7, 7, 8, 0, 0).unwrap();
+        let session = session_record(now, now + Duration::hours(1));
+
+        let renewal = session_renewal(&session, now, 86_400, 604_800, 7_200)
+            .expect("renewal decision should succeed")
+            .expect("session should be renewed");
+
+        assert_eq!(renewal.expires_at, now + Duration::hours(24));
+        assert_eq!(renewal.max_age_seconds, 86_400);
+    }
+
+    #[test]
+    fn session_renewal_respects_absolute_ttl() {
+        let created_at = Utc.with_ymd_and_hms(2026, 7, 1, 8, 0, 0).unwrap();
+        let now = created_at + Duration::days(6) + Duration::hours(23);
+        let session = session_record(created_at, now + Duration::minutes(30));
+
+        let renewal = session_renewal(&session, now, 86_400, 604_800, 7_200)
+            .expect("renewal decision should succeed")
+            .expect("session should be renewed to absolute cap");
+
+        assert_eq!(renewal.expires_at, created_at + Duration::days(7));
+        assert_eq!(renewal.max_age_seconds, 3_600);
+    }
+
+    #[test]
+    fn session_renewal_rejects_expired_absolute_ttl() {
+        let created_at = Utc.with_ymd_and_hms(2026, 7, 1, 8, 0, 0).unwrap();
+        let now = created_at + Duration::days(7);
+        let session = session_record(created_at, now + Duration::hours(1));
+
+        let result = session_renewal(&session, now, 86_400, 604_800, 7_200);
+
+        assert!(matches!(result, Err(AuthError::InvalidSession)));
+    }
 }

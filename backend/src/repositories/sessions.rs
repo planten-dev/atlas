@@ -17,6 +17,8 @@ pub struct SessionRepository {
 #[derive(Debug, Clone)]
 pub struct AuthenticatedSessionRecord {
     pub session_id: Uuid,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
     pub user: users::Model,
 }
 
@@ -92,6 +94,8 @@ impl SessionRepository {
             return Ok(None);
         };
         let session_id = session.id;
+        let created_at = session.created_at;
+        let expires_at = session.expires_at;
 
         let user = users::Entity::find_by_id(session.user_id)
             .one(&self.db)
@@ -102,16 +106,49 @@ impl SessionRepository {
             return Err(RepositoryError::DisabledUser);
         }
 
-        let mut active: auth_sessions::ActiveModel = session.into();
-        active.last_seen_at = Set(now);
-        active.update(&self.db).await?;
-
         debug!(
             session_id = %session_id,
             found = user.is_some(),
             "resolved user from valid auth session"
         );
-        Ok(user.map(|user| AuthenticatedSessionRecord { session_id, user }))
+        Ok(user.map(|user| AuthenticatedSessionRecord {
+            session_id,
+            created_at,
+            expires_at,
+            user,
+        }))
+    }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn renew_session_by_id(
+        &self,
+        session_id: Uuid,
+        now: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> Result<bool, RepositoryError> {
+        if expires_at <= now {
+            debug!(session_id = %session_id, "session renewal skipped because expiry was not in the future");
+            return Ok(false);
+        }
+
+        let session = auth_sessions::Entity::find_by_id(session_id)
+            .filter(auth_sessions::Column::RevokedAt.is_null())
+            .filter(auth_sessions::Column::ExpiresAt.gt(now))
+            .one(&self.db)
+            .await?;
+
+        let Some(session) = session else {
+            debug!(session_id = %session_id, "session renewal skipped because session was not active");
+            return Ok(false);
+        };
+
+        let mut active: auth_sessions::ActiveModel = session.into();
+        active.last_seen_at = Set(now);
+        active.expires_at = Set(expires_at);
+        active.update(&self.db).await?;
+
+        info!(session_id = %session_id, %expires_at, "renewed auth session locally");
+        Ok(true)
     }
 
     #[tracing::instrument(level = "info", skip(self, session_token_hash))]
@@ -360,6 +397,79 @@ mod tests {
                 .await
                 .expect("revoked session lookup should succeed")
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn renews_active_session_locally() {
+        let (users, sessions) = test_repositories().await;
+        let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
+        let user = users
+            .find_or_create_for_login("ding-user-1", now)
+            .await
+            .expect("user should be created");
+        let token_hash = hash_secret("active");
+        let session = sessions
+            .create_session(user.id, &token_hash, now, now + Duration::hours(1))
+            .await
+            .expect("active session should be created");
+        let renewed_at = now + Duration::minutes(30);
+        let renewed_expires_at = now + Duration::hours(2);
+
+        assert!(
+            sessions
+                .renew_session_by_id(session.id, renewed_at, renewed_expires_at)
+                .await
+                .expect("session renewal should succeed")
+        );
+        let found = sessions
+            .find_valid_session(&token_hash, renewed_at)
+            .await
+            .expect("session lookup should succeed")
+            .expect("session should remain valid");
+
+        assert_eq!(found.expires_at, renewed_expires_at);
+        assert_eq!(found.last_seen_at, renewed_at);
+    }
+
+    #[tokio::test]
+    async fn expired_and_revoked_sessions_cannot_be_renewed() {
+        let (users, sessions) = test_repositories().await;
+        let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
+        let user = users
+            .find_or_create_for_login("ding-user-1", now)
+            .await
+            .expect("user should be created");
+        let expired = sessions
+            .create_session(
+                user.id,
+                &hash_secret("expired"),
+                now,
+                now - Duration::seconds(1),
+            )
+            .await
+            .expect("expired session should be created");
+        let revoked_hash = hash_secret("revoked");
+        let revoked = sessions
+            .create_session(user.id, &revoked_hash, now, now + Duration::hours(1))
+            .await
+            .expect("revoked session should be created");
+        sessions
+            .revoke_session(&revoked_hash, now)
+            .await
+            .expect("session revoke should succeed");
+
+        assert!(
+            !sessions
+                .renew_session_by_id(expired.id, now, now + Duration::hours(2))
+                .await
+                .expect("expired renewal should be handled")
+        );
+        assert!(
+            !sessions
+                .renew_session_by_id(revoked.id, now, now + Duration::hours(2))
+                .await
+                .expect("revoked renewal should be handled")
         );
     }
 

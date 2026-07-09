@@ -3,7 +3,7 @@
   "info": {
     "title": "Atlas API",
     "version": "0.1.0",
-    "description": "Atlas backend API. Authentication uses a server-side session stored in an HttpOnly cookie named atlas_session. JWT is not used, and session ids are not returned in response bodies."
+    "description": "Atlas backend API. Authentication uses a server-side session stored in an HttpOnly cookie named atlas_session. JWT is not used, and session ids are not returned in response bodies. Successful authenticated responses may refresh the atlas_session cookie when the local session is near expiry."
   },
   "paths": {
     "/health": {
@@ -218,7 +218,7 @@
         ],
         "summary": "Get current user",
         "operationId": "getCurrentUser",
-        "description": "Reads the atlas_session HttpOnly cookie and returns the current Atlas user.",
+        "description": "Reads the atlas_session HttpOnly cookie and returns the current Atlas user. When the local session is near expiry, a successful response may refresh the same cookie without calling DingTalk.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -5185,7 +5185,7 @@
         "type": "apiKey",
         "in": "cookie",
         "name": "atlas_session",
-        "description": "Server-side session cookie. It is set as HttpOnly by the backend and is not returned as a JSON field."
+        "description": "Server-side session cookie. It is set as HttpOnly by the backend and is not returned as a JSON field. The backend may refresh this cookie on successful authenticated responses when the local session is near expiry."
       }
     },
     "schemas": {

@@ -6,7 +6,10 @@ use axum::{
 };
 use tracing::debug;
 
-use crate::{handlers::error::auth_error_response, state::AppState};
+use crate::{
+    handlers::{auth::session_cookie, error::auth_error_response},
+    state::AppState,
+};
 
 pub const SESSION_COOKIE_NAME: &str = "atlas_session";
 
@@ -23,13 +26,26 @@ pub async fn require_auth(
         .await
     {
         Ok(current_session) => {
+            let renewal = current_session.renewal.clone();
             debug!(
                 user_id = %current_session.user.id,
                 session_id = %current_session.session_id,
                 "authenticated request"
             );
             request.extensions_mut().insert(current_session);
-            next.run(request).await
+            let mut response = next.run(request).await;
+            if let (Some(session_token), Some(renewal)) = (session_token.as_deref(), renewal)
+                && response.status().is_success()
+                && !response.headers().contains_key(header::SET_COOKIE)
+            {
+                let cookie = session_cookie(
+                    session_token,
+                    renewal.max_age_seconds,
+                    state.session_config.cookie_secure,
+                );
+                response.headers_mut().insert(header::SET_COOKIE, cookie);
+            }
+            response
         }
         Err(error) => auth_error_response(error),
     }

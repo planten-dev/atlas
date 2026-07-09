@@ -21,6 +21,7 @@ pub struct UserRepository {
 #[derive(Debug, Clone)]
 pub struct LoginUser {
     pub user: users::Model,
+    pub created: bool,
     pub assigned_super_admin: bool,
 }
 
@@ -87,6 +88,18 @@ impl UserRepository {
         dingtalk_user_id: &str,
         now: DateTime<Utc>,
     ) -> Result<users::Model, RepositoryError> {
+        Ok(self
+            .find_or_create_login_user(dingtalk_user_id, now)
+            .await?
+            .user)
+    }
+
+    #[tracing::instrument(level = "info", skip(self), fields(dingtalk_user_id = %dingtalk_user_id))]
+    pub async fn find_or_create_login_user(
+        &self,
+        dingtalk_user_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<LoginUser, RepositoryError> {
         validate_required("dingtalk_user_id", dingtalk_user_id)?;
         let dingtalk_user_id = dingtalk_user_id.trim();
 
@@ -98,7 +111,11 @@ impl UserRepository {
 
             let user = self.touch_login(&user, now).await?;
             info!(user_id = %user.id, "reused existing user for login");
-            return Ok(user);
+            return Ok(LoginUser {
+                user,
+                created: false,
+                assigned_super_admin: false,
+            });
         }
 
         let user = users::ActiveModel {
@@ -113,7 +130,11 @@ impl UserRepository {
         .await?;
 
         info!(user_id = %user.id, "created user for first DingTalk login");
-        Ok(user)
+        Ok(LoginUser {
+            user,
+            created: true,
+            assigned_super_admin: false,
+        })
     }
 
     #[tracing::instrument(level = "info", skip(self), fields(dingtalk_user_id = %dingtalk_user_id))]
@@ -154,6 +175,7 @@ impl UserRepository {
             info!(user_id = %user.id, "reused existing user for login");
             return Ok(LoginUser {
                 user,
+                created: false,
                 assigned_super_admin: false,
             });
         }
@@ -190,6 +212,7 @@ impl UserRepository {
         );
         Ok(LoginUser {
             user,
+            created: true,
             assigned_super_admin,
         })
     }
@@ -314,6 +337,26 @@ mod tests {
 
         assert_eq!(first.id, second.id);
         assert_eq!(second.last_login_at, Some(second_login));
+    }
+
+    #[tokio::test]
+    async fn login_user_reports_whether_user_was_created() {
+        let repository = test_repository().await;
+        let first_login = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
+        let second_login = Utc.with_ymd_and_hms(2026, 7, 7, 1, 0, 0).unwrap();
+
+        let first = repository
+            .find_or_create_login_user("ding-user-1", first_login)
+            .await
+            .expect("user should be created");
+        let second = repository
+            .find_or_create_login_user("ding-user-1", second_login)
+            .await
+            .expect("user should be reused");
+
+        assert!(first.created);
+        assert!(!second.created);
+        assert_eq!(first.user.id, second.user.id);
     }
 
     #[tokio::test]
@@ -451,6 +494,7 @@ mod tests {
             .find_or_create_for_login_with_super_admin_bootstrap("ding-user-1", now)
             .await
             .expect("first user should be created");
+        assert!(first.created);
         assert!(first.assigned_super_admin);
         let roles = authz
             .list_user_roles(first.user.id)
@@ -463,6 +507,7 @@ mod tests {
             .find_or_create_for_login_with_super_admin_bootstrap("ding-user-2", now)
             .await
             .expect("second user should be created");
+        assert!(second.created);
         assert!(!second.assigned_super_admin);
         assert!(
             authz
@@ -477,6 +522,7 @@ mod tests {
             .await
             .expect("existing user should be reused");
         assert_eq!(reused.user.id, first.user.id);
+        assert!(!reused.created);
         assert!(!reused.assigned_super_admin);
     }
 
