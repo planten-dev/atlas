@@ -7,7 +7,7 @@ use axum::{
 
 use crate::{
     dto::auth::DingTalkCallbackQuery,
-    handlers::error::auth_error_response,
+    handlers::error::{auth_error_response, authz_error_response},
     middleware::auth::SESSION_COOKIE_NAME,
     services::auth::{AuthError, CurrentSession, DingTalkCallbackInput, LoginResponse},
     state::AppState,
@@ -36,6 +36,12 @@ pub async fn dingtalk_callback(
 
     match state.auth.complete_dingtalk_callback(input).await {
         Ok(login) => {
+            if login.assigned_super_admin
+                && let Err(error) = state.authz.reload().await
+            {
+                return authz_error_response(error);
+            }
+
             let cookie = session_cookie(
                 &login.session_token,
                 state.session_config.ttl_seconds,

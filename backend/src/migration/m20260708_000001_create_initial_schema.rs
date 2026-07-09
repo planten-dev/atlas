@@ -1,6 +1,9 @@
 use sea_orm_migration::prelude::*;
 use uuid::Uuid;
 
+const SUPER_ADMIN_ROLE_ID: &str = "00000000-0000-0000-0000-000000000001";
+const SUPER_ADMIN_POLICY_ID: &str = "00000000-0000-0000-0000-000000000002";
+
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 
@@ -485,6 +488,81 @@ async fn create_authz_tables(manager: &SchemaManager<'_>) -> Result<(), DbErr> {
                 .col(PermissionPolicies::SubjectKind)
                 .col(PermissionPolicies::SubjectId)
                 .if_not_exists()
+                .to_owned(),
+        )
+        .await?;
+
+    seed_super_admin(manager).await?;
+
+    Ok(())
+}
+
+async fn seed_super_admin(manager: &SchemaManager<'_>) -> Result<(), DbErr> {
+    let now = chrono::Utc::now();
+    let super_admin_role_id = Uuid::parse_str(SUPER_ADMIN_ROLE_ID)
+        .map_err(|error| DbErr::Custom(format!("invalid super admin role id: {error}")))?;
+    let super_admin_policy_id = Uuid::parse_str(SUPER_ADMIN_POLICY_ID)
+        .map_err(|error| DbErr::Custom(format!("invalid super admin policy id: {error}")))?;
+
+    manager
+        .exec_stmt(
+            Query::insert()
+                .into_table(Roles::Table)
+                .columns([
+                    Roles::Id,
+                    Roles::Code,
+                    Roles::Name,
+                    Roles::Kind,
+                    Roles::Priority,
+                    Roles::CreatedAt,
+                    Roles::UpdatedAt,
+                ])
+                .values_panic([
+                    super_admin_role_id.into(),
+                    "super_admin".into(),
+                    "超级管理员".into(),
+                    "custom".into(),
+                    1.into(),
+                    now.into(),
+                    now.into(),
+                ])
+                .on_conflict(OnConflict::column(Roles::Code).do_nothing().to_owned())
+                .to_owned(),
+        )
+        .await?;
+
+    manager
+        .exec_stmt(
+            Query::insert()
+                .into_table(PermissionPolicies::Table)
+                .columns([
+                    PermissionPolicies::Id,
+                    PermissionPolicies::SubjectKind,
+                    PermissionPolicies::SubjectId,
+                    PermissionPolicies::Object,
+                    PermissionPolicies::Action,
+                    PermissionPolicies::Effect,
+                    PermissionPolicies::CreatedAt,
+                ])
+                .values_panic([
+                    super_admin_policy_id.into(),
+                    "role".into(),
+                    super_admin_role_id.into(),
+                    "*".into(),
+                    "*".into(),
+                    "allow".into(),
+                    now.into(),
+                ])
+                .on_conflict(
+                    OnConflict::columns([
+                        PermissionPolicies::SubjectKind,
+                        PermissionPolicies::SubjectId,
+                        PermissionPolicies::Object,
+                        PermissionPolicies::Action,
+                    ])
+                    .do_nothing()
+                    .to_owned(),
+                )
                 .to_owned(),
         )
         .await?;

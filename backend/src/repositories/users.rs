@@ -1,21 +1,35 @@
 use chrono::{DateTime, Utc};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, Set,
+    QueryOrder, QuerySelect, Set, TransactionTrait,
 };
+use std::sync::Arc;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::{entities::users, repositories::RepositoryError};
+use crate::{
+    entities::{roles, user_roles, users},
+    repositories::{RepositoryError, authz::SUPER_ADMIN_ROLE_CODE},
+};
 
 #[derive(Clone)]
 pub struct UserRepository {
     pub(crate) db: DatabaseConnection,
+    super_admin_bootstrap_lock: Arc<tokio::sync::Mutex<()>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LoginUser {
+    pub user: users::Model,
+    pub assigned_super_admin: bool,
 }
 
 impl UserRepository {
     pub fn new(db: DatabaseConnection) -> Self {
-        Self { db }
+        Self {
+            db,
+            super_admin_bootstrap_lock: Arc::new(tokio::sync::Mutex::new(())),
+        }
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
@@ -102,16 +116,91 @@ impl UserRepository {
         Ok(user)
     }
 
+    #[tracing::instrument(level = "info", skip(self), fields(dingtalk_user_id = %dingtalk_user_id))]
+    pub async fn find_or_create_for_login_with_super_admin_bootstrap(
+        &self,
+        dingtalk_user_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<LoginUser, RepositoryError> {
+        validate_required("dingtalk_user_id", dingtalk_user_id)?;
+        let dingtalk_user_id = dingtalk_user_id.trim();
+
+        let _guard = self.super_admin_bootstrap_lock.lock().await;
+        let tx = self.db.begin().await?;
+        let super_admin_role = roles::Entity::find()
+            .filter(roles::Column::Code.eq(SUPER_ADMIN_ROLE_CODE))
+            .lock_exclusive()
+            .one(&tx)
+            .await?
+            .ok_or_else(|| {
+                RepositoryError::Database(sea_orm::DbErr::Custom(
+                    "super_admin role seed is missing".to_string(),
+                ))
+            })?;
+
+        if let Some(user) = users::Entity::find()
+            .filter(users::Column::DingtalkUserId.eq(dingtalk_user_id))
+            .one(&tx)
+            .await?
+        {
+            if user.status == "disabled" {
+                tx.rollback().await?;
+                warn!(user_id = %user.id, "blocked login for disabled user");
+                return Err(RepositoryError::DisabledUser);
+            }
+
+            let user = touch_login_in(&tx, &user, now).await?;
+            tx.commit().await?;
+            info!(user_id = %user.id, "reused existing user for login");
+            return Ok(LoginUser {
+                user,
+                assigned_super_admin: false,
+            });
+        }
+
+        let existing_user_count = users::Entity::find().count(&tx).await?;
+        let user = users::ActiveModel {
+            id: Set(Uuid::new_v4()),
+            dingtalk_user_id: Set(dingtalk_user_id.to_string()),
+            status: Set("active".to_string()),
+            created_at: Set(now),
+            updated_at: Set(now),
+            last_login_at: Set(Some(now)),
+        }
+        .insert(&tx)
+        .await?;
+
+        let assigned_super_admin = existing_user_count == 0;
+        if assigned_super_admin {
+            user_roles::ActiveModel {
+                user_id: Set(user.id),
+                role_id: Set(super_admin_role.id),
+                created_at: Set(now),
+            }
+            .insert(&tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+
+        info!(
+            user_id = %user.id,
+            assigned_super_admin,
+            "created user for DingTalk login"
+        );
+        Ok(LoginUser {
+            user,
+            assigned_super_admin,
+        })
+    }
+
     #[tracing::instrument(level = "debug", skip(self, user), fields(user_id = %user.id))]
     pub async fn touch_login(
         &self,
         user: &users::Model,
         now: DateTime<Utc>,
     ) -> Result<users::Model, RepositoryError> {
-        let mut active: users::ActiveModel = user.clone().into();
-        active.updated_at = Set(now);
-        active.last_login_at = Set(Some(now));
-        let user = active.update(&self.db).await?;
+        let user = touch_login_in(&self.db, user, now).await?;
         debug!("updated user login timestamp");
         Ok(user)
     }
@@ -144,6 +233,20 @@ impl UserRepository {
     }
 }
 
+async fn touch_login_in<C>(
+    conn: &C,
+    user: &users::Model,
+    now: DateTime<Utc>,
+) -> Result<users::Model, RepositoryError>
+where
+    C: sea_orm::ConnectionTrait,
+{
+    let mut active: users::ActiveModel = user.clone().into();
+    active.updated_at = Set(now);
+    active.last_login_at = Set(Some(now));
+    Ok(active.update(conn).await?)
+}
+
 fn validate_required(field: &'static str, value: &str) -> Result<(), RepositoryError> {
     if value.trim().is_empty() {
         return Err(RepositoryError::MissingRequiredField { field });
@@ -158,6 +261,7 @@ mod tests {
     use crate::{
         config::{DatabaseConfig, DatabaseKind},
         db,
+        repositories::authz::{AuthzRepository, SUPER_ADMIN_ROLE_CODE},
     };
     use chrono::TimeZone;
     use sea_orm::{ActiveModelTrait, Set};
@@ -335,5 +439,84 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(RepositoryError::DisabledUser)));
+    }
+
+    #[tokio::test]
+    async fn first_bootstrapped_login_gets_super_admin_role() {
+        let repository = test_repository().await;
+        let authz = AuthzRepository::new(repository.db.clone());
+        let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
+
+        let first = repository
+            .find_or_create_for_login_with_super_admin_bootstrap("ding-user-1", now)
+            .await
+            .expect("first user should be created");
+        assert!(first.assigned_super_admin);
+        let roles = authz
+            .list_user_roles(first.user.id)
+            .await
+            .expect("roles should list");
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].code, SUPER_ADMIN_ROLE_CODE);
+
+        let second = repository
+            .find_or_create_for_login_with_super_admin_bootstrap("ding-user-2", now)
+            .await
+            .expect("second user should be created");
+        assert!(!second.assigned_super_admin);
+        assert!(
+            authz
+                .list_user_roles(second.user.id)
+                .await
+                .expect("roles should list")
+                .is_empty()
+        );
+
+        let reused = repository
+            .find_or_create_for_login_with_super_admin_bootstrap("ding-user-1", now)
+            .await
+            .expect("existing user should be reused");
+        assert_eq!(reused.user.id, first.user.id);
+        assert!(!reused.assigned_super_admin);
+    }
+
+    #[tokio::test]
+    async fn concurrent_bootstrapped_logins_assign_super_admin_once() {
+        let repository = test_repository().await;
+        let first_repository = repository.clone();
+        let second_repository = repository.clone();
+        let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
+
+        let (first, second) = tokio::join!(
+            first_repository
+                .find_or_create_for_login_with_super_admin_bootstrap("ding-user-1", now),
+            second_repository
+                .find_or_create_for_login_with_super_admin_bootstrap("ding-user-2", now),
+        );
+        let logins = vec![
+            first.expect("first concurrent login should succeed"),
+            second.expect("second concurrent login should succeed"),
+        ];
+
+        assert_eq!(
+            logins
+                .iter()
+                .filter(|login| login.assigned_super_admin)
+                .count(),
+            1
+        );
+
+        let super_admin_role = roles::Entity::find()
+            .filter(roles::Column::Code.eq(SUPER_ADMIN_ROLE_CODE))
+            .one(&repository.db)
+            .await
+            .expect("role lookup should succeed")
+            .expect("super admin role should exist");
+        let assignments = user_roles::Entity::find()
+            .filter(user_roles::Column::RoleId.eq(super_admin_role.id))
+            .all(&repository.db)
+            .await
+            .expect("role assignments should list");
+        assert_eq!(assignments.len(), 1);
     }
 }
