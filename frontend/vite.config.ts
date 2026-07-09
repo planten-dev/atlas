@@ -2,6 +2,7 @@ import path from 'node:path'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import legacy from '@vitejs/plugin-legacy'
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 
 export default defineConfig({
@@ -9,6 +10,15 @@ export default defineConfig({
     tanstackRouter({ target: 'react', autoCodeSplitting: true }),
     react(),
     tailwindcss(),
+    legacy({
+      // 钉钉 Android 容器是 UC U4 内核(约 Chromium 69),iOS 是 WKWebView;
+      // 这些达不到 Vite 8 的 modern baseline(import.meta.resolve),会走 legacy 构建。
+      // Vite 8 不支持降到 ES5,此 targets 下限已是 ES2017+,不受影响。
+      targets: ['defaults', 'chrome >= 69', 'android >= 69', 'ios >= 13'],
+      // modern 构建也按使用情况注入 core-js polyfill,
+      // 覆盖"够新但缺个别 API"的 WebView(如较老的 WKWebView)。
+      modernPolyfills: true,
+    }),
   ],
   resolve: {
     alias: {
