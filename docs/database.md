@@ -400,53 +400,35 @@ CREATE INDEX idx_customers_name ON customers (name);
 
 ## sales_records 表
 
-`sales_records` 表用于存储具体销售成交事实。一条销售记录只对应一种销售内容类型；由前端拆分为多条销售记录，并可通过同一个 `record_group_id` 表示它们来自同一次录入。
+`sales_records` 表用于记录一次销售或服务事实，是销售日报中的主记录。销售记录本身只描述“发生了什么、属于哪个客户和门店、由谁记录”，不直接保存收款金额、欠款金额或业绩分配。
 
-销售内容类型复用 `product_category.id`，不在销售记录中重复维护“产品、医疗、仪器、卡项”等枚举。是否需要可操作次数由 `product_category.requires_operation_count` 控制，具体次数不直接保存在 `sales_records` 表中。
+业务上的“成交录入”是一个组合动作：服务层应在同一个事务中创建一条 `record_type = 'sale'` 的销售记录、若干 `sales_record_lines` 明细，以及一笔 `sales_payments.payment_type = 'initial'` 的初始收款。后续收欠款不再创建新的销售记录，只新增一笔 `sales_payments.payment_type = 'collection'` 的收款记录并关联原成交销售记录。
 
 ### 表结构示例
 
 ```sql
 CREATE TABLE sales_records (
     id UUID PRIMARY KEY,
-    record_group_id UUID NULL,
+    record_type VARCHAR(32) NOT NULL,
     customer_id UUID NOT NULL REFERENCES customers (id),
-    sale_date DATE NOT NULL,
-    deal_status VARCHAR(32) NOT NULL,
-    customer_type VARCHAR(32) NOT NULL,
-    deal_type VARCHAR(32) NOT NULL,
-    content_category_id UUID NOT NULL REFERENCES product_category (id),
-    handler_user_id UUID NOT NULL REFERENCES users (id),
-    paid_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
-    unpaid_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    record_date DATE NOT NULL,
+    customer_type VARCHAR(32) NULL,
+    deal_type VARCHAR(32) NULL,
     system_id UUID NOT NULL REFERENCES systems (id),
     store_id UUID NOT NULL REFERENCES stores (id),
-    collaboration_type VARCHAR(32) NOT NULL,
+    handler_user_id UUID NOT NULL REFERENCES users (id),
     expert_user_id UUID NULL REFERENCES users (id),
     consultant_user_id UUID NULL REFERENCES users (id),
     doctor_user_id UUID NULL REFERENCES users (id),
+    remark TEXT NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'active',
+    created_by_user_id UUID NOT NULL REFERENCES users (id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT sales_records_deal_status_check CHECK (deal_status IN ('closed', 'not_closed')),
-    CONSTRAINT sales_records_customer_type_check CHECK (customer_type IN ('new', 'returning')),
-    CONSTRAINT sales_records_deal_type_check CHECK (deal_type IN ('non_salon', 'salon')),
-    CONSTRAINT sales_records_collaboration_type_check CHECK (collaboration_type IN ('expert_consultation', 'self_sale')),
-    CONSTRAINT sales_records_status_check CHECK (status IN ('active', 'voided')),
-    CONSTRAINT sales_records_paid_amount_check CHECK (paid_amount >= 0),
-    CONSTRAINT sales_records_unpaid_amount_check CHECK (unpaid_amount >= 0),
-    CONSTRAINT sales_records_expert_consultation_check
-        CHECK (
-            (
-                collaboration_type = 'expert_consultation'
-                AND expert_user_id IS NOT NULL
-            )
-            OR
-            (
-                collaboration_type = 'self_sale'
-                AND expert_user_id IS NULL
-            )
-        )
+    CONSTRAINT sales_records_record_type_check CHECK (record_type IN ('sale', 'service')),
+    CONSTRAINT sales_records_customer_type_check CHECK (customer_type IS NULL OR customer_type IN ('new', 'returning')),
+    CONSTRAINT sales_records_deal_type_check CHECK (deal_type IS NULL OR deal_type IN ('non_salon', 'salon')),
+    CONSTRAINT sales_records_status_check CHECK (status IN ('active', 'voided'))
 );
 ```
 
@@ -454,54 +436,185 @@ CREATE TABLE sales_records (
 
 | 字段 | 类型示例 | 是否必填 | 说明 |
 | --- | --- | --- | --- |
-| `id` | `UUID` | 是 | 销售记录唯一标识，作为 `sales_records` 表主键。 |
-| `record_group_id` | `UUID` | 否 | 同一次录入拆分出的多条销售记录可共用该 ID，便于后续按录入批次查询或追踪。 |
+| `id` | `UUID` | 是 | 销售记录唯一标识，作为事件级主键；销售明细、收款和业绩分配均通过该 ID 关联。 |
+| `record_type` | `VARCHAR(32)` | 是 | 销售记录类型：`sale` 表示成交，`service` 表示服务/铺垫。 |
 | `customer_id` | `UUID` | 是 | 客户 ID，关联 `customers.id`。客户姓名、备注和附件等基础资料通过 `customers` 表查询。 |
-| `sale_date` | `DATE` | 是 | 销售成交日期。 |
-| `deal_status` | `VARCHAR(32)` | 是 | 成交状态，建议值为 `closed`、`not_closed`。 |
-| `customer_type` | `VARCHAR(32)` | 是 | 客户类型，建议值为 `new`、`returning`。 |
-| `deal_type` | `VARCHAR(32)` | 是 | 成交类型，建议值为 `non_salon`、`salon`。 |
-| `content_category_id` | `UUID` | 是 | 销售内容类型，关联 `product_category.id`，对应产品、医疗、仪器、卡项等类别。 |
-| `handler_user_id` | `UUID` | 是 | 本条销售记录处理人，关联 `users.id`。展示姓名、头像等信息时通过 `user_profiles` 查询。 |
-| `paid_amount` | `DECIMAL(12,2)` | 是 | 已支付金额，默认 `0.00`，不允许为负数。 |
-| `unpaid_amount` | `DECIMAL(12,2)` | 是 | 未支付金额，默认 `0.00`，不允许为负数。 |
-| `system_id` | `UUID` | 是 | 成交所属体系，关联 `systems.id`。 |
-| `store_id` | `UUID` | 是 | 成交所属门店，关联 `stores.id`。 |
-| `collaboration_type` | `VARCHAR(32)` | 是 | 协作类型，建议值为 `expert_consultation`、`self_sale`，分别表示专家诊和自销。 |
-| `expert_user_id` | `UUID` | 否 | 专家用户，关联 `users.id`。仅专家诊场景必填，自销场景应为空。 |
-| `consultant_user_id` | `UUID` | 否 | 咨询师用户，关联 `users.id`，专家诊和自销场景均允许为空。 |
+| `record_date` | `DATE` | 是 | 销售记录发生日期，用于销售日报归档和查询。 |
+| `customer_type` | `VARCHAR(32)` | 否 | 客户类型，建议值为 `new`、`returning`；服务/铺垫记录可为空。 |
+| `deal_type` | `VARCHAR(32)` | 否 | 成交类型，建议值为 `non_salon`、`salon`；服务/铺垫记录可为空。 |
+| `system_id` | `UUID` | 是 | 销售记录所属体系，关联 `systems.id`，作为事件发生时的归属快照。 |
+| `store_id` | `UUID` | 是 | 销售记录所属门店，关联 `stores.id`，作为事件发生时的归属快照。 |
+| `handler_user_id` | `UUID` | 是 | 本条销售记录处理人，关联 `users.id`。 |
+| `expert_user_id` | `UUID` | 否 | 专家用户，关联 `users.id`，允许为空。 |
+| `consultant_user_id` | `UUID` | 否 | 咨询师用户，关联 `users.id`，允许为空。 |
 | `doctor_user_id` | `UUID` | 否 | 医生用户，关联 `users.id`，允许为空。 |
+| `remark` | `TEXT` | 否 | 销售记录备注，允许为空。 |
 | `status` | `VARCHAR(32)` | 是 | 销售记录状态，建议值为 `active`、`voided`，默认 `active`。 |
+| `created_by_user_id` | `UUID` | 是 | 录入人，关联 `users.id`。 |
 | `created_at` | `TIMESTAMPTZ` | 是 | 销售记录创建时间。 |
 | `updated_at` | `TIMESTAMPTZ` | 是 | 销售记录最后更新时间。 |
 
 ### 设计原则
 
-- `sales_records` 只记录销售成交事实，不保存操作消耗明细。
-- 客户字段统一关联 `customers.id`，不在销售记录中重复保存客户姓名。
-- 一条销售记录只允许一个 `content_category_id`；一次录入多个销售内容类型时，应拆分为多条销售记录。
-- 销售内容类型复用 `product_category`，不重新维护“产品、医疗、仪器、卡项”枚举。
-- 人员字段统一关联 `users.id`；展示姓名、头像等信息时通过 `user_profiles` 查询。
-- `collaboration_type` 用于区分专家诊和自销。
-- 专家只在专家诊场景下存在；当 `collaboration_type = 'expert_consultation'` 时，`expert_user_id` 必填。
-- 当 `collaboration_type = 'self_sale'` 时，`expert_user_id` 应为空。
-- 咨询师不是必填项，`consultant_user_id` 允许为空。
-- 咨询师字段不受 `collaboration_type` 约束；专家诊和自销都可以没有咨询师。
-- 医疗、仪器、卡项等附带可操作次数的内容，不直接在 `sales_records` 中保存次数。
-- 是否需要可操作次数由 `product_category.requires_operation_count` 控制。
-- `paid_amount` 和 `unpaid_amount` 不允许为负数。
-- `store_id` 必须属于 `system_id`，该业务一致性建议由服务层校验。
+- 销售记录是应收来源和服务事实来源，收款记录是业绩来源。
+- `sales_records.id` 作为一次销售事实下所有明细、收款和业绩分配的统一索引。
+- `sales_records` 不保存 `paid_amount`、`unpaid_amount` 或业绩分配比例；这些信息分别落在 `sales_payments` 和 `sales_payment_allocations`。
+- `record_type = 'sale'` 的记录必须至少包含一条 `sales_record_lines` 明细，并在创建成交时同步创建一笔初始收款。
+- `record_type = 'service'` 的记录用于服务/铺垫，不允许创建收款，不形成欠款，不产生业绩。
+- `system_id` 和 `store_id` 是销售记录发生时的归属快照；`store_id` 必须属于 `system_id`，该业务一致性建议由服务层校验。
 - 销售记录默认不物理删除，通过 `status = 'voided'` 表示作废。
+
+## sales_record_lines 表
+
+`sales_record_lines` 表用于保存销售记录下的产品、项目或服务明细。成交记录的明细形成应收金额；服务/铺垫记录的明细只描述服务内容，金额应为 `0.00`。
+
+销售内容类型复用 `product_category.id`，不在明细中重复维护“产品、医疗、仪器、卡项”等枚举。是否需要可操作次数由 `product_category.requires_operation_count` 控制，具体次数保存在明细行上。
+
+### 表结构示例
+
+```sql
+CREATE TABLE sales_record_lines (
+    id UUID PRIMARY KEY,
+    sales_record_id UUID NOT NULL REFERENCES sales_records (id) ON DELETE CASCADE,
+    content_category_id UUID NOT NULL REFERENCES product_category (id),
+    product_id UUID NULL REFERENCES products (id),
+    item_name VARCHAR(128) NULL,
+    receivable_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    operation_total_count INTEGER NULL,
+    remark TEXT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT sales_record_lines_receivable_amount_check CHECK (receivable_amount >= 0),
+    CONSTRAINT sales_record_lines_operation_total_count_check CHECK (operation_total_count IS NULL OR operation_total_count > 0),
+    CONSTRAINT sales_record_lines_status_check CHECK (status IN ('active', 'voided'))
+);
+```
+
+### 字段说明
+
+| 字段 | 类型示例 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `UUID` | 是 | 销售明细唯一标识，作为 `sales_record_lines` 表主键。 |
+| `sales_record_id` | `UUID` | 是 | 所属销售记录 ID，关联 `sales_records.id`。 |
+| `content_category_id` | `UUID` | 是 | 销售内容类型，关联 `product_category.id`。 |
+| `product_id` | `UUID` | 否 | 产品 ID，关联 `products.id`；非产品型项目或临时项目可为空。 |
+| `item_name` | `VARCHAR(128)` | 否 | 明细名称快照；当 `product_id` 为空或需要保留录入时名称时使用。 |
+| `receivable_amount` | `DECIMAL(12,2)` | 是 | 本明细形成的应收金额；服务/铺垫明细应为 `0.00`。 |
+| `operation_total_count` | `INTEGER` | 否 | 本明细产生的可操作总次数；仅类别要求操作次数且成交时填写。 |
+| `remark` | `TEXT` | 否 | 明细备注，允许为空。 |
+| `status` | `VARCHAR(32)` | 是 | 明细状态，建议值为 `active`、`voided`，默认 `active`。 |
+| `created_at` | `TIMESTAMPTZ` | 是 | 明细创建时间。 |
+| `updated_at` | `TIMESTAMPTZ` | 是 | 明细最后更新时间。 |
+
+### 设计原则
+
+- 一条销售记录可以包含多条明细，同一次成交下的内容通过明细行表达。
+- 成交记录的应收总额由有效 `sales_record_lines.receivable_amount` 汇总计算。
+- 服务/铺垫记录可以记录服务项目，但金额必须为 `0.00`，且不生成可操作次数账户。
+- 产品明细只用于说明卖了什么、统计销售内容、生成可操作次数；不参与业绩拆分。
+- 医疗、仪器、卡项等需要操作次数的成交明细，服务层应要求填写 `operation_total_count`。
+
+## sales_payments 表
+
+`sales_payments` 表用于记录每一次实际收款。初始收款和后续收欠款都写入本表，业绩只来自有效收款记录。
+
+### 表结构示例
+
+```sql
+CREATE TABLE sales_payments (
+    id UUID PRIMARY KEY,
+    sales_record_id UUID NOT NULL REFERENCES sales_records (id),
+    payment_type VARCHAR(32) NOT NULL,
+    paid_amount DECIMAL(12,2) NOT NULL,
+    paid_at TIMESTAMPTZ NOT NULL,
+    performance_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    status VARCHAR(32) NOT NULL DEFAULT 'active',
+    remark TEXT NULL,
+    created_by_user_id UUID NOT NULL REFERENCES users (id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT sales_payments_payment_type_check CHECK (payment_type IN ('initial', 'collection')),
+    CONSTRAINT sales_payments_paid_amount_check CHECK (paid_amount > 0),
+    CONSTRAINT sales_payments_performance_status_check CHECK (performance_status IN ('pending', 'posted')),
+    CONSTRAINT sales_payments_status_check CHECK (status IN ('active', 'voided'))
+);
+```
+
+### 字段说明
+
+| 字段 | 类型示例 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `UUID` | 是 | 收款记录唯一标识，作为 `sales_payments` 表主键。 |
+| `sales_record_id` | `UUID` | 是 | 原成交销售记录 ID，关联 `sales_records.id`。 |
+| `payment_type` | `VARCHAR(32)` | 是 | 收款类型：`initial` 初始收款，`collection` 收欠款。 |
+| `paid_amount` | `DECIMAL(12,2)` | 是 | 本次实际收到的金额，必须大于 `0.00`。 |
+| `paid_at` | `TIMESTAMPTZ` | 是 | 实际收款时间。 |
+| `performance_status` | `VARCHAR(32)` | 是 | 业绩状态：`pending` 未计业绩，`posted` 已计业绩。 |
+| `status` | `VARCHAR(32)` | 是 | 收款记录状态，建议值为 `active`、`voided`，默认 `active`。 |
+| `remark` | `TEXT` | 否 | 收款备注，允许为空。 |
+| `created_by_user_id` | `UUID` | 是 | 收款录入人，关联 `users.id`。 |
+| `created_at` | `TIMESTAMPTZ` | 是 | 收款记录创建时间。 |
+| `updated_at` | `TIMESTAMPTZ` | 是 | 收款记录最后更新时间。 |
+
+### 设计原则
+
+- `payment_type = 'initial'` 的收款由成交录入动作创建；`payment_type = 'collection'` 的收款由收欠款动作创建。
+- 收欠款必须关联一条 `record_type = 'sale'` 且仍有未收余额的销售记录。
+- 本次收款金额不能超过该销售记录剩余欠款。
+- 欠款余额动态计算：有效成交明细应收合计减去有效收款合计。
+- 服务/铺垫记录不允许创建收款。
+- 收款记录默认不物理删除，通过 `status = 'voided'` 表示作废。
+
+## sales_payment_allocations 表
+
+`sales_payment_allocations` 表用于保存每笔收款的美导业绩拆分。每一笔收款都可以单独配置分配比例，不按产品或项目拆分。
+
+### 表结构示例
+
+```sql
+CREATE TABLE sales_payment_allocations (
+    id UUID PRIMARY KEY,
+    payment_id UUID NOT NULL REFERENCES sales_payments (id) ON DELETE CASCADE,
+    guide_user_id UUID NOT NULL REFERENCES users (id),
+    allocation_ratio DECIMAL(5,2) NOT NULL,
+    allocated_amount DECIMAL(12,2) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT sales_payment_allocations_ratio_check CHECK (allocation_ratio > 0 AND allocation_ratio <= 100),
+    CONSTRAINT sales_payment_allocations_amount_check CHECK (allocated_amount >= 0),
+    CONSTRAINT uq_sales_payment_allocations_payment_guide UNIQUE (payment_id, guide_user_id)
+);
+```
+
+### 字段说明
+
+| 字段 | 类型示例 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `UUID` | 是 | 收款分配记录唯一标识，作为 `sales_payment_allocations` 表主键。 |
+| `payment_id` | `UUID` | 是 | 所属收款记录 ID，关联 `sales_payments.id`。 |
+| `guide_user_id` | `UUID` | 是 | 美导用户 ID，关联 `users.id`。 |
+| `allocation_ratio` | `DECIMAL(5,2)` | 是 | 本美导分配比例，按百分比保存，例如 `60.00` 表示 60%。 |
+| `allocated_amount` | `DECIMAL(12,2)` | 是 | 本美导分得的业绩金额。 |
+| `created_at` | `TIMESTAMPTZ` | 是 | 分配记录创建时间。 |
+| `updated_at` | `TIMESTAMPTZ` | 是 | 分配记录最后更新时间。 |
+
+### 设计原则
+
+- 同一笔收款下所有有效分配比例合计必须为 `100.00`，该规则由服务层在同一事务中校验。
+- `allocated_amount` 应由 `sales_payments.paid_amount * allocation_ratio / 100` 计算并落库，便于业绩核对和历史追踪。
+- 每笔收款的分配比例互相独立；后续收欠款可以使用与初始收款不同的美导分配比例。
+- 产品明细不参与业绩拆分，业绩只按每笔收款的总金额拆给美导。
 
 ## sales_record_operation_counts 表
 
-`sales_record_operation_counts` 表用于保存某条销售记录生成的可操作次数账户。只有 `product_category.requires_operation_count = true` 的销售记录才需要创建该表记录，例如医疗、仪器、卡项等需要后续操作消耗的销售内容。
+`sales_record_operation_counts` 表用于保存某条销售明细生成的可操作次数账户。只有 `product_category.requires_operation_count = true` 且 `sales_record_lines.operation_total_count` 已填写的成交明细才需要创建该表记录。
 
 ### 表结构示例
 
 ```sql
 CREATE TABLE sales_record_operation_counts (
-    sales_record_id UUID PRIMARY KEY REFERENCES sales_records (id) ON DELETE CASCADE,
+    sales_record_line_id UUID PRIMARY KEY REFERENCES sales_record_lines (id) ON DELETE CASCADE,
     total_count INTEGER NOT NULL,
     used_count INTEGER NOT NULL DEFAULT 0,
     status VARCHAR(32) NOT NULL DEFAULT 'active',
@@ -517,8 +630,8 @@ CREATE TABLE sales_record_operation_counts (
 
 | 字段 | 类型示例 | 是否必填 | 说明 |
 | --- | --- | --- | --- |
-| `sales_record_id` | `UUID` | 是 | 对应销售记录 ID，作为本表主键并关联 `sales_records.id`。 |
-| `total_count` | `INTEGER` | 是 | 销售记录产生的总可操作次数，必须大于 `0`。 |
+| `sales_record_line_id` | `UUID` | 是 | 对应销售明细 ID，作为本表主键并关联 `sales_record_lines.id`。 |
+| `total_count` | `INTEGER` | 是 | 销售明细产生的总可操作次数，必须大于 `0`。 |
 | `used_count` | `INTEGER` | 是 | 已使用次数，默认 `0`，不得小于 `0`，也不得超过 `total_count`。 |
 | `status` | `VARCHAR(32)` | 是 | 次数账户状态，建议值为 `active`、`voided`，默认 `active`。 |
 | `created_at` | `TIMESTAMPTZ` | 是 | 次数账户创建时间。 |
@@ -526,13 +639,12 @@ CREATE TABLE sales_record_operation_counts (
 
 ### 设计原则
 
-- `sales_record_operation_counts` 与 `sales_records` 是一对零或一关系。
-- 产品类销售记录通常不创建次数账户。
-- 医疗、仪器、卡项等需要操作次数的销售记录，服务层应要求填写 `total_count`。
+- `sales_record_operation_counts` 与 `sales_record_lines` 是一对零或一关系。
+- 产品类和服务/铺垫明细通常不创建次数账户。
 - `used_count` 是由有效操作记录汇总维护的冗余计数字段，用于快速查询剩余次数。
 - 剩余次数不单独落库，由 `total_count - used_count` 计算。
-- 销售记录作废时，相关次数账户也应同步作废。
-- `sales_record_id` 建议使用 `ON DELETE CASCADE`，用于在销售记录被物理删除时清理对应次数账户；正常业务仍应优先通过状态作废处理。
+- 销售明细或销售记录作废时，相关次数账户也应同步作废。
+- `sales_record_line_id` 建议使用 `ON DELETE CASCADE`，用于在销售明细被物理删除时清理对应次数账户；正常业务仍应优先通过状态作废处理。
 
 ## sales_record_operation_usages 表
 
@@ -543,7 +655,7 @@ CREATE TABLE sales_record_operation_counts (
 ```sql
 CREATE TABLE sales_record_operation_usages (
     id UUID PRIMARY KEY,
-    sales_record_id UUID NOT NULL REFERENCES sales_records (id),
+    sales_record_line_id UUID NOT NULL REFERENCES sales_record_lines (id),
     operated_at TIMESTAMPTZ NOT NULL,
     operator_user_id UUID NOT NULL REFERENCES users (id),
     doctor_user_id UUID NULL REFERENCES users (id),
@@ -562,7 +674,7 @@ CREATE TABLE sales_record_operation_usages (
 | 字段 | 类型示例 | 是否必填 | 说明 |
 | --- | --- | --- | --- |
 | `id` | `UUID` | 是 | 操作消耗记录唯一标识，作为 `sales_record_operation_usages` 表主键。 |
-| `sales_record_id` | `UUID` | 是 | 对应销售记录 ID，关联 `sales_records.id`。 |
+| `sales_record_line_id` | `UUID` | 是 | 对应销售明细 ID，关联 `sales_record_lines.id`。 |
 | `operated_at` | `TIMESTAMPTZ` | 是 | 实际操作发生时间。 |
 | `operator_user_id` | `UUID` | 是 | 本次操作记录处理人，关联 `users.id`。 |
 | `doctor_user_id` | `UUID` | 否 | 本次操作医生，关联 `users.id`，允许为空。 |
@@ -575,7 +687,7 @@ CREATE TABLE sales_record_operation_usages (
 ### 设计原则
 
 - 每次实际操作都必须写入 `sales_record_operation_usages`，不能只修改剩余次数。
-- 新增操作记录前必须校验剩余次数是否足够。
+- 新增操作记录前必须校验对应销售明细的剩余次数是否足够。
 - 新增操作记录成功后，同步增加 `sales_record_operation_counts.used_count`。
 - `used_count + operation_count` 不得超过 `total_count`。
 - 作废操作记录时，应同步回退 `sales_record_operation_counts.used_count`。
@@ -584,17 +696,22 @@ CREATE TABLE sales_record_operation_usages (
 
 ## 销售记录相关索引建议
 
-销售记录后续常见查询会围绕成交日期、客户、门店体系、处理人、销售内容类型和操作消耗明细展开。建议在实现迁移时至少考虑以下索引：
+销售记录后续常见查询会围绕记录日期、客户、门店体系、记录类型、销售明细、收款和操作消耗展开。建议在实现迁移时至少考虑以下索引：
 
 ```sql
-CREATE INDEX idx_sales_records_sale_date ON sales_records (sale_date);
+CREATE INDEX idx_sales_records_record_date ON sales_records (record_date);
+CREATE INDEX idx_sales_records_record_type ON sales_records (record_type);
 CREATE INDEX idx_sales_records_customer_id ON sales_records (customer_id);
 CREATE INDEX idx_sales_records_system_id ON sales_records (system_id);
 CREATE INDEX idx_sales_records_store_id ON sales_records (store_id);
 CREATE INDEX idx_sales_records_handler_user_id ON sales_records (handler_user_id);
-CREATE INDEX idx_sales_records_content_category_id ON sales_records (content_category_id);
-CREATE INDEX idx_sales_records_record_group_id ON sales_records (record_group_id);
-CREATE INDEX idx_sales_record_operation_usages_sales_record_id ON sales_record_operation_usages (sales_record_id);
+CREATE INDEX idx_sales_record_lines_sales_record_id ON sales_record_lines (sales_record_id);
+CREATE INDEX idx_sales_record_lines_content_category_id ON sales_record_lines (content_category_id);
+CREATE INDEX idx_sales_payments_sales_record_id ON sales_payments (sales_record_id);
+CREATE INDEX idx_sales_payments_paid_at ON sales_payments (paid_at);
+CREATE INDEX idx_sales_payment_allocations_payment_id ON sales_payment_allocations (payment_id);
+CREATE INDEX idx_sales_payment_allocations_guide_user_id ON sales_payment_allocations (guide_user_id);
+CREATE INDEX idx_sales_record_operation_usages_sales_record_line_id ON sales_record_operation_usages (sales_record_line_id);
 CREATE INDEX idx_sales_record_operation_usages_operated_at ON sales_record_operation_usages (operated_at);
 CREATE INDEX idx_sales_record_operation_usages_operator_user_id ON sales_record_operation_usages (operator_user_id);
 ```
