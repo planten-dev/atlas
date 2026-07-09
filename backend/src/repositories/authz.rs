@@ -15,6 +15,9 @@ pub const SUBJECT_KIND_USER: &str = "user";
 pub const SUBJECT_KIND_ROLE: &str = "role";
 pub const EFFECT_ALLOW: &str = "allow";
 pub const EFFECT_DENY: &str = "deny";
+pub const SUPER_ADMIN_ROLE_CODE: &str = "super_admin";
+pub const SUPER_ADMIN_POLICY_OBJECT: &str = "*";
+pub const SUPER_ADMIN_POLICY_ACTION: &str = "*";
 
 /// A policy row prepared for enforcer loading. `layer` is 0 for user
 /// policies and the owning role's priority for role policies, so sorting
@@ -50,6 +53,8 @@ pub struct AuthzSnapshot {
     pub role_inheritances: Vec<(Uuid, Uuid)>,
     /// Policies sorted by precedence (highest first).
     pub policies: Vec<PolicyRow>,
+    /// Users currently assigned the protected builtin super admin role.
+    pub super_admin_user_ids: std::collections::HashSet<Uuid>,
 }
 
 #[derive(Clone)]
@@ -67,6 +72,10 @@ impl AuthzRepository {
         let roles = roles::Entity::find().all(&self.db).await?;
         let role_priorities: std::collections::HashMap<Uuid, i32> =
             roles.iter().map(|r| (r.id, r.priority)).collect();
+        let super_admin_role_id = roles
+            .iter()
+            .find(|role| role.code == SUPER_ADMIN_ROLE_CODE)
+            .map(|role| role.id);
 
         let user_roles: Vec<(Uuid, Uuid)> = user_roles::Entity::find()
             .all(&self.db)
@@ -74,6 +83,16 @@ impl AuthzRepository {
             .into_iter()
             .map(|link| (link.user_id, link.role_id))
             .collect();
+        let super_admin_user_ids = super_admin_role_id
+            .map(|role_id| {
+                user_roles
+                    .iter()
+                    .filter_map(|(user_id, assigned_role_id)| {
+                        (*assigned_role_id == role_id).then_some(*user_id)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let role_inheritances: Vec<(Uuid, Uuid)> = role_inheritances::Entity::find()
             .all(&self.db)
@@ -140,6 +159,7 @@ impl AuthzRepository {
             user_roles,
             role_inheritances,
             policies,
+            super_admin_user_ids,
         })
     }
 
@@ -249,6 +269,11 @@ impl AuthzRepository {
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn super_admin_role(&self) -> Result<Option<roles::Model>, RepositoryError> {
+        self.find_role_by_code(SUPER_ADMIN_ROLE_CODE).await
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
     pub async fn list_roles(&self) -> Result<Vec<roles::Model>, RepositoryError> {
         Ok(roles::Entity::find()
             .order_by_asc(roles::Column::Priority)
@@ -347,6 +372,20 @@ impl AuthzRepository {
             .order_by_asc(roles::Column::Code)
             .all(&self.db)
             .await?)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self), fields(user_id = %user_id, role_id = %role_id))]
+    pub async fn user_has_role(
+        &self,
+        user_id: Uuid,
+        role_id: Uuid,
+    ) -> Result<bool, RepositoryError> {
+        Ok(user_roles::Entity::find()
+            .filter(user_roles::Column::UserId.eq(user_id))
+            .filter(user_roles::Column::RoleId.eq(role_id))
+            .one(&self.db)
+            .await?
+            .is_some())
     }
 
     /// Replaces the full role set of a user in one transaction.
@@ -485,6 +524,16 @@ impl AuthzRepository {
             .filter(permission_policies::Column::SubjectId.eq(subject_id))
             .filter(permission_policies::Column::Object.eq(object))
             .filter(permission_policies::Column::Action.eq(action))
+            .one(&self.db)
+            .await?)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self), fields(policy_id = %id))]
+    pub async fn find_policy_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<permission_policies::Model>, RepositoryError> {
+        Ok(permission_policies::Entity::find_by_id(id)
             .one(&self.db)
             .await?)
     }

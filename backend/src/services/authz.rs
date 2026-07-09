@@ -64,6 +64,7 @@ pub struct AuthzService {
     repo: AuthzRepository,
     catalog: Arc<PermissionCatalog>,
     enforcer: Arc<tokio::sync::RwLock<Enforcer>>,
+    super_admin_user_ids: Arc<tokio::sync::RwLock<HashSet<Uuid>>>,
     reload_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -79,11 +80,14 @@ impl AuthzService {
         repo: AuthzRepository,
         catalog: PermissionCatalog,
     ) -> Result<Self, AuthzError> {
-        let enforcer = build_enforcer(&repo).await?;
+        let authorization = build_authorization(&repo).await?;
         Ok(Self {
             repo,
             catalog: Arc::new(catalog),
-            enforcer: Arc::new(tokio::sync::RwLock::new(enforcer)),
+            enforcer: Arc::new(tokio::sync::RwLock::new(authorization.enforcer)),
+            super_admin_user_ids: Arc::new(tokio::sync::RwLock::new(
+                authorization.super_admin_user_ids,
+            )),
             reload_lock: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
@@ -100,6 +104,11 @@ impl AuthzService {
         object: &str,
         action: &str,
     ) -> Result<bool, AuthzError> {
+        if self.is_super_admin(user_id).await {
+            debug!("super admin permission granted");
+            return Ok(true);
+        }
+
         let subject = user_subject(user_id);
         let enforcer = self.enforcer.read().await;
         let allowed = enforcer.enforce((subject, object, action))?;
@@ -113,6 +122,15 @@ impl AuthzService {
     /// what the frontend consumes for menu and button gating.
     #[tracing::instrument(level = "debug", skip(self), fields(user_id = %user_id))]
     pub async fn effective_permissions(&self, user_id: Uuid) -> Result<Vec<String>, AuthzError> {
+        if self.is_super_admin(user_id).await {
+            let permissions = self.all_catalog_permissions();
+            debug!(
+                granted = permissions.len(),
+                "computed super admin effective permissions"
+            );
+            return Ok(permissions);
+        }
+
         let subject = user_subject(user_id);
         let enforcer = self.enforcer.read().await;
 
@@ -137,10 +155,28 @@ impl AuthzService {
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn reload(&self) -> Result<(), AuthzError> {
         let _guard = self.reload_lock.lock().await;
-        let enforcer = build_enforcer(&self.repo).await?;
-        *self.enforcer.write().await = enforcer;
+        let authorization = build_authorization(&self.repo).await?;
+        *self.enforcer.write().await = authorization.enforcer;
+        *self.super_admin_user_ids.write().await = authorization.super_admin_user_ids;
         info!("reloaded authorization policies");
         Ok(())
+    }
+
+    async fn is_super_admin(&self, user_id: Uuid) -> bool {
+        self.super_admin_user_ids.read().await.contains(&user_id)
+    }
+
+    fn all_catalog_permissions(&self) -> Vec<String> {
+        self.catalog
+            .entries()
+            .iter()
+            .flat_map(|entry| {
+                entry
+                    .actions()
+                    .iter()
+                    .map(|action| format!("{}:{}", entry.object(), action))
+            })
+            .collect()
     }
 
     // --- roles ---
@@ -190,6 +226,7 @@ impl AuthzService {
         name: Option<String>,
         priority: Option<i32>,
     ) -> Result<roles::Model, AuthzError> {
+        self.ensure_role_is_not_protected(id).await?;
         if let Some(name) = &name
             && name.trim().is_empty()
         {
@@ -213,6 +250,7 @@ impl AuthzService {
     }
 
     pub async fn delete_role(&self, id: Uuid) -> Result<(), AuthzError> {
+        self.ensure_role_is_not_protected(id).await?;
         if !self.repo.delete_role(id).await? {
             return Err(AuthzError::RoleNotFound);
         }
@@ -244,6 +282,7 @@ impl AuthzService {
         child: Uuid,
         parents: Vec<Uuid>,
     ) -> Result<(), AuthzError> {
+        self.ensure_role_is_not_protected(child).await?;
         self.repo
             .find_role(child)
             .await?
@@ -319,6 +358,8 @@ impl AuthzService {
         if found != role_ids.len() as u64 {
             return Err(AuthzError::RoleNotFound);
         }
+        self.ensure_super_admin_assignment_is_preserved(user_id, &role_ids)
+            .await?;
 
         self.repo
             .set_user_roles(user_id, &role_ids, Utc::now())
@@ -338,6 +379,8 @@ impl AuthzService {
         effect: String,
     ) -> Result<permission_policies::Model, AuthzError> {
         self.ensure_subject_exists(&subject_kind, subject_id)
+            .await?;
+        self.ensure_policy_subject_is_not_protected(&subject_kind, subject_id)
             .await?;
         self.validate_policy_content(&object, &action, &effect)?;
         if self
@@ -365,6 +408,13 @@ impl AuthzService {
     }
 
     pub async fn delete_policy(&self, id: Uuid) -> Result<(), AuthzError> {
+        let policy = self
+            .repo
+            .find_policy_by_id(id)
+            .await?
+            .ok_or(AuthzError::PolicyNotFound)?;
+        self.ensure_policy_subject_is_not_protected(&policy.subject_kind, policy.subject_id)
+            .await?;
         if !self.repo.delete_policy(id).await? {
             return Err(AuthzError::PolicyNotFound);
         }
@@ -382,6 +432,8 @@ impl AuthzService {
         policies: Vec<NewPolicy>,
     ) -> Result<Vec<permission_policies::Model>, AuthzError> {
         self.ensure_subject_exists(&subject_kind, subject_id)
+            .await?;
+        self.ensure_policy_subject_is_not_protected(&subject_kind, subject_id)
             .await?;
         let mut seen: HashSet<(&str, &str)> = HashSet::new();
         for policy in &policies {
@@ -418,6 +470,51 @@ impl AuthzService {
                 }
             }
             _ => return Err(AuthzError::InvalidSubjectKind),
+        }
+        Ok(())
+    }
+
+    async fn ensure_role_is_not_protected(&self, role_id: Uuid) -> Result<(), AuthzError> {
+        if self
+            .repo
+            .super_admin_role()
+            .await?
+            .is_some_and(|role| role.id == role_id)
+        {
+            return Err(AuthzError::ProtectedSystemRole);
+        }
+        Ok(())
+    }
+
+    async fn ensure_policy_subject_is_not_protected(
+        &self,
+        subject_kind: &str,
+        subject_id: Uuid,
+    ) -> Result<(), AuthzError> {
+        if subject_kind == SUBJECT_KIND_ROLE
+            && self
+                .repo
+                .super_admin_role()
+                .await?
+                .is_some_and(|role| role.id == subject_id)
+        {
+            return Err(AuthzError::ProtectedSystemRole);
+        }
+        Ok(())
+    }
+
+    async fn ensure_super_admin_assignment_is_preserved(
+        &self,
+        user_id: Uuid,
+        requested_role_ids: &[Uuid],
+    ) -> Result<(), AuthzError> {
+        let Some(role) = self.repo.super_admin_role().await? else {
+            return Ok(());
+        };
+        if self.repo.user_has_role(user_id, role.id).await?
+            && !requested_role_ids.contains(&role.id)
+        {
+            return Err(AuthzError::ProtectedSystemRole);
         }
         Ok(())
     }
@@ -469,7 +566,12 @@ impl AuthzService {
     }
 }
 
-async fn build_enforcer(repo: &AuthzRepository) -> Result<Enforcer, AuthzError> {
+struct AuthorizationBuild {
+    enforcer: Enforcer,
+    super_admin_user_ids: HashSet<Uuid>,
+}
+
+async fn build_authorization(repo: &AuthzRepository) -> Result<AuthorizationBuild, AuthzError> {
     let model = DefaultModel::from_str(CASBIN_MODEL).await?;
     let mut enforcer = Enforcer::new(model, MemoryAdapter::default()).await?;
     enforcer.add_function("scopeMatch", OperatorFunction::Arg2(scope_match_dynamic));
@@ -515,7 +617,10 @@ async fn build_enforcer(repo: &AuthzRepository) -> Result<Enforcer, AuthzError> 
         return Err(AuthzError::PolicyLoadConflict);
     }
 
-    Ok(enforcer)
+    Ok(AuthorizationBuild {
+        enforcer,
+        super_admin_user_ids: snapshot.super_admin_user_ids,
+    })
 }
 
 fn user_subject(user_id: Uuid) -> String {
@@ -653,6 +758,8 @@ pub enum AuthzError {
     PolicyLoadConflict,
     #[error("request is missing an authenticated session")]
     MissingSession,
+    #[error("protected system role cannot be modified")]
+    ProtectedSystemRole,
 }
 
 impl AuthzError {
@@ -678,6 +785,7 @@ impl AuthzError {
             Self::InheritanceTooDeep => "inheritance_too_deep",
             Self::PolicyLoadConflict => "policy_load_conflict",
             Self::MissingSession => "missing_session",
+            Self::ProtectedSystemRole => "protected_system_role",
         }
     }
 }
@@ -1101,6 +1209,104 @@ mod tests {
                 .await
                 .expect("effective permissions should compute");
             assert!(permissions.is_empty());
+        }
+
+        #[tokio::test]
+        async fn super_admin_bypasses_denies_and_gets_full_catalog() {
+            let h = Harness::new().await;
+            let user = h.user("ding-1").await;
+            let super_admin = h
+                .authz
+                .repo
+                .super_admin_role()
+                .await
+                .expect("role lookup should succeed")
+                .expect("super admin role should be seeded");
+            h.assign(user, vec![super_admin.id]).await;
+            h.policy("user", user, "products", "read", "deny").await;
+
+            assert!(h.check(user, "products", "read").await);
+            assert!(h.check(user, "finance:ledger", "read").await);
+
+            let permissions = h
+                .authz
+                .effective_permissions(user)
+                .await
+                .expect("effective permissions should compute");
+            let catalog_permission_count: usize = h
+                .authz
+                .catalog()
+                .entries()
+                .iter()
+                .map(|entry| entry.actions().len())
+                .sum();
+            assert_eq!(permissions.len(), catalog_permission_count);
+            assert!(permissions.contains(&"products:read".to_string()));
+            assert!(permissions.contains(&"system:permissions:write".to_string()));
+            assert!(permissions.contains(&"finance:ledger:read".to_string()));
+        }
+
+        #[tokio::test]
+        async fn protected_super_admin_role_cannot_be_mutated() {
+            let h = Harness::new().await;
+            let user = h.user("ding-1").await;
+            let super_admin = h
+                .authz
+                .repo
+                .super_admin_role()
+                .await
+                .expect("role lookup should succeed")
+                .expect("super admin role should be seeded");
+            h.assign(user, vec![super_admin.id]).await;
+            let policy = h
+                .authz
+                .list_policies(Some("role".to_string()), Some(super_admin.id))
+                .await
+                .expect("policies should list")
+                .into_iter()
+                .find(|policy| policy.object == "*" && policy.action == "*")
+                .expect("super admin wildcard policy should exist");
+
+            assert!(matches!(
+                h.authz
+                    .update_role(super_admin.id, Some("x".into()), None)
+                    .await,
+                Err(AuthzError::ProtectedSystemRole)
+            ));
+            assert!(matches!(
+                h.authz.delete_role(super_admin.id).await,
+                Err(AuthzError::ProtectedSystemRole)
+            ));
+            assert!(matches!(
+                h.authz.set_role_parents(super_admin.id, vec![]).await,
+                Err(AuthzError::ProtectedSystemRole)
+            ));
+            assert!(matches!(
+                h.authz
+                    .create_policy(
+                        "role".into(),
+                        super_admin.id,
+                        "products".into(),
+                        "read".into(),
+                        "deny".into(),
+                    )
+                    .await,
+                Err(AuthzError::ProtectedSystemRole)
+            ));
+            assert!(matches!(
+                h.authz
+                    .replace_subject_policies("role".into(), super_admin.id, vec![])
+                    .await,
+                Err(AuthzError::ProtectedSystemRole)
+            ));
+            assert!(matches!(
+                h.authz.delete_policy(policy.id).await,
+                Err(AuthzError::ProtectedSystemRole)
+            ));
+            assert!(matches!(
+                h.authz.set_user_roles(user, vec![]).await,
+                Err(AuthzError::ProtectedSystemRole)
+            ));
         }
 
         #[tokio::test]

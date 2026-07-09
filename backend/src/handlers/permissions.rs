@@ -260,12 +260,18 @@ mod tests {
         config::{AuthConfig, DatabaseConfig, DatabaseKind, DingTalkConfig, SessionConfig},
         db,
         repositories::{
-            authz::AuthzRepository, customers::CustomerRepository,
-            departments::DepartmentRepository, events::EventRepository,
-            product_categories::ProductCategoryRepository, products::ProductRepository,
-            sales_records::SalesRecordRepository, sessions::SessionRepository,
-            stores::StoreRepository, systems::SystemRepository,
-            user_profiles::UserProfileRepository, users::UserRepository,
+            authz::{AuthzRepository, SUPER_ADMIN_ROLE_CODE},
+            customers::CustomerRepository,
+            departments::DepartmentRepository,
+            events::EventRepository,
+            product_categories::ProductCategoryRepository,
+            products::ProductRepository,
+            sales_records::SalesRecordRepository,
+            sessions::SessionRepository,
+            stores::StoreRepository,
+            systems::SystemRepository,
+            user_profiles::UserProfileRepository,
+            users::UserRepository,
         },
         services::{
             auth::AuthService, authz::AuthzService, customers::CustomerService,
@@ -295,6 +301,17 @@ mod tests {
     }
 
     async fn test_context(mock_base_url: &str) -> TestContext {
+        test_context_with_options(mock_base_url, false).await
+    }
+
+    async fn test_context_with_super_admin_bootstrap(mock_base_url: &str) -> TestContext {
+        test_context_with_options(mock_base_url, true).await
+    }
+
+    async fn test_context_with_options(
+        mock_base_url: &str,
+        super_admin_bootstrap: bool,
+    ) -> TestContext {
         let database = DatabaseConfig {
             kind: DatabaseKind::SqliteMemory,
             url: "postgres://unused".to_string(),
@@ -328,14 +345,25 @@ mod tests {
             corp_id: "".to_string(),
             external_id_fields: vec!["userId".to_string()],
         };
-        let auth = AuthService::new(
-            dingtalk_config.clone(),
-            users.clone(),
-            profiles.clone(),
-            EventRepository::new(db.clone()),
-            sessions.clone(),
-            86_400,
-        );
+        let auth = if super_admin_bootstrap {
+            AuthService::new_with_super_admin_bootstrap(
+                dingtalk_config.clone(),
+                users.clone(),
+                profiles.clone(),
+                EventRepository::new(db.clone()),
+                sessions.clone(),
+                86_400,
+            )
+        } else {
+            AuthService::new(
+                dingtalk_config.clone(),
+                users.clone(),
+                profiles.clone(),
+                EventRepository::new(db.clone()),
+                sessions.clone(),
+                86_400,
+            )
+        };
         let departments_service = DepartmentService::new(dingtalk_config, departments.clone());
         let authz = AuthzService::new(AuthzRepository::new(db.clone()))
             .await
@@ -591,6 +619,201 @@ mod tests {
         assert!(permissions.contains(&"products:read"));
         assert!(permissions.contains(&"products:categories:write"));
         assert!(!permissions.contains(&"products:write"));
+    }
+
+    #[tokio::test]
+    async fn first_bootstrapped_login_can_use_protected_apis() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context_with_super_admin_bootstrap(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+
+        let roles = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/permissions/roles",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("request should be handled");
+        assert_eq!(roles.status(), StatusCode::OK);
+
+        let users = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/users/list",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("request should be handled");
+        assert_eq!(users.status(), StatusCode::OK);
+
+        let permissions = context
+            .app
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/auth/me/permissions",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("request should be handled");
+        assert_eq!(permissions.status(), StatusCode::OK);
+        let body = json_body(permissions).await;
+        let permissions = body
+            .pointer("/permissions")
+            .and_then(Value::as_array)
+            .expect("permissions should be an array");
+        let catalog_permission_count: usize = context
+            .authz
+            .catalog()
+            .entries()
+            .iter()
+            .map(|entry| entry.actions().len())
+            .sum();
+        assert_eq!(permissions.len(), catalog_permission_count);
+        assert!(permissions.iter().any(|value| value == "users:read"));
+        assert!(
+            permissions
+                .iter()
+                .any(|value| value == "system:permissions:write")
+        );
+    }
+
+    #[tokio::test]
+    async fn second_bootstrapped_login_without_permissions_is_forbidden() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context_with_super_admin_bootstrap(&mock_base_url).await;
+        let bootstrap = context
+            .users
+            .find_or_create_for_login_with_super_admin_bootstrap(
+                "bootstrap-user",
+                chrono::Utc::now(),
+            )
+            .await
+            .expect("bootstrap user should be created");
+        assert!(bootstrap.assigned_super_admin);
+        context
+            .authz
+            .reload()
+            .await
+            .expect("authz should reload bootstrap assignment");
+
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let response = context
+            .app
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/permissions/roles",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = json_body(response).await;
+        assert_eq!(
+            body.pointer("/error").and_then(Value::as_str),
+            Some("permission_denied")
+        );
+    }
+
+    #[tokio::test]
+    async fn protected_super_admin_resources_reject_permission_api_mutations() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context_with_super_admin_bootstrap(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let user_id = logged_in_user_id(&context).await;
+        let super_admin = context
+            .authz
+            .list_roles()
+            .await
+            .expect("roles should list")
+            .into_iter()
+            .find(|role| role.code == SUPER_ADMIN_ROLE_CODE)
+            .expect("super admin role should be present");
+        let policy = context
+            .authz
+            .list_policies(Some("role".to_string()), Some(super_admin.id))
+            .await
+            .expect("policies should list")
+            .into_iter()
+            .find(|policy| policy.object == "*" && policy.action == "*")
+            .expect("super admin wildcard policy should exist");
+
+        for response in [
+            context
+                .app
+                .clone()
+                .oneshot(request(
+                    Method::PATCH,
+                    &format!("/api/v1/permissions/roles/{}", super_admin.id),
+                    Some(&cookie),
+                    Some(json!({"name": "x"})),
+                ))
+                .await
+                .expect("request should be handled"),
+            context
+                .app
+                .clone()
+                .oneshot(request(
+                    Method::DELETE,
+                    &format!("/api/v1/permissions/roles/{}", super_admin.id),
+                    Some(&cookie),
+                    None,
+                ))
+                .await
+                .expect("request should be handled"),
+            context
+                .app
+                .clone()
+                .oneshot(request(
+                    Method::PUT,
+                    &format!(
+                        "/api/v1/permissions/subjects/role/{}/policies",
+                        super_admin.id
+                    ),
+                    Some(&cookie),
+                    Some(json!({"policies": []})),
+                ))
+                .await
+                .expect("request should be handled"),
+            context
+                .app
+                .clone()
+                .oneshot(request(
+                    Method::DELETE,
+                    &format!("/api/v1/permissions/policies/{}", policy.id),
+                    Some(&cookie),
+                    None,
+                ))
+                .await
+                .expect("request should be handled"),
+            context
+                .app
+                .clone()
+                .oneshot(request(
+                    Method::PUT,
+                    &format!("/api/v1/permissions/users/{user_id}/roles"),
+                    Some(&cookie),
+                    Some(json!({"role_ids": []})),
+                ))
+                .await
+                .expect("request should be handled"),
+        ] {
+            assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+            let body = json_body(response).await;
+            assert_eq!(
+                body.pointer("/error").and_then(Value::as_str),
+                Some("protected_system_role")
+            );
+        }
     }
 
     #[tokio::test]

@@ -36,6 +36,7 @@ pub struct AuthService {
     events: EventRepository,
     sessions: SessionRepository,
     session_ttl_seconds: u64,
+    super_admin_bootstrap_enabled: bool,
 }
 
 impl AuthService {
@@ -54,6 +55,26 @@ impl AuthService {
             events,
             sessions,
             session_ttl_seconds,
+            super_admin_bootstrap_enabled: false,
+        }
+    }
+
+    pub fn new_with_super_admin_bootstrap(
+        dingtalk_config: DingTalkConfig,
+        users: UserRepository,
+        profiles: UserProfileRepository,
+        events: EventRepository,
+        sessions: SessionRepository,
+        session_ttl_seconds: u64,
+    ) -> Self {
+        Self {
+            dingtalk_config,
+            users,
+            profiles,
+            events,
+            sessions,
+            session_ttl_seconds,
+            super_admin_bootstrap_enabled: true,
         }
     }
 
@@ -122,10 +143,23 @@ impl AuthService {
         let client = DingTalkClient::new(self.dingtalk_config.clone())?;
         let token = client.exchange_code_for_token(&code).await?;
         let identity = client.identity_from_token(token).await?;
-        let user = self
-            .users
-            .find_or_create_for_login(&identity.dingtalk_user_id, now)
-            .await?;
+        let login_user = if self.super_admin_bootstrap_enabled {
+            self.users
+                .find_or_create_for_login_with_super_admin_bootstrap(
+                    &identity.dingtalk_user_id,
+                    now,
+                )
+                .await?
+        } else {
+            crate::repositories::users::LoginUser {
+                user: self
+                    .users
+                    .find_or_create_for_login(&identity.dingtalk_user_id, now)
+                    .await?,
+                assigned_super_admin: false,
+            }
+        };
+        let user = login_user.user;
 
         if let Err(error) = self
             .sync_dingtalk_personal_profile(&identity, user.id, now)
@@ -173,6 +207,7 @@ impl AuthService {
             user: UserResponse::from(user),
             session_token,
             expires_at,
+            assigned_super_admin: login_user.assigned_super_admin,
         })
     }
 
@@ -570,6 +605,7 @@ pub struct LoginSession {
     pub user: UserResponse,
     pub session_token: String,
     pub expires_at: DateTime<Utc>,
+    pub assigned_super_admin: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

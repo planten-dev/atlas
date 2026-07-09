@@ -48,14 +48,6 @@ async fn main() -> Result<()> {
     let stores = StoreRepository::new(db.clone());
     let customers = CustomerRepository::new(db.clone());
     let sales_records = SalesRecordRepository::new(db.clone());
-    let auth = AuthService::new(
-        config.dingtalk.clone(),
-        users.clone(),
-        profiles.clone(),
-        EventRepository::new(db.clone()),
-        sessions.clone(),
-        config.session.ttl_seconds,
-    );
     // Business tables opt into the review flow here as they adopt it, e.g.:
     // registry.register::<ProductDoc>();
     // Each type declares its reviewer permission via
@@ -73,6 +65,14 @@ async fn main() -> Result<()> {
     let authz = AuthzService::with_catalog(AuthzRepository::new(db.clone()), catalog)
         .await
         .context("failed to initialize authorization service")?;
+    let auth = AuthService::new_with_super_admin_bootstrap(
+        config.dingtalk.clone(),
+        users.clone(),
+        profiles.clone(),
+        EventRepository::new(db.clone()),
+        sessions.clone(),
+        config.session.ttl_seconds,
+    );
     let users_service = UserService::new(users.clone(), profiles, sessions);
     let product_categories_service =
         ProductCategoryService::new(product_categories.clone(), products.clone());
