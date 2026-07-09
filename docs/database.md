@@ -336,40 +336,41 @@ CREATE INDEX idx_customers_name ON customers (name);
 
 ## products 表
 
-`products` 表用于存储产品基础信息。产品类别通过 `category_id` 关联 `product_category.id`，系列、品牌、规格和单位当前阶段不单独建表，直接在产品记录中保存文本值。
+`products` 表用于存储销售内容基础信息，是实体产品、医疗项目、仪器项目、卡项、服务/铺垫项目等所有可录入内容的统一主数据。产品类别通过 `category_id` 关联 `product_category.id`，系列、品牌、规格和单位当前阶段不单独建表，直接在产品记录中保存文本值。
 
 ### 字段说明
 
 | 字段 | 类型示例 | 是否必填 | 说明 |
 | --- | --- | --- | --- |
-| `id` | `UUID` | 是 | 产品唯一标识，作为 `products` 表主键。 |
-| `name` | `VARCHAR(128)` | 是 | 产品名称。 |
-| `category_id` | `UUID` | 是 | 产品类别 ID，关联 `product_category.id`。 |
+| `id` | `UUID` | 是 | 销售内容唯一标识，作为 `products` 表主键。 |
+| `name` | `VARCHAR(128)` | 是 | 销售内容名称。 |
+| `category_id` | `UUID` | 是 | 销售内容类别 ID，关联 `product_category.id`。 |
 | `series` | `VARCHAR(128)` | 否 | 产品系列，当前阶段使用字符串存储。 |
 | `brand_name` | `VARCHAR(128)` | 否 | 品牌名称。 |
 | `specification` | `VARCHAR(255)` | 否 | 产品规格。 |
 | `unit` | `VARCHAR(32)` | 否 | 计量单位，用于报价、订单和业务计算。 |
-| `unit_price` | `DECIMAL(12,2)` | 是 | 产品单价，使用 decimal 类型保存金额。 |
-| `status` | `VARCHAR(32)` | 是 | 产品状态，允许 `active`、`disabled`。 |
-| `created_at` | `TIMESTAMPTZ` | 是 | 产品记录创建时间。 |
-| `updated_at` | `TIMESTAMPTZ` | 是 | 产品记录最后更新时间。 |
+| `unit_price` | `DECIMAL(12,2)` | 是 | 销售内容单价，使用 decimal 类型保存金额。 |
+| `status` | `VARCHAR(32)` | 是 | 销售内容状态，允许 `active`、`disabled`。 |
+| `created_at` | `TIMESTAMPTZ` | 是 | 销售内容记录创建时间。 |
+| `updated_at` | `TIMESTAMPTZ` | 是 | 销售内容记录最后更新时间。 |
 
 ## products 表设计原则
 
-- `id` 是系统内部唯一产品标识，也是 `products` 表的主键。
-- `name` 是产品名称，不允许为空，不要求全局唯一。
-- `category_id` 表示产品所属类别，不允许为空，只能关联已存在的产品类别。
-- 新建或修改产品时，`category_id` 必须引用启用中的产品类别；已存在产品可以继续显示已停用类别。
+- `products` 是所有销售日报可选内容的统一主表，不区分实体商品、医疗项目、仪器项目、卡项和服务/铺垫项目是否为实物。
+- `id` 是系统内部唯一销售内容标识，也是 `products` 表的主键。
+- `name` 是销售内容名称，不允许为空，不要求全局唯一。
+- `category_id` 表示销售内容所属类别，不允许为空，只能关联已存在的产品类别。
+- 新建或修改销售内容时，`category_id` 必须引用启用中的产品类别；已存在销售内容可以继续显示已停用类别。
 - `series`、`brand_name`、`specification` 和 `unit` 允许为空，当前阶段不单独建字典表。
 - `unit_price` 不允许为空，使用 decimal 类型，不使用 float 或 double，避免金额精度问题。
-- `status` 用于表示产品启用、禁用状态，不允许为空。
-- `created_at` 创建后不应被应用逻辑主动修改；`updated_at` 在产品记录或状态变更时同步更新。
+- `status` 用于表示销售内容启用、禁用状态，不允许为空。
+- `created_at` 创建后不应被应用逻辑主动修改；`updated_at` 在销售内容记录或状态变更时同步更新。
 
 ## products 输入建议设计
 
-- 产品类别通过 `product_category` 表维护。
+- 销售内容类别通过 `product_category` 表维护。
 - 系列、品牌和单位当前阶段不单独建表。
-- 新建或编辑产品时，可以通过 `products` 表已有数据去重后提供输入建议。
+- 新建或编辑销售内容时，可以通过 `products` 表已有数据去重后提供输入建议。
 - 输入建议仅作为前端辅助，不限制用户填写新值。
 - 后续接口可以从 `products` 表查询 `series`、`brand_name` 和 `unit` 的 distinct 值，用于提供输入建议。
 
@@ -394,7 +395,7 @@ CREATE INDEX idx_customers_name ON customers (name);
 - `category_name` 不允许为空，去除首尾空格后全局唯一。
 - `requires_operation_count` 用于标识该类别售出后是否需要记录可操作次数；具体次数由现场人员在销售业务中动态决定。
 - `status` 用于表示产品类别启用、禁用状态，不允许为空。
-- 默认初始化四个类别：`产品` 不需要操作次数，`医疗`、`仪器`、`卡项` 需要操作次数。
+- 默认初始化业务所需类别：`产品`、`服务/铺垫` 不需要操作次数，`医疗`、`仪器`、`卡项` 需要操作次数。
 - 产品类别被产品引用时允许停用，但不允许物理删除。
 - `created_at` 创建后不应被应用逻辑主动修改；`updated_at` 在产品类别记录或状态变更时同步更新。
 
@@ -436,7 +437,7 @@ CREATE TABLE sales_records (
 
 | 字段 | 类型示例 | 是否必填 | 说明 |
 | --- | --- | --- | --- |
-| `id` | `UUID` | 是 | 销售记录唯一标识，作为事件级主键；销售明细、收款和业绩分配均通过该 ID 关联。 |
+| `id` | `UUID` | 是 | 销售记录唯一标识，作为事件级主键；销售明细和收款通过该 ID 关联，业绩分配通过收款记录关联。 |
 | `record_type` | `VARCHAR(32)` | 是 | 销售记录类型：`sale` 表示成交，`service` 表示服务/铺垫。 |
 | `customer_id` | `UUID` | 是 | 客户 ID，关联 `customers.id`。客户姓名、备注和附件等基础资料通过 `customers` 表查询。 |
 | `record_date` | `DATE` | 是 | 销售记录发生日期，用于销售日报归档和查询。 |
@@ -457,18 +458,18 @@ CREATE TABLE sales_records (
 ### 设计原则
 
 - 销售记录是应收来源和服务事实来源，收款记录是业绩来源。
-- `sales_records.id` 作为一次销售事实下所有明细、收款和业绩分配的统一索引。
+- `sales_records.id` 作为一次销售事实下所有明细和收款的统一索引，业绩分配通过收款记录继续关联到该销售事实。
 - `sales_records` 不保存 `paid_amount`、`unpaid_amount` 或业绩分配比例；这些信息分别落在 `sales_payments` 和 `sales_payment_allocations`。
-- `record_type = 'sale'` 的记录必须至少包含一条 `sales_record_lines` 明细，并在创建成交时同步创建一笔初始收款。
-- `record_type = 'service'` 的记录用于服务/铺垫，不允许创建收款，不形成欠款，不产生业绩。
+- `record_type = 'sale'` 的记录必须至少包含一条 `sales_record_lines` 明细，明细应收形成销售记录应收总额，并在创建成交时同步创建一笔初始收款。
+- `record_type = 'service'` 的记录用于服务/铺垫，是零应收、零收款、零业绩、零欠款的销售事实；如果后续真的收到钱，应新建 `record_type = 'sale'` 的销售记录并创建初始收款。
 - `system_id` 和 `store_id` 是销售记录发生时的归属快照；`store_id` 必须属于 `system_id`，该业务一致性建议由服务层校验。
 - 销售记录默认不物理删除，通过 `status = 'voided'` 表示作废。
 
 ## sales_record_lines 表
 
-`sales_record_lines` 表用于保存销售记录下的产品、项目或服务明细。成交记录的明细形成应收金额；服务/铺垫记录的明细只描述服务内容，金额应为 `0.00`。
+`sales_record_lines` 表用于保存销售记录下的销售内容明细。每条明细必须关联一个 `products.id`；成交记录的明细形成应收金额，服务/铺垫记录的明细只描述服务内容，金额应为 `0.00`。
 
-销售内容类型复用 `product_category.id`，不在明细中重复维护“产品、医疗、仪器、卡项”等枚举。是否需要可操作次数由 `product_category.requires_operation_count` 控制，具体次数保存在明细行上。
+销售内容类别不在明细中重复保存，通过 `sales_record_lines.product_id -> products.category_id -> product_category.id` 推导。是否需要可操作次数由 `product_category.requires_operation_count` 控制，具体次数保存在明细行上。
 
 ### 表结构示例
 
@@ -476,9 +477,8 @@ CREATE TABLE sales_records (
 CREATE TABLE sales_record_lines (
     id UUID PRIMARY KEY,
     sales_record_id UUID NOT NULL REFERENCES sales_records (id) ON DELETE CASCADE,
-    content_category_id UUID NOT NULL REFERENCES product_category (id),
-    product_id UUID NULL REFERENCES products (id),
-    item_name VARCHAR(128) NULL,
+    product_id UUID NOT NULL REFERENCES products (id),
+    item_name VARCHAR(128) NOT NULL,
     receivable_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
     operation_total_count INTEGER NULL,
     remark TEXT NULL,
@@ -497,9 +497,8 @@ CREATE TABLE sales_record_lines (
 | --- | --- | --- | --- |
 | `id` | `UUID` | 是 | 销售明细唯一标识，作为 `sales_record_lines` 表主键。 |
 | `sales_record_id` | `UUID` | 是 | 所属销售记录 ID，关联 `sales_records.id`。 |
-| `content_category_id` | `UUID` | 是 | 销售内容类型，关联 `product_category.id`。 |
-| `product_id` | `UUID` | 否 | 产品 ID，关联 `products.id`；非产品型项目或临时项目可为空。 |
-| `item_name` | `VARCHAR(128)` | 否 | 明细名称快照；当 `product_id` 为空或需要保留录入时名称时使用。 |
+| `product_id` | `UUID` | 是 | 销售内容 ID，关联 `products.id`。 |
+| `item_name` | `VARCHAR(128)` | 是 | 明细名称快照，保存录入时的销售内容名称，避免产品后续改名影响历史展示。 |
 | `receivable_amount` | `DECIMAL(12,2)` | 是 | 本明细形成的应收金额；服务/铺垫明细应为 `0.00`。 |
 | `operation_total_count` | `INTEGER` | 否 | 本明细产生的可操作总次数；仅类别要求操作次数且成交时填写。 |
 | `remark` | `TEXT` | 否 | 明细备注，允许为空。 |
@@ -510,9 +509,11 @@ CREATE TABLE sales_record_lines (
 ### 设计原则
 
 - 一条销售记录可以包含多条明细，同一次成交下的内容通过明细行表达。
+- 每条明细必须引用一个 `products.id`，不允许脱离销售内容主数据手工录入游离项目。
 - 成交记录的应收总额由有效 `sales_record_lines.receivable_amount` 汇总计算。
 - 服务/铺垫记录可以记录服务项目，但金额必须为 `0.00`，且不生成可操作次数账户。
-- 产品明细只用于说明卖了什么、统计销售内容、生成可操作次数；不参与业绩拆分。
+- 销售内容明细只用于说明卖了什么、统计销售内容、生成可操作次数；不参与业绩拆分。
+- 明细类别从 `products.category_id` 推导，不在 `sales_record_lines` 中保存类别快照。
 - 医疗、仪器、卡项等需要操作次数的成交明细，服务层应要求填写 `operation_total_count`。
 
 ## sales_payments 表
@@ -563,7 +564,7 @@ CREATE TABLE sales_payments (
 - 收欠款必须关联一条 `record_type = 'sale'` 且仍有未收余额的销售记录。
 - 本次收款金额不能超过该销售记录剩余欠款。
 - 欠款余额动态计算：有效成交明细应收合计减去有效收款合计。
-- 服务/铺垫记录不允许创建收款。
+- 服务/铺垫记录不允许创建收款；如果服务/铺垫后续实际收到钱，应新建成交销售记录和初始收款，而不是对原服务/铺垫记录收欠款。
 - 收款记录默认不物理删除，通过 `status = 'voided'` 表示作废。
 
 ## sales_payment_allocations 表
@@ -608,7 +609,7 @@ CREATE TABLE sales_payment_allocations (
 
 ## sales_record_operation_counts 表
 
-`sales_record_operation_counts` 表用于保存某条销售明细生成的可操作次数账户。只有 `product_category.requires_operation_count = true` 且 `sales_record_lines.operation_total_count` 已填写的成交明细才需要创建该表记录。
+`sales_record_operation_counts` 表用于保存某条销售明细生成的可操作次数账户。只有通过 `sales_record_lines.product_id -> products.category_id -> product_category.requires_operation_count` 推导为需要操作次数，且 `sales_record_lines.operation_total_count` 已填写的成交明细才需要创建该表记录。
 
 ### 表结构示例
 
@@ -640,7 +641,7 @@ CREATE TABLE sales_record_operation_counts (
 ### 设计原则
 
 - `sales_record_operation_counts` 与 `sales_record_lines` 是一对零或一关系。
-- 产品类和服务/铺垫明细通常不创建次数账户。
+- 服务/铺垫明细不创建次数账户。
 - `used_count` 是由有效操作记录汇总维护的冗余计数字段，用于快速查询剩余次数。
 - 剩余次数不单独落库，由 `total_count - used_count` 计算。
 - 销售明细或销售记录作废时，相关次数账户也应同步作废。
@@ -706,7 +707,7 @@ CREATE INDEX idx_sales_records_system_id ON sales_records (system_id);
 CREATE INDEX idx_sales_records_store_id ON sales_records (store_id);
 CREATE INDEX idx_sales_records_handler_user_id ON sales_records (handler_user_id);
 CREATE INDEX idx_sales_record_lines_sales_record_id ON sales_record_lines (sales_record_id);
-CREATE INDEX idx_sales_record_lines_content_category_id ON sales_record_lines (content_category_id);
+CREATE INDEX idx_sales_record_lines_product_id ON sales_record_lines (product_id);
 CREATE INDEX idx_sales_payments_sales_record_id ON sales_payments (sales_record_id);
 CREATE INDEX idx_sales_payments_paid_at ON sales_payments (paid_at);
 CREATE INDEX idx_sales_payment_allocations_payment_id ON sales_payment_allocations (payment_id);
