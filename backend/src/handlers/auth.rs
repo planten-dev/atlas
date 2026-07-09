@@ -179,11 +179,15 @@ fn normalize_optional(value: &str) -> Option<&str> {
     if value.is_empty() { None } else { Some(value) }
 }
 
-fn session_cookie(token: &str, ttl_seconds: u64, secure: bool) -> header::HeaderValue {
+pub(crate) fn session_cookie(
+    token: &str,
+    max_age_seconds: u64,
+    secure: bool,
+) -> header::HeaderValue {
     let mut cookie = format!(
         "{SESSION_COOKIE_NAME}={}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}",
         percent_encode(token),
-        ttl_seconds
+        max_age_seconds
     );
     if secure {
         cookie.push_str("; Secure");
@@ -233,7 +237,7 @@ mod tests {
             product_categories::ProductCategoryRepository,
             products::ProductRepository,
             sales_records::SalesRecordRepository,
-            sessions::SessionRepository,
+            sessions::{SessionRepository, hash_secret},
             stores::StoreRepository,
             systems::SystemRepository,
             user_profiles::UserProfileRepository,
@@ -253,6 +257,7 @@ mod tests {
         http::{Method, Request},
         routing::{get, post},
     };
+    use chrono::{Duration, Utc};
     use sea_orm::{ActiveModelTrait, Set};
     use serde_json::{Value, json};
     use std::path::PathBuf;
@@ -263,6 +268,7 @@ mod tests {
         app: Router,
         users: UserRepository,
         profiles: UserProfileRepository,
+        sessions: SessionRepository,
         events: EventRepository,
     }
 
@@ -376,6 +382,117 @@ mod tests {
             .await
             .expect("me request should be handled");
         assert_eq!(me_after_logout.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn me_renews_session_cookie_near_expiry() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let now = Utc::now();
+        let token = "near-expiry-token";
+        let user = context
+            .users
+            .find_or_create_for_login("renew-user", now)
+            .await
+            .expect("user should be created");
+        context
+            .sessions
+            .create_session(user.id, &hash_secret(token), now, now + Duration::hours(1))
+            .await
+            .expect("near-expiry session should be created");
+
+        let response = context
+            .app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/auth/me")
+                    .header(header::COOKIE, format!("atlas_session={token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("me request should be handled");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let cookie = response
+            .headers()
+            .get(header::SET_COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .expect("near-expiry session should be renewed");
+        assert!(cookie.starts_with("atlas_session=near-expiry-token"));
+        assert!(cookie.contains("Max-Age=86400"));
+    }
+
+    #[tokio::test]
+    async fn me_does_not_renew_session_cookie_before_window() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let now = Utc::now();
+        let token = "fresh-token";
+        let user = context
+            .users
+            .find_or_create_for_login("fresh-user", now)
+            .await
+            .expect("user should be created");
+        context
+            .sessions
+            .create_session(user.id, &hash_secret(token), now, now + Duration::hours(3))
+            .await
+            .expect("fresh session should be created");
+
+        let response = context
+            .app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/auth/me")
+                    .header(header::COOKIE, format!("atlas_session={token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("me request should be handled");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get(header::SET_COOKIE).is_none());
+    }
+
+    #[tokio::test]
+    async fn absolute_expired_session_returns_unauthorized_without_cookie() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let now = Utc::now();
+        let created_at = now - Duration::days(7) - Duration::minutes(1);
+        let token = "absolute-expired-token";
+        let user = context
+            .users
+            .find_or_create_for_login("absolute-expired-user", created_at)
+            .await
+            .expect("user should be created");
+        context
+            .sessions
+            .create_session(
+                user.id,
+                &hash_secret(token),
+                created_at,
+                now + Duration::hours(1),
+            )
+            .await
+            .expect("server-expired-by-absolute-ttl session should be created");
+
+        let response = context
+            .app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/auth/me")
+                    .header(header::COOKIE, format!("atlas_session={token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("me request should be handled");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(response.headers().get(header::SET_COOKIE).is_none());
     }
 
     #[tokio::test]
@@ -591,6 +708,21 @@ mod tests {
                 .expect("login timestamp should be set")
                 > stale_login
         );
+
+        let (_events, total_count) = context
+            .events
+            .list_events(
+                EventFilter {
+                    resource_type: Some("user_profiles".to_string()),
+                    resource_id: Some(first_user.id),
+                    ..EventFilter::default()
+                },
+                1,
+                20,
+            )
+            .await
+            .expect("profile sync events should be listed");
+        assert_eq!(total_count, 1);
     }
 
     #[tokio::test]
@@ -867,7 +999,7 @@ mod tests {
         let authz = AuthzService::new(AuthzRepository::new(db.clone()))
             .await
             .expect("test authz service should initialize");
-        let users_service = UserService::new(users.clone(), profiles.clone(), sessions);
+        let users_service = UserService::new(users.clone(), profiles.clone(), sessions.clone());
         let product_categories_service =
             ProductCategoryService::new(product_categories.clone(), products.clone());
         let products_service = ProductService::new(products, product_categories.clone());
@@ -906,6 +1038,8 @@ mod tests {
             },
             session_config: SessionConfig {
                 ttl_seconds: 86_400,
+                absolute_ttl_seconds: 604_800,
+                renew_before_seconds: 7_200,
                 cookie_secure: false,
             },
         });
@@ -913,6 +1047,7 @@ mod tests {
             app: app::router(state),
             users,
             profiles,
+            sessions,
             events,
         }
     }

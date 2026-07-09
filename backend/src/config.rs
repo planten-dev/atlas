@@ -70,8 +70,30 @@ pub struct AuthConfig {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct SessionConfig {
+    #[serde(default = "default_session_ttl_seconds")]
     pub ttl_seconds: u64,
+    #[serde(default = "default_session_absolute_ttl_seconds")]
+    pub absolute_ttl_seconds: u64,
+    #[serde(default = "default_session_renew_before_seconds")]
+    pub renew_before_seconds: u64,
+    #[serde(default)]
     pub cookie_secure: bool,
+}
+
+pub const DEFAULT_SESSION_TTL_SECONDS: u64 = 86_400;
+pub const DEFAULT_SESSION_ABSOLUTE_TTL_SECONDS: u64 = 604_800;
+pub const DEFAULT_SESSION_RENEW_BEFORE_SECONDS: u64 = 7_200;
+
+fn default_session_ttl_seconds() -> u64 {
+    DEFAULT_SESSION_TTL_SECONDS
+}
+
+fn default_session_absolute_ttl_seconds() -> u64 {
+    DEFAULT_SESSION_ABSOLUTE_TTL_SECONDS
+}
+
+fn default_session_renew_before_seconds() -> u64 {
+    DEFAULT_SESSION_RENEW_BEFORE_SECONDS
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -225,6 +247,8 @@ frontend_callback_url = ""
 
 [session]
 ttl_seconds = 86400
+absolute_ttl_seconds = 604800
+renew_before_seconds = 7200
 cookie_secure = false
 "#
     }
@@ -248,7 +272,15 @@ cookie_secure = false
             config.database.url,
             "postgres://postgres:postgres@localhost:5432/atlas"
         );
-        assert_eq!(config.session.ttl_seconds, 86_400);
+        assert_eq!(config.session.ttl_seconds, DEFAULT_SESSION_TTL_SECONDS);
+        assert_eq!(
+            config.session.absolute_ttl_seconds,
+            DEFAULT_SESSION_ABSOLUTE_TTL_SECONDS
+        );
+        assert_eq!(
+            config.session.renew_before_seconds,
+            DEFAULT_SESSION_RENEW_BEFORE_SECONDS
+        );
         assert!(!config.session.cookie_secure);
         assert_eq!(
             config.dingtalk.user_getuserinfo_url,
@@ -268,6 +300,8 @@ cookie_secure = false
 
         set_test_env("ATLAS__DATABASE__KIND", "sqlite-memory");
         set_test_env("ATLAS__SESSION__TTL_SECONDS", "60");
+        set_test_env("ATLAS__SESSION__ABSOLUTE_TTL_SECONDS", "600");
+        set_test_env("ATLAS__SESSION__RENEW_BEFORE_SECONDS", "30");
         set_test_env("ATLAS__EVENTS__RETENTION_DAYS", "30");
         set_test_env("ATLAS__LOGGING__DIRECTORY", "custom-logs");
         set_test_env("ATLAS__LOGGING__FILE_PREFIX", "custom.log");
@@ -276,6 +310,8 @@ cookie_secure = false
 
         assert_eq!(config.database.kind, DatabaseKind::SqliteMemory);
         assert_eq!(config.session.ttl_seconds, 60);
+        assert_eq!(config.session.absolute_ttl_seconds, 600);
+        assert_eq!(config.session.renew_before_seconds, 30);
         assert_eq!(config.events.retention_days, 30);
         assert_eq!(config.logging.directory, PathBuf::from("custom-logs"));
         assert_eq!(config.logging.file_prefix, "custom.log");
@@ -357,6 +393,8 @@ file_prefix = "custom.log"
             "ATLAS__DATABASE__URL",
             "ATLAS__DATABASE__SQLITE_FILE",
             "ATLAS__SESSION__TTL_SECONDS",
+            "ATLAS__SESSION__ABSOLUTE_TTL_SECONDS",
+            "ATLAS__SESSION__RENEW_BEFORE_SECONDS",
             "ATLAS__SESSION__COOKIE_SECURE",
             "ATLAS__DINGTALK__USER_GETUSERINFO_URL",
             "ATLAS__DINGTALK__USER_DETAIL_URL",

@@ -1392,6 +1392,8 @@ mod tests {
             },
             session_config: SessionConfig {
                 ttl_seconds: 86_400,
+                absolute_ttl_seconds: 604_800,
+                renew_before_seconds: 7_200,
                 cookie_secure: false,
             },
         });
