@@ -387,6 +387,7 @@ impl AuthService {
                     event_type: EventType::Update,
                     approval_status: ApprovalStatus::None,
                     required_approval_count: None,
+                    required_approver_ids: Vec::new(),
                     custom_type: None,
                     target_event_id: None,
                     old_value: Some(profile_audit_value(

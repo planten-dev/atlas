@@ -1590,7 +1590,7 @@
         ],
         "summary": "Approve an event",
         "operationId": "approveEvent",
-        "description": "Records an approve event targeting the given pending create/update/delete event. The reviewer must hold the object:action permission declared statically for the target's resource type (each reviewable type declares its approval permission in code at registration, e.g. products:approve); there is no static route permission. Once distinct approvers reach required_approval_count, the stored change is applied to the business table in the same transaction and the target becomes approved (2). Each user may review a given event only once. Returns the refreshed target event.",
+        "description": "Records an approve event targeting the given pending create/update/delete event. The reviewer must hold the object:action permission declared statically for the target's resource type (each reviewable type declares its approval permission in code at registration, e.g. products:approve); there is no static route permission. Users listed in the target's required_approver_ids are exempt from that permission check for this event. Once distinct approvers reach required_approval_count AND every user in required_approver_ids (when non-empty) has approved, the stored change is applied to the business table in the same transaction and the target becomes approved (2). Each user may review a given event only once. Returns the refreshed target event.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -1674,7 +1674,7 @@
         ],
         "summary": "Reject an event",
         "operationId": "rejectEvent",
-        "description": "Records a reject event targeting the given pending create/update/delete event. A single reject vetoes the target: it immediately becomes rejected (3) and is never applied. Permission rules match the approve endpoint. Returns the refreshed target event.",
+        "description": "Records a reject event targeting the given pending create/update/delete event. A single reject vetoes the target: it immediately becomes rejected (3) and is never applied. Permission rules match the approve endpoint, including the required_approver_ids exemption. Returns the refreshed target event.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -7171,6 +7171,7 @@
           "resource_type",
           "event_type",
           "approval_status",
+          "required_approver_ids",
           "created_at"
         ],
         "properties": {
@@ -7228,6 +7229,15 @@
             ],
             "minimum": 1,
             "description": "Distinct approvers needed before the change is applied. Null for approve/reject events."
+          },
+          "required_approver_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 32,
+            "description": "Users whose approve votes are all required, in addition to required_approval_count, before the change is applied. Empty when no approvers are designated, and always empty for approve/reject and audit-only events. Listed users may review this event without holding the resource type's approval permission."
           },
           "custom_type": {
             "type": [

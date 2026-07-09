@@ -367,6 +367,7 @@ mod tests {
                     unit_price: "10.00".to_string(),
                 },
                 1,
+                vec![],
             )
             .await
             .expect("event should be submitted");
@@ -379,6 +380,7 @@ mod tests {
                     unit_price: "10.00".to_string(),
                 },
                 1,
+                vec![],
             )
             .await
             .expect("event should be submitted");
@@ -497,6 +499,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn required_approver_reviews_via_http_without_permission() {
+        // The logged-in user holds no products:approve permission but is
+        // designated in required_approver_ids, so the review succeeds.
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let reviewer_id = logged_in_user_id(&context).await;
+
+        let actor = context
+            .users
+            .find_or_create_for_login("ding-actor", Utc::now())
+            .await
+            .expect("actor should be created")
+            .id;
+        let event = context
+            .events
+            .submit_create(
+                actor,
+                &TestProduct {
+                    name: "designated via http".to_string(),
+                    unit_price: "10.00".to_string(),
+                },
+                1,
+                vec![reviewer_id],
+            )
+            .await
+            .expect("event should be submitted");
+        assert_eq!(event.required_approver_ids, vec![reviewer_id]);
+
+        let response = context
+            .app
+            .oneshot(request(
+                Method::POST,
+                &format!("/api/v1/events/approve/{}", event.id),
+                Some(&cookie),
+                Some(json!({})),
+            ))
+            .await
+            .expect("event approve request should be handled");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let approved = response_json(response).await;
+        assert_eq!(
+            approved.pointer("/approval_status").and_then(Value::as_i64),
+            Some(2)
+        );
+        assert_eq!(
+            approved
+                .pointer("/required_approver_ids/0")
+                .and_then(Value::as_str),
+            Some(reviewer_id.to_string().as_str())
+        );
+    }
+
+    #[tokio::test]
     async fn review_without_approval_permission_is_forbidden() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
@@ -517,6 +574,7 @@ mod tests {
                     unit_price: "10.00".to_string(),
                 },
                 1,
+                vec![],
             )
             .await
             .expect("event should be submitted");

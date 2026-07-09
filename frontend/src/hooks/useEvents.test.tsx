@@ -16,6 +16,7 @@ const makeEvent = (overrides: Record<string, unknown> = {}) => ({
   event_type: 0,
   approval_status: 1,
   required_approval_count: 2,
+  required_approver_ids: [],
   custom_type: null,
   target_event_id: null,
   old_value: null,

@@ -1,4 +1,14 @@
+use sea_orm::FromJsonQueryResult;
 use sea_orm::entity::prelude::*;
+use serde::{Deserialize, Serialize};
+
+/// Reviewers whose approve votes are all required (in addition to the
+/// `required_approval_count` threshold) before the event is applied. Stored
+/// as a JSONB array of user ids; an empty list means no designated
+/// approvers. Listed users may review the event without holding the
+/// resource type's approval permission.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, FromJsonQueryResult)]
+pub struct RequiredApproverIds(pub Vec<Uuid>);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter, DeriveActiveEnum)]
 #[sea_orm(rs_type = "i16", db_type = "SmallInteger")]
@@ -44,6 +54,8 @@ pub struct Model {
     pub event_type: EventType,
     pub approval_status: ApprovalStatus,
     pub required_approval_count: Option<i16>,
+    #[sea_orm(column_type = "JsonBinary")]
+    pub required_approver_ids: RequiredApproverIds,
     pub custom_type: Option<String>,
     pub target_event_id: Option<Uuid>,
     #[sea_orm(column_type = "JsonBinary", nullable)]

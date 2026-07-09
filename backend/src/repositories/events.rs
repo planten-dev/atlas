@@ -24,6 +24,10 @@ pub struct NewEvent {
     pub event_type: EventType,
     pub approval_status: ApprovalStatus,
     pub required_approval_count: Option<i16>,
+    /// Approvers whose votes are all required before the event applies.
+    /// Empty for events with no designated approvers, and always empty for
+    /// review and audit-only events.
+    pub required_approver_ids: Vec<Uuid>,
     /// Names the caller-defined kind for EventType::Custom events.
     pub custom_type: Option<String>,
     pub target_event_id: Option<Uuid>,
@@ -71,6 +75,7 @@ impl EventRepository {
             event_type: Set(event.event_type),
             approval_status: Set(event.approval_status),
             required_approval_count: Set(event.required_approval_count),
+            required_approver_ids: Set(events::RequiredApproverIds(event.required_approver_ids)),
             custom_type: Set(event.custom_type),
             target_event_id: Set(event.target_event_id),
             old_value: Set(event.old_value),

@@ -16,6 +16,12 @@ pub struct EventResponse {
     /// 0 none, 1 pending, 2 approved, 3 rejected
     pub approval_status: i16,
     pub required_approval_count: Option<i16>,
+    /// Users whose approve votes are all required (in addition to
+    /// required_approval_count) before the event applies. Empty when no
+    /// approvers are designated, and always empty for review and audit
+    /// events. Listed users may review the event without holding the
+    /// resource type's approval permission.
+    pub required_approver_ids: Vec<Uuid>,
     /// Caller-defined kind name; only present when event_type is 5.
     pub custom_type: Option<String>,
     pub target_event_id: Option<Uuid>,
@@ -36,6 +42,7 @@ impl From<events::Model> for EventResponse {
             event_type: event.event_type.into_value(),
             approval_status: event.approval_status.into_value(),
             required_approval_count: event.required_approval_count,
+            required_approver_ids: event.required_approver_ids.0,
             custom_type: event.custom_type,
             target_event_id: event.target_event_id,
             old_value: event.old_value,

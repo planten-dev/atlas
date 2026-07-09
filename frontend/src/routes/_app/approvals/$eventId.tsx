@@ -19,6 +19,7 @@ import { DiffView } from '@/components/diff/DiffView'
 import { UserName } from '@/components/UserName'
 import { requirePerm } from '@/auth/route-guard'
 import { usePermission } from '@/auth/PermissionProvider'
+import { meQueryOptions } from '@/auth/session'
 import {
   eventDetailOptions,
   reviewHistoryOptions,
@@ -50,17 +51,28 @@ function ApprovalDetailPage() {
   const { eventId } = Route.useParams()
   const { data: event } = useSuspenseQuery(eventDetailOptions(eventId))
   const historyQuery = useQuery(reviewHistoryOptions(eventId))
+  const { data: me } = useQuery(meQueryOptions)
 
-  // 动态权限:{resource_type}:approve 在权限集中才显示审批按钮(设计 §6)
+  // 动态权限:{resource_type}:approve 在权限集中才显示审批按钮(设计 §6);
+  // 指定审批人对该事件免权限检查,与后端豁免逻辑一致
   const canApprove = usePermission(`${event.resource_type}:approve`)
+  const isRequiredApprover = !!me && event.required_approver_ids.includes(me.id)
+  const canReview = canApprove || isRequiredApprover
   const isPending = event.approval_status === 1
 
-  const approveCount =
-    historyQuery.data?.filter((e) => e.event_type === 3).length ?? 0
+  const approvedUserIds = new Set(
+    historyQuery.data
+      ?.filter((e) => e.event_type === 3)
+      .map((e) => e.actor_user_id) ?? [],
+  )
+  const approveCount = approvedUserIds.size
   const remainingVotes =
     event.required_approval_count !== null && event.required_approval_count !== undefined
       ? Math.max(0, event.required_approval_count - approveCount)
       : null
+  const waitingRequiredApprovers = event.required_approver_ids.filter(
+    (id) => !approvedUserIds.has(id),
+  )
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
@@ -82,6 +94,11 @@ function ApprovalDetailPage() {
             {isPending && remainingVotes !== null && remainingVotes > 0 && (
               <Badge variant="secondary">还差 {remainingVotes} 票</Badge>
             )}
+            {isPending &&
+              remainingVotes === 0 &&
+              waitingRequiredApprovers.length > 0 && (
+                <Badge variant="secondary">等待指定审批人</Badge>
+              )}
           </div>
           <p className="text-sm text-muted-foreground">
             发起人:<UserName userId={event.actor_user_id} /> · {formatDateTime(event.created_at)}
@@ -92,7 +109,27 @@ function ApprovalDetailPage() {
         </CardContent>
       </Card>
 
-      {isPending && canApprove && <ReviewActions eventId={event.id} />}
+      {isPending && canReview && <ReviewActions eventId={event.id} />}
+
+      {event.required_approver_ids.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">指定审批人</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2">
+            {event.required_approver_ids.map((userId) => (
+              <div key={userId} className="flex items-center gap-2">
+                <span className="text-sm">
+                  <UserName userId={userId} />
+                </span>
+                <Badge variant={approvedUserIds.has(userId) ? 'default' : 'secondary'}>
+                  {approvedUserIds.has(userId) ? '已同意' : '待审批'}
+                </Badge>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

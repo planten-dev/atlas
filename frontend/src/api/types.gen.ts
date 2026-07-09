@@ -90,7 +90,7 @@ export interface paths {
         };
         /**
          * Get current user
-         * @description Reads the atlas_session HttpOnly cookie and returns the current Atlas user.
+         * @description Reads the atlas_session HttpOnly cookie and returns the current Atlas user. When the local session is near expiry, a successful response may refresh the same cookie without calling DingTalk.
          */
         get: operations["getCurrentUser"];
         put?: never;
@@ -552,7 +552,7 @@ export interface paths {
         put?: never;
         /**
          * Approve an event
-         * @description Records an approve event targeting the given pending create/update/delete event. The reviewer must hold the object:action permission declared statically for the target's resource type (each reviewable type declares its approval permission in code at registration, e.g. products:approve); there is no static route permission. Once distinct approvers reach required_approval_count, the stored change is applied to the business table in the same transaction and the target becomes approved (2). Each user may review a given event only once. Returns the refreshed target event.
+         * @description Records an approve event targeting the given pending create/update/delete event. The reviewer must hold the object:action permission declared statically for the target's resource type (each reviewable type declares its approval permission in code at registration, e.g. products:approve); there is no static route permission. Users listed in the target's required_approver_ids are exempt from that permission check for this event. Once distinct approvers reach required_approval_count AND every user in required_approver_ids (when non-empty) has approved, the stored change is applied to the business table in the same transaction and the target becomes approved (2). Each user may review a given event only once. Returns the refreshed target event.
          */
         post: operations["approveEvent"];
         delete?: never;
@@ -572,7 +572,7 @@ export interface paths {
         put?: never;
         /**
          * Reject an event
-         * @description Records a reject event targeting the given pending create/update/delete event. A single reject vetoes the target: it immediately becomes rejected (3) and is never applied. Permission rules match the approve endpoint. Returns the refreshed target event.
+         * @description Records a reject event targeting the given pending create/update/delete event. A single reject vetoes the target: it immediately becomes rejected (3) and is never applied. Permission rules match the approve endpoint, including the required_approver_ids exemption. Returns the refreshed target event.
          */
         post: operations["rejectEvent"];
         delete?: never;
@@ -2230,6 +2230,8 @@ export interface components {
             approval_status: 0 | 1 | 2 | 3;
             /** @description Distinct approvers needed before the change is applied. Null for approve/reject events. */
             required_approval_count?: number | null;
+            /** @description Users whose approve votes are all required, in addition to required_approval_count, before the change is applied. Empty when no approvers are designated, and always empty for approve/reject and audit-only events. Listed users may review this event without holding the resource type's approval permission. */
+            required_approver_ids: string[];
             /** @description Caller-defined kind name for custom events (event_type 5), e.g. login or export. Null for all other event types. */
             custom_type?: string | null;
             /**

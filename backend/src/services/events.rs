@@ -28,6 +28,7 @@ const MAX_PAGE_SIZE: u64 = 200;
 const MAX_RESOURCE_TYPE_LENGTH: usize = 64;
 const MAX_CUSTOM_TYPE_LENGTH: usize = 64;
 const MAX_REMARK_LENGTH: usize = 2000;
+const MAX_REQUIRED_APPROVERS: usize = 32;
 
 /// Rows removed per sweeper transaction; keeps each delete short-lived.
 const SWEEP_BATCH_SIZE: u64 = 500;
@@ -52,6 +53,11 @@ pub struct SubmitEvent {
     pub old_value: Option<serde_json::Value>,
     pub new_value: Option<serde_json::Value>,
     pub required_approval_count: i16,
+    /// Reviewers whose approve votes are all required, in addition to the
+    /// `required_approval_count` threshold, before the event applies.
+    /// Empty means no designated approvers. Listed users may review the
+    /// event without holding the resource type's approval permission.
+    pub required_approver_ids: Vec<Uuid>,
 }
 
 /// An audit-only submission: recorded as already-final (approval_status =
@@ -103,6 +109,7 @@ impl EventService {
         actor_user_id: Uuid,
         new_value: &R,
         required_approval_count: i16,
+        required_approver_ids: Vec<Uuid>,
     ) -> Result<EventResponse, EventError> {
         self.submit(SubmitEvent {
             resource_type: R::RESOURCE_TYPE.to_string(),
@@ -112,6 +119,7 @@ impl EventService {
             old_value: None,
             new_value: Some(to_json(new_value)?),
             required_approval_count,
+            required_approver_ids,
         })
         .await
     }
@@ -124,6 +132,7 @@ impl EventService {
         old_value: &R,
         new_value: &R,
         required_approval_count: i16,
+        required_approver_ids: Vec<Uuid>,
     ) -> Result<EventResponse, EventError> {
         self.submit(SubmitEvent {
             resource_type: R::RESOURCE_TYPE.to_string(),
@@ -133,6 +142,7 @@ impl EventService {
             old_value: Some(to_json(old_value)?),
             new_value: Some(to_json(new_value)?),
             required_approval_count,
+            required_approver_ids,
         })
         .await
     }
@@ -144,6 +154,7 @@ impl EventService {
         resource_id: Uuid,
         old_value: &R,
         required_approval_count: i16,
+        required_approver_ids: Vec<Uuid>,
     ) -> Result<EventResponse, EventError> {
         self.submit(SubmitEvent {
             resource_type: R::RESOURCE_TYPE.to_string(),
@@ -153,6 +164,7 @@ impl EventService {
             old_value: Some(to_json(old_value)?),
             new_value: None,
             required_approval_count,
+            required_approver_ids,
         })
         .await
     }
@@ -177,6 +189,7 @@ impl EventService {
                     event_type: submission.event_type,
                     approval_status: ApprovalStatus::Pending,
                     required_approval_count: Some(submission.required_approval_count),
+                    required_approver_ids: submission.required_approver_ids,
                     custom_type: None,
                     target_event_id: None,
                     old_value: submission.old_value,
@@ -316,6 +329,7 @@ impl EventService {
                     event_type: record.event_type,
                     approval_status: ApprovalStatus::None,
                     required_approval_count: None,
+                    required_approver_ids: Vec::new(),
                     custom_type: record.custom_type,
                     target_event_id: None,
                     old_value: record.old_value,
@@ -374,21 +388,26 @@ impl EventService {
         // The reviewer permission is declared statically on the payload
         // type (ReviewableResource::APPROVAL_PERMISSION) and resolved
         // through the registry, so pending events always follow the
-        // current declaration.
+        // current declaration. Users designated in required_approver_ids
+        // may review this event without holding that permission.
         let registration = self.registry.get(&target.resource_type).ok_or_else(|| {
             EventError::UnknownResourceType {
                 resource_type: target.resource_type.clone(),
             }
         })?;
-        let (object, action) = registration.approval_permission();
-        if !self.authz.check(reviewer_user_id, object, action).await? {
-            warn!(
-                object,
-                action, "reviewer lacks the required approval permission"
-            );
-            return Err(EventError::PermissionDenied {
-                permission: format!("{object}:{action}"),
-            });
+        if target.required_approver_ids.0.contains(&reviewer_user_id) {
+            debug!("reviewer is a required approver; skipping the approval permission check");
+        } else {
+            let (object, action) = registration.approval_permission();
+            if !self.authz.check(reviewer_user_id, object, action).await? {
+                warn!(
+                    object,
+                    action, "reviewer lacks the required approval permission"
+                );
+                return Err(EventError::PermissionDenied {
+                    permission: format!("{object}:{action}"),
+                });
+            }
         }
 
         let review_type = match decision {
@@ -406,6 +425,7 @@ impl EventService {
                     event_type: review_type,
                     approval_status: ApprovalStatus::None,
                     required_approval_count: None,
+                    required_approver_ids: Vec::new(),
                     custom_type: None,
                     target_event_id: Some(target.id),
                     old_value: None,
@@ -441,7 +461,12 @@ impl EventService {
                 approvers.insert(reviewer_user_id);
 
                 let required = target.required_approval_count.unwrap_or(1).max(1) as usize;
-                if approvers.len() >= required {
+                let all_required_approved = target
+                    .required_approver_ids
+                    .0
+                    .iter()
+                    .all(|id| approvers.contains(id));
+                if approvers.len() >= required && all_required_approved {
                     let resource_id = self.apply_target(&tx, &target, now).await?;
                     self.events
                         .finalize_event(&tx, &target, ApprovalStatus::Approved, resource_id, now)
@@ -449,7 +474,7 @@ impl EventService {
                 } else {
                     debug!(
                         approvers = approvers.len(),
-                        required, "approval threshold not yet reached"
+                        required, all_required_approved, "approval conditions not yet met"
                     );
                     target
                 }
@@ -705,6 +730,7 @@ fn validate_submission(submission: &SubmitEvent) -> Result<(), EventError> {
             "required_approval_count must be at least 1",
         ));
     }
+    validate_required_approver_ids(&submission.required_approver_ids)?;
 
     match submission.event_type {
         EventType::Create => {
@@ -756,6 +782,29 @@ fn validate_submission(submission: &SubmitEvent) -> Result<(), EventError> {
         EventType::Custom => {
             return Err(EventError::InvalidInput(
                 "custom events are audit-only; use record instead of submit",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_required_approver_ids(required_approver_ids: &[Uuid]) -> Result<(), EventError> {
+    if required_approver_ids.len() > MAX_REQUIRED_APPROVERS {
+        return Err(EventError::InvalidInput(
+            "required_approver_ids must contain at most 32 user ids",
+        ));
+    }
+    let mut seen = HashSet::with_capacity(required_approver_ids.len());
+    for id in required_approver_ids {
+        if id.is_nil() {
+            return Err(EventError::InvalidInput(
+                "required_approver_ids must not contain the nil uuid",
+            ));
+        }
+        if !seen.insert(*id) {
+            return Err(EventError::InvalidInput(
+                "required_approver_ids must not contain duplicate user ids",
             ));
         }
     }
@@ -1066,7 +1115,7 @@ mod tests {
 
         let event = h
             .service
-            .submit_create(actor, &test_product("reviewed product"), 2)
+            .submit_create(actor, &test_product("reviewed product"), 2, vec![])
             .await
             .expect("event should be submitted");
         assert_eq!(event.event_type, 0);
@@ -1133,7 +1182,7 @@ mod tests {
 
         let create = h
             .service
-            .submit_create(actor, &test_product("original"), 1)
+            .submit_create(actor, &test_product("original"), 1, vec![])
             .await
             .expect("create event should be submitted");
         let created = h
@@ -1153,6 +1202,7 @@ mod tests {
                     unit_price: "99.99".to_string(),
                 },
                 1,
+                vec![],
             )
             .await
             .expect("update event should be submitted");
@@ -1170,7 +1220,7 @@ mod tests {
 
         let delete = h
             .service
-            .submit_delete(actor, resource_id, &test_product("renamed"), 1)
+            .submit_delete(actor, resource_id, &test_product("renamed"), 1, vec![])
             .await
             .expect("delete event should be submitted");
         h.approve(delete.id, reviewer)
@@ -1194,7 +1244,7 @@ mod tests {
 
         let event = h
             .service
-            .submit_create(actor, &test_product("vetoed"), 3)
+            .submit_create(actor, &test_product("vetoed"), 3, vec![])
             .await
             .expect("event should be submitted");
 
@@ -1240,7 +1290,7 @@ mod tests {
 
         let event = h
             .service
-            .submit_create(actor, &test_product("self reviewed"), 1)
+            .submit_create(actor, &test_product("self reviewed"), 1, vec![])
             .await
             .expect("event should be submitted");
         let approved = h
@@ -1252,6 +1302,269 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn approval_waits_for_every_required_approver() {
+        // Threshold met but a designated approver has not voted yet: the
+        // event stays pending until every listed user has approved.
+        let h = Harness::new().await;
+        let actor = h.user("actor").await;
+        let reviewer_a = h.reviewer("reviewer-a", "products:approve").await;
+        let reviewer_b = h.reviewer("reviewer-b", "products:approve").await;
+        let designated = h.reviewer("designated", "products:approve").await;
+
+        let event = h
+            .service
+            .submit_create(actor, &test_product("designated"), 2, vec![designated])
+            .await
+            .expect("event should be submitted");
+        assert_eq!(event.required_approver_ids, vec![designated]);
+
+        h.approve(event.id, reviewer_a)
+            .await
+            .expect("first approval should succeed");
+        let after_threshold = h
+            .approve(event.id, reviewer_b)
+            .await
+            .expect("second approval should succeed");
+        assert_eq!(
+            after_threshold.approval_status, 1,
+            "threshold alone must not finalize while a required approver is missing"
+        );
+        assert!(
+            products::Entity::find()
+                .all(&h.db)
+                .await
+                .expect("products should list")
+                .is_empty(),
+            "nothing must be applied before every required approver votes"
+        );
+
+        let approved = h
+            .approve(event.id, designated)
+            .await
+            .expect("designated approval should finalize");
+        assert_eq!(approved.approval_status, 2);
+        assert!(approved.resource_id.is_some());
+    }
+
+    #[tokio::test]
+    async fn required_approvers_alone_do_not_satisfy_the_threshold() {
+        // Every designated approver has voted but the count threshold is
+        // still short: both conditions must hold.
+        let h = Harness::new().await;
+        let actor = h.user("actor").await;
+        let designated = h.reviewer("designated", "products:approve").await;
+
+        let event = h
+            .service
+            .submit_create(actor, &test_product("threshold"), 2, vec![designated])
+            .await
+            .expect("event should be submitted");
+
+        let after_designated = h
+            .approve(event.id, designated)
+            .await
+            .expect("designated approval should succeed");
+        assert_eq!(
+            after_designated.approval_status, 1,
+            "one vote must not finalize a two-vote threshold"
+        );
+        assert!(
+            products::Entity::find()
+                .all(&h.db)
+                .await
+                .expect("products should list")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn required_approver_reviews_without_the_approval_permission() {
+        // Designated approvers are exempt from the approval permission on
+        // their event; their votes count toward the threshold too.
+        let h = Harness::new().await;
+        let actor = h.user("actor").await;
+        let designated = h.user("designated-no-permission").await;
+
+        let event = h
+            .service
+            .submit_create(actor, &test_product("exempt"), 1, vec![designated])
+            .await
+            .expect("event should be submitted");
+        let approved = h
+            .approve(event.id, designated)
+            .await
+            .expect("designated approver should review without the permission");
+        assert_eq!(approved.approval_status, 2);
+        assert!(approved.resource_id.is_some());
+
+        // The exemption is per event: the same user still needs the
+        // permission on an event that does not list them.
+        let other = h
+            .service
+            .submit_create(actor, &test_product("not exempt"), 1, vec![])
+            .await
+            .expect("event should be submitted");
+        assert!(matches!(
+            h.approve(other.id, designated).await,
+            Err(EventError::PermissionDenied { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn required_approver_reject_vetoes_without_the_approval_permission() {
+        let h = Harness::new().await;
+        let actor = h.user("actor").await;
+        let designated = h.user("designated-no-permission").await;
+
+        let event = h
+            .service
+            .submit_create(
+                actor,
+                &test_product("vetoed by designated"),
+                3,
+                vec![designated],
+            )
+            .await
+            .expect("event should be submitted");
+
+        let rejected = h
+            .reject(event.id, designated, Some("no"))
+            .await
+            .expect("designated approver should reject without the permission");
+        assert_eq!(rejected.approval_status, 3);
+        assert!(
+            products::Entity::find()
+                .all(&h.db)
+                .await
+                .expect("products should list")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn outsiders_still_need_the_permission_on_designated_events() {
+        let h = Harness::new().await;
+        let actor = h.user("actor").await;
+        let designated = h.user("designated").await;
+        let outsider = h.user("outsider").await;
+
+        let event = h
+            .service
+            .submit_create(actor, &test_product("guarded"), 1, vec![designated])
+            .await
+            .expect("event should be submitted");
+        assert!(matches!(
+            h.approve(event.id, outsider).await,
+            Err(EventError::PermissionDenied { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn required_approver_duplicate_review_is_rejected() {
+        let h = Harness::new().await;
+        let actor = h.user("actor").await;
+        let designated = h.user("designated").await;
+
+        let event = h
+            .service
+            .submit_create(actor, &test_product("dup designated"), 2, vec![designated])
+            .await
+            .expect("event should be submitted");
+        h.approve(event.id, designated)
+            .await
+            .expect("first review should succeed");
+        assert!(matches!(
+            h.approve(event.id, designated).await,
+            Err(EventError::DuplicateReview)
+        ));
+    }
+
+    #[tokio::test]
+    async fn submit_validates_required_approver_ids() {
+        let h = Harness::new().await;
+        let actor = h.user("actor").await;
+        let user = Uuid::new_v4();
+
+        // Duplicate ids are a caller bug and must fail loudly.
+        assert!(matches!(
+            h.service
+                .submit_create(actor, &test_product("dup ids"), 1, vec![user, user])
+                .await,
+            Err(EventError::InvalidInput(_))
+        ));
+
+        // The nil uuid can never approve anything.
+        assert!(matches!(
+            h.service
+                .submit_create(actor, &test_product("nil id"), 1, vec![Uuid::nil()])
+                .await,
+            Err(EventError::InvalidInput(_))
+        ));
+
+        // At most 32 designated approvers.
+        let too_many: Vec<Uuid> = (0..33).map(|_| Uuid::new_v4()).collect();
+        assert!(matches!(
+            h.service
+                .submit_create(actor, &test_product("too many"), 1, too_many)
+                .await,
+            Err(EventError::InvalidInput(_))
+        ));
+
+        // Exactly 32 is accepted and round-trips through the database.
+        let at_limit: Vec<Uuid> = (0..32).map(|_| Uuid::new_v4()).collect();
+        let event = h
+            .service
+            .submit_create(actor, &test_product("at limit"), 1, at_limit.clone())
+            .await
+            .expect("event should be submitted");
+        let detail = h
+            .service
+            .event_detail(event.id)
+            .await
+            .expect("event should load");
+        assert_eq!(detail.required_approver_ids, at_limit);
+    }
+
+    #[tokio::test]
+    async fn review_and_audit_events_carry_no_required_approvers() {
+        let h = Harness::new().await;
+        let actor = h.user("actor").await;
+        let designated = h.reviewer("designated", "products:approve").await;
+
+        let event = h
+            .service
+            .submit_create(actor, &test_product("empty lists"), 1, vec![designated])
+            .await
+            .expect("event should be submitted");
+        h.approve(event.id, designated)
+            .await
+            .expect("approval should finalize");
+
+        let reviews = h
+            .service
+            .list_events(ListEventsQuery {
+                target_event_id: Some(event.id),
+                ..ListEventsQuery::default()
+            })
+            .await
+            .expect("reviews should list");
+        assert_eq!(reviews.total_count, 1);
+        assert!(reviews.events[0].required_approver_ids.is_empty());
+
+        let audit = h
+            .service
+            .record_create(
+                "login_audit",
+                actor,
+                None,
+                &serde_json::json!({"ip": "10.0.0.1"}),
+            )
+            .await
+            .expect("audit event should be recorded");
+        assert!(audit.required_approver_ids.is_empty());
+    }
+
+    #[tokio::test]
     async fn duplicate_review_by_same_user_is_rejected() {
         let h = Harness::new().await;
         let actor = h.user("actor").await;
@@ -1259,7 +1572,7 @@ mod tests {
 
         let event = h
             .service
-            .submit_create(actor, &test_product("dup"), 2)
+            .submit_create(actor, &test_product("dup"), 2, vec![])
             .await
             .expect("event should be submitted");
         h.approve(event.id, reviewer)
@@ -1283,7 +1596,7 @@ mod tests {
 
         let event = h
             .service
-            .submit_create(actor, &test_product("guarded"), 1)
+            .submit_create(actor, &test_product("guarded"), 1, vec![])
             .await
             .expect("event should be submitted");
         assert!(matches!(
@@ -1303,7 +1616,7 @@ mod tests {
 
         let product_event = h
             .service
-            .submit_create(actor, &test_product("product perm"), 2)
+            .submit_create(actor, &test_product("product perm"), 2, vec![])
             .await
             .expect("event should be submitted");
         let doc_event = h
@@ -1314,6 +1627,7 @@ mod tests {
                     title: "q3".to_string(),
                 },
                 2,
+                vec![],
             )
             .await
             .expect("event should be submitted");
@@ -1345,7 +1659,7 @@ mod tests {
 
         let event = h
             .service
-            .submit_create(actor, &test_product("meta"), 2)
+            .submit_create(actor, &test_product("meta"), 2, vec![])
             .await
             .expect("event should be submitted");
         h.approve(event.id, reviewer_a)
@@ -1388,6 +1702,7 @@ mod tests {
                     old_value: None,
                     new_value: Some(serde_json::json!({})),
                     required_approval_count: 1,
+                    required_approver_ids: Vec::new(),
                 })
                 .await,
             Err(EventError::UnknownResourceType { .. })
@@ -1395,7 +1710,9 @@ mod tests {
 
         // Count must be >= 1.
         assert!(matches!(
-            h.service.submit_create(actor, &test_product("x"), 0).await,
+            h.service
+                .submit_create(actor, &test_product("x"), 0, vec![])
+                .await,
             Err(EventError::InvalidInput(_))
         ));
 
@@ -1408,6 +1725,7 @@ mod tests {
             old_value: None,
             new_value: None,
             required_approval_count: 1,
+            required_approver_ids: Vec::new(),
         };
         assert!(matches!(
             h.service.submit(base.clone()).await,
@@ -1461,6 +1779,7 @@ mod tests {
                 &test_product("ghost"),
                 &test_product("ghost"),
                 1,
+                vec![],
             )
             .await
             .expect("event should be submitted");
@@ -1509,6 +1828,7 @@ mod tests {
                             event_type: EventType::Update,
                             approval_status: ApprovalStatus::Pending,
                             required_approval_count: Some(1),
+                            required_approver_ids: Vec::new(),
                             custom_type: None,
                             target_event_id: None,
                             old_value: Some(serde_json::json!({})),
@@ -1536,6 +1856,7 @@ mod tests {
                             event_type: EventType::Approve,
                             approval_status: ApprovalStatus::None,
                             required_approval_count: None,
+                            required_approver_ids: Vec::new(),
                             custom_type: None,
                             target_event_id: Some(event.id),
                             old_value: None,
@@ -1567,6 +1888,7 @@ mod tests {
                     event_type: EventType::Create,
                     approval_status: ApprovalStatus::Pending,
                     required_approval_count: Some(1),
+                    required_approver_ids: Vec::new(),
                     custom_type: None,
                     target_event_id: None,
                     old_value: None,
@@ -1595,6 +1917,7 @@ mod tests {
                             event_type: EventType::Update,
                             approval_status: ApprovalStatus::None,
                             required_approval_count: None,
+                            required_approver_ids: Vec::new(),
                             custom_type: None,
                             target_event_id: None,
                             old_value: None,
@@ -1846,11 +2169,11 @@ mod tests {
         let actor = h.user("actor").await;
 
         h.service
-            .submit_create(actor, &test_product("a"), 1)
+            .submit_create(actor, &test_product("a"), 1, vec![])
             .await
             .expect("event should be submitted");
         h.service
-            .submit_create(actor, &test_product("b"), 1)
+            .submit_create(actor, &test_product("b"), 1, vec![])
             .await
             .expect("event should be submitted");
 
