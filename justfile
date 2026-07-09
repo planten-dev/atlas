@@ -48,5 +48,27 @@ docs-check:
     Get-Content docs/openapi.json -Raw | ConvertFrom-Json | Out-Null
     Write-Host "docs/openapi.json is valid JSON"
 
-frontend-status:
-    if (Test-Path frontend/package.json) { Write-Host "frontend/package.json exists; add frontend tasks when the frontend is scaffolded." } else { Write-Host "frontend is not scaffolded yet; no frontend tasks are available." }
+frontend-install:
+    npm --prefix frontend install
+
+frontend-dev:
+    npm --prefix frontend run dev
+
+frontend-gen-api:
+    npm --prefix frontend run gen:api
+
+frontend-typecheck:
+    npm --prefix frontend run typecheck
+
+frontend-lint:
+    npm --prefix frontend run lint
+
+frontend-test:
+    npm --prefix frontend run test
+
+frontend-build:
+    npm --prefix frontend run build
+
+frontend-check: frontend-typecheck frontend-lint frontend-test frontend-build
+
+check-all: check frontend-check
