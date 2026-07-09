@@ -16,7 +16,6 @@ import {
 import { DataTable } from '@/components/data-table/data-table'
 import { DataTableToolbar } from '@/components/data-table/toolbar'
 import { UserName } from '@/components/UserName'
-import { DepartmentPicker } from '@/components/pickers/DepartmentPicker'
 import { SystemPicker } from '@/components/pickers/SystemPicker'
 import { StorePicker } from '@/components/pickers/StorePicker'
 import { CategoryPicker } from '@/components/pickers/CategoryPicker'
@@ -36,7 +35,6 @@ const searchSchema = z.object({
   status_filter: z.enum(['active', 'voided']).optional(),
   record_group_id: z.string().optional(),
   customer_id: z.string().optional(),
-  department_id: z.string().optional(),
   system_id: z.string().optional(),
   store_id: z.string().optional(),
   handler_user_id: z.string().optional(),
@@ -155,15 +153,7 @@ function SalesListPage() {
             onChange={(v) => patchSearch({ customer_id: v })}
             allowCreate={false}
           />
-          <DepartmentPicker
-            value={search.department_id}
-            onChange={(v) =>
-              patchSearch({ department_id: v, system_id: undefined, store_id: undefined })
-            }
-            placeholder="按部门筛选"
-          />
           <SystemPicker
-            departmentId={search.department_id}
             value={search.system_id}
             onChange={(v) => patchSearch({ system_id: v, store_id: undefined })}
             placeholder="按体系筛选"

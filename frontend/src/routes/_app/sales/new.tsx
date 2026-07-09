@@ -30,7 +30,6 @@ const STEPS: { title: string; fields: FieldPath<SalesFormValues>[] }[] = [
     fields: [
       'customer_id',
       'sale_date',
-      'department_id',
       'system_id',
       'store_id',
       'customer_type',
@@ -41,7 +40,7 @@ const STEPS: { title: string; fields: FieldPath<SalesFormValues>[] }[] = [
   { title: '内容明细', fields: ['lines'] },
   {
     title: '协作与确认',
-    fields: ['collaboration_type', 'handler_user_id', 'expert_user_id', 'expert_department_id'],
+    fields: ['collaboration_type', 'handler_user_id', 'expert_user_id'],
   },
 ]
 

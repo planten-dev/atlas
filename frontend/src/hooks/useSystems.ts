@@ -7,7 +7,6 @@ export type SystemResponse = components['schemas']['SystemResponse']
 
 export function systemsListOptions(search: {
   status_filter?: 'active' | 'disabled'
-  department_id?: string
   page_number?: number
   page_size?: number
 }) {
@@ -22,24 +21,19 @@ export function systemsListOptions(search: {
   })
 }
 
-/** 选择器用:某部门下全部启用体系(数量小,单页 200 足够)。 */
-export function systemOptionsForPicker(departmentId: string | undefined) {
-  return queryOptions({
-    queryKey: ['systems', 'picker', departmentId ?? ''],
-    queryFn: async () => {
-      const data = unwrap(
-        await client.GET('/api/v1/systems/list', {
-          params: {
-            query: { status_filter: 'active', department_id: departmentId, page_size: 200 },
-          },
-        }),
-      )
-      return data.systems
-    },
-    enabled: Boolean(departmentId),
-    staleTime: 5 * 60_000,
-  })
-}
+/** 选择器用:全部启用体系(数量小,单页 200 足够)。 */
+export const systemOptionsForPicker = queryOptions({
+  queryKey: ['systems', 'picker'],
+  queryFn: async () => {
+    const data = unwrap(
+      await client.GET('/api/v1/systems/list', {
+        params: { query: { status_filter: 'active', page_size: 200 } },
+      }),
+    )
+    return data.systems
+  },
+  staleTime: 5 * 60_000,
+})
 
 export function useCreateSystem() {
   const queryClient = useQueryClient()

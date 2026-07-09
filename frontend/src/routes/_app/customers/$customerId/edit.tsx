@@ -22,7 +22,6 @@ function CustomerEditPage() {
 
   const form = useCustomerForm({
     name: customer.name,
-    department_id: customer.department_id,
     system_id: customer.system_id,
     store_id: customer.store_id,
     remark: customer.remark ?? '',
@@ -35,7 +34,6 @@ function CustomerEditPage() {
         customerId,
         body: {
           name: values.name,
-          department_id: values.department_id,
           system_id: values.system_id,
           store_id: values.store_id,
           remark: values.remark || null,

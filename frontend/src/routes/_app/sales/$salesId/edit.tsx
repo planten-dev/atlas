@@ -40,7 +40,6 @@ function SalesEditPage() {
     defaultValues: {
       customer_id: record.customer_id,
       sale_date: record.sale_date,
-      department_id: record.department_id,
       system_id: record.system_id,
       store_id: record.store_id,
       customer_type: record.customer_type,
@@ -48,9 +47,7 @@ function SalesEditPage() {
       deal_status: record.deal_status,
       collaboration_type: record.collaboration_type,
       expert_user_id: record.expert_user_id ?? '',
-      expert_department_id: record.expert_department_id ?? '',
       consultant_user_id: record.consultant_user_id ?? '',
-      consultant_department_id: record.consultant_department_id ?? '',
       doctor_user_id: record.doctor_user_id ?? '',
       handler_user_id: record.handler_user_id,
       lines: [

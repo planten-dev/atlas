@@ -12,7 +12,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { DataTable } from '@/components/data-table/data-table'
 import { DataTableToolbar } from '@/components/data-table/toolbar'
 import { FormText } from '@/components/form/fields'
-import { DepartmentPicker } from '@/components/pickers/DepartmentPicker'
 import { SystemPicker } from '@/components/pickers/SystemPicker'
 import { Guard } from '@/auth/PermissionProvider'
 import { requirePerm } from '@/auth/route-guard'
@@ -101,11 +100,13 @@ function StoresPage() {
           </Guard>
         }
       >
-        <StoreSystemFilter
+        <SystemPicker
           value={search.system_id}
           onChange={(v) => {
             void navigate({ search: (prev) => ({ ...prev, system_id: v, page_number: 1 }) })
           }}
+          placeholder="按体系筛选"
+          className="w-56"
         />
       </DataTableToolbar>
       <DataTable
@@ -128,40 +129,8 @@ function StoresPage() {
   )
 }
 
-/** 筛选栏体系选择:先选部门再选体系(体系接口按部门过滤)。 */
-function StoreSystemFilter({
-  value,
-  onChange,
-}: {
-  value: string | undefined
-  onChange: (v: string | undefined) => void
-}) {
-  const [departmentId, setDepartmentId] = useState<string | undefined>(undefined)
-  return (
-    <div className="flex flex-wrap gap-2">
-      <DepartmentPicker
-        value={departmentId}
-        onChange={(v) => {
-          setDepartmentId(v)
-          onChange(undefined)
-        }}
-        placeholder="按部门筛选"
-        className="w-56"
-      />
-      <SystemPicker
-        departmentId={departmentId}
-        value={value}
-        onChange={onChange}
-        placeholder="按体系筛选"
-        className="w-56"
-      />
-    </div>
-  )
-}
-
 const storeFormSchema = z.object({
   name: z.string().min(1, '请填写门店名称').max(128),
-  department_id: z.string().min(1, '请选择部门'),
   system_id: z.string().min(1, '请选择体系'),
 })
 
@@ -170,14 +139,12 @@ function StoreDialog({ store, onClose }: { store: StoreResponse | null; onClose:
     resolver: zodResolver(storeFormSchema),
     defaultValues: {
       name: store?.name ?? '',
-      department_id: '',
       system_id: store?.system_id ?? '',
     },
   })
   const createMutation = useCreateStore()
   const updateMutation = useUpdateStore()
   const isPending = createMutation.isPending || updateMutation.isPending
-  const departmentId = form.watch('department_id')
 
   const submit = form.handleSubmit((values) => {
     const callbacks = {
@@ -210,22 +177,9 @@ function StoreDialog({ store, onClose }: { store: StoreResponse | null; onClose:
           <FormText control={form.control} name="name" label="门店名称" required />
           <div className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">
-              部门<span className="text-destructive">*</span>
-            </span>
-            <DepartmentPicker
-              value={departmentId || undefined}
-              onChange={(v) => {
-                form.setValue('department_id', v ?? '', { shouldValidate: true })
-                form.setValue('system_id', '')
-              }}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">
               体系<span className="text-destructive">*</span>
             </span>
             <SystemPicker
-              departmentId={departmentId || undefined}
               value={form.watch('system_id') || undefined}
               onChange={(v) => form.setValue('system_id', v ?? '', { shouldValidate: true })}
             />

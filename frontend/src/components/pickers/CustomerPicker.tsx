@@ -123,7 +123,6 @@ function CreateCustomerDialog({
     createMutation.mutate(
       {
         name: values.name,
-        department_id: values.department_id,
         system_id: values.system_id,
         store_id: values.store_id,
         remark: values.remark || undefined,

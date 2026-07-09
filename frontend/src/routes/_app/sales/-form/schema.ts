@@ -15,11 +15,10 @@ export const salesLineSchema = z.object({
   operation_total_count: z.number().int('必须为整数').min(1, '至少 1 次').optional(),
 })
 
-/** 公共区(设计 §9):客户/归属/类型/协作/人员。 */
+/** 公共区:客户/归属(体系→门店两级)/类型/协作/人员。 */
 export const salesCommonSchema = z.object({
   customer_id: z.string().min(1, '请选择客户'),
   sale_date: z.string().min(1, '请选择成交日期'),
-  department_id: z.string().min(1, '请选择部门'),
   system_id: z.string().min(1, '请选择体系'),
   store_id: z.string().min(1, '请选择门店'),
   customer_type: z.enum(['new', 'returning'], '请选择客户类型'),
@@ -27,9 +26,7 @@ export const salesCommonSchema = z.object({
   deal_status: z.enum(['closed', 'not_closed'], '请选择成交状态'),
   collaboration_type: z.enum(['expert_consultation', 'self_sale'], '请选择协作类型'),
   expert_user_id: z.string().optional(),
-  expert_department_id: z.string().optional(),
   consultant_user_id: z.string().optional(),
-  consultant_department_id: z.string().optional(),
   doctor_user_id: z.string().optional(),
   handler_user_id: z.string().min(1, '请选择处理人'),
 })
@@ -43,7 +40,7 @@ export interface SalesFormValues extends SalesCommonValues {
 
 /**
  * 表单级 schema 工厂:注入"类别 → 是否需要次数"表以校验 operation_total_count 条件必填;
- * 协作类型规则与 DB CHECK 对齐:专家诊必填专家+专家部门,自销强制清空。
+ * 协作类型规则与后端对齐:专家诊必填专家,自销强制清空。
  */
 export function buildSalesFormSchema(requiresCountByCategory: ReadonlyMap<string, boolean>) {
   return salesCommonSchema
@@ -51,17 +48,8 @@ export function buildSalesFormSchema(requiresCountByCategory: ReadonlyMap<string
       lines: z.array(salesLineSchema).min(1, '至少一条明细'),
     })
     .superRefine((values, ctx) => {
-      if (values.collaboration_type === 'expert_consultation') {
-        if (!values.expert_user_id) {
-          ctx.addIssue({ code: 'custom', path: ['expert_user_id'], message: '专家诊必须选择专家' })
-        }
-        if (!values.expert_department_id) {
-          ctx.addIssue({
-            code: 'custom',
-            path: ['expert_department_id'],
-            message: '专家诊必须选择专家部门',
-          })
-        }
+      if (values.collaboration_type === 'expert_consultation' && !values.expert_user_id) {
+        ctx.addIssue({ code: 'custom', path: ['expert_user_id'], message: '专家诊必须选择专家' })
       }
       values.lines.forEach((line, index) => {
         const requires = requiresCountByCategory.get(line.content_category_id) ?? false
@@ -84,7 +72,6 @@ export function assembleRecords(
   const isExpert = values.collaboration_type === 'expert_consultation'
   return values.lines.map((line) => ({
     customer_id: values.customer_id,
-    department_id: values.department_id,
     sale_date: values.sale_date,
     deal_status: values.deal_status,
     customer_type: values.customer_type,
@@ -96,11 +83,9 @@ export function assembleRecords(
     system_id: values.system_id,
     store_id: values.store_id,
     collaboration_type: values.collaboration_type,
-    // 自销强制清空专家字段(呼应 DB CHECK)
+    // 自销强制清空专家字段(与后端校验对齐)
     expert_user_id: isExpert ? (values.expert_user_id ?? null) : null,
-    expert_department_id: isExpert ? (values.expert_department_id ?? null) : null,
     consultant_user_id: values.consultant_user_id || null,
-    consultant_department_id: values.consultant_department_id || null,
     doctor_user_id: values.doctor_user_id || null,
     operation_total_count: requiresCountByCategory.get(line.content_category_id)
       ? (line.operation_total_count ?? null)
@@ -111,7 +96,6 @@ export function assembleRecords(
 export const SALES_FORM_DEFAULTS: SalesFormValues = {
   customer_id: '',
   sale_date: '',
-  department_id: '',
   system_id: '',
   store_id: '',
   customer_type: 'new',
@@ -119,9 +103,7 @@ export const SALES_FORM_DEFAULTS: SalesFormValues = {
   deal_status: 'closed',
   collaboration_type: 'self_sale',
   expert_user_id: '',
-  expert_department_id: '',
   consultant_user_id: '',
-  consultant_department_id: '',
   doctor_user_id: '',
   handler_user_id: '',
   lines: [{ content_category_id: '', paid_amount: '', unpaid_amount: '' }],

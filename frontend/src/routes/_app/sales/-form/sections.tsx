@@ -7,7 +7,6 @@ import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { FormDate, FormMoney, FormSelect } from '@/components/form/fields'
 import { CustomerPicker } from '@/components/pickers/CustomerPicker'
-import { DepartmentPicker } from '@/components/pickers/DepartmentPicker'
 import { SystemPicker } from '@/components/pickers/SystemPicker'
 import { StorePicker } from '@/components/pickers/StorePicker'
 import { CategoryPicker } from '@/components/pickers/CategoryPicker'
@@ -61,9 +60,8 @@ function PickerField({
   )
 }
 
-/** 第 1 步:客户与归属。 */
+/** 第 1 步:客户与归属(体系→门店两级联动)。 */
 export function CustomerSection({ form }: { form: SalesForm }) {
-  const departmentId = form.watch('department_id')
   const systemId = form.watch('system_id')
 
   return (
@@ -72,22 +70,9 @@ export function CustomerSection({ form }: { form: SalesForm }) {
         {(field) => <CustomerPicker value={field.value} onChange={field.onChange} />}
       </PickerField>
       <FormDate control={form.control} name="sale_date" label="成交日期" required />
-      <PickerField form={form} name="department_id" label="部门" required>
-        {(field) => (
-          <DepartmentPicker
-            value={field.value}
-            onChange={(v) => {
-              field.onChange(v)
-              form.setValue('system_id', '')
-              form.setValue('store_id', '')
-            }}
-          />
-        )}
-      </PickerField>
       <PickerField form={form} name="system_id" label="体系" required>
         {(field) => (
           <SystemPicker
-            departmentId={departmentId || undefined}
             value={field.value}
             onChange={(v) => {
               field.onChange(v)
@@ -241,22 +226,12 @@ export function CollaborationSection({ form }: { form: SalesForm }) {
         {(field) => <UserPicker value={field.value} onChange={field.onChange} />}
       </PickerField>
       {isExpert && (
-        <>
-          <PickerField form={form} name="expert_user_id" label="专家" required>
-            {(field) => <UserPicker value={field.value} onChange={field.onChange} placeholder="选择专家" />}
-          </PickerField>
-          <PickerField form={form} name="expert_department_id" label="专家部门" required>
-            {(field) => <DepartmentPicker value={field.value} onChange={field.onChange} placeholder="选择专家部门" />}
-          </PickerField>
-        </>
+        <PickerField form={form} name="expert_user_id" label="专家" required>
+          {(field) => <UserPicker value={field.value} onChange={field.onChange} placeholder="选择专家" />}
+        </PickerField>
       )}
       <PickerField form={form} name="consultant_user_id" label="咨询师">
         {(field) => <UserPicker value={field.value} onChange={field.onChange} placeholder="选择咨询师(选填)" />}
-      </PickerField>
-      <PickerField form={form} name="consultant_department_id" label="咨询师部门">
-        {(field) => (
-          <DepartmentPicker value={field.value} onChange={field.onChange} placeholder="选择咨询师部门(选填)" />
-        )}
       </PickerField>
       <PickerField form={form} name="doctor_user_id" label="医生">
         {(field) => <UserPicker value={field.value} onChange={field.onChange} placeholder="选择医生(选填)" />}

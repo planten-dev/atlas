@@ -12,7 +12,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { DataTable } from '@/components/data-table/data-table'
 import { DataTableToolbar } from '@/components/data-table/toolbar'
 import { FormText } from '@/components/form/fields'
-import { DepartmentPicker } from '@/components/pickers/DepartmentPicker'
 import { Guard } from '@/auth/PermissionProvider'
 import { requirePerm } from '@/auth/route-guard'
 import {
@@ -26,7 +25,6 @@ import { notify } from '@/lib/notify'
 import { outcomeMessage } from '@/hooks/mutation-result'
 
 const searchSchema = z.object({
-  department_id: z.string().optional(),
   page_number: z.number().int().min(1).default(1),
   page_size: z.number().int().min(1).max(200).default(20),
 })
@@ -40,7 +38,6 @@ export const Route = createFileRoute('/_app/org/systems')({
 
 const systemFormSchema = z.object({
   name: z.string().min(1, '请填写体系名称').max(128),
-  department_id: z.string().min(1, '请选择部门'),
 })
 
 function SystemsPage() {
@@ -104,16 +101,7 @@ function SystemsPage() {
             </Button>
           </Guard>
         }
-      >
-        <DepartmentPicker
-          value={search.department_id}
-          onChange={(v) => {
-            void navigate({ search: (prev) => ({ ...prev, department_id: v, page_number: 1 }) })
-          }}
-          placeholder="按部门筛选"
-          className="max-w-xs"
-        />
-      </DataTableToolbar>
+      />
       <DataTable
         tableId="org-systems"
         columns={columns}
@@ -139,7 +127,6 @@ function SystemDialog({ system, onClose }: { system: SystemResponse | null; onCl
     resolver: zodResolver(systemFormSchema),
     defaultValues: {
       name: system?.name ?? '',
-      department_id: system?.department_id ?? '',
     },
   })
   const createMutation = useCreateSystem()
@@ -169,20 +156,6 @@ function SystemDialog({ system, onClose }: { system: SystemResponse | null; onCl
         </DialogHeader>
         <form className="flex flex-col gap-4" onSubmit={submit}>
           <FormText control={form.control} name="name" label="体系名称" required />
-          <div className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">
-              所属部门<span className="text-destructive">*</span>
-            </span>
-            <DepartmentPicker
-              value={form.watch('department_id') || undefined}
-              onChange={(v) => form.setValue('department_id', v ?? '', { shouldValidate: true })}
-            />
-            {form.formState.errors.department_id && (
-              <p className="text-sm text-destructive">
-                {form.formState.errors.department_id.message}
-              </p>
-            )}
-          </div>
           <Button type="submit" disabled={isPending}>
             {isPending ? '保存中…' : '保存'}
           </Button>

@@ -8,7 +8,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { DataTable } from '@/components/data-table/data-table'
 import { DataTableToolbar } from '@/components/data-table/toolbar'
-import { DepartmentPicker } from '@/components/pickers/DepartmentPicker'
 import { SystemPicker } from '@/components/pickers/SystemPicker'
 import { StorePicker } from '@/components/pickers/StorePicker'
 import { Guard } from '@/auth/PermissionProvider'
@@ -19,7 +18,6 @@ import { ENTITY_STATUS_LABELS } from '@/lib/labels'
 
 const searchSchema = z.object({
   name_keyword: z.string().optional(),
-  department_id: z.string().optional(),
   system_id: z.string().optional(),
   store_id: z.string().optional(),
   status_filter: z.enum(['active', 'disabled']).optional(),
@@ -102,15 +100,7 @@ function CustomersListPage() {
             defaultValue={search.name_keyword ?? ''}
             onChange={(e) => patchSearch({ name_keyword: e.target.value || undefined })}
           />
-          <DepartmentPicker
-            value={search.department_id}
-            onChange={(v) =>
-              patchSearch({ department_id: v, system_id: undefined, store_id: undefined })
-            }
-            placeholder="按部门筛选"
-          />
           <SystemPicker
-            departmentId={search.department_id}
             value={search.system_id}
             onChange={(v) => patchSearch({ system_id: v, store_id: undefined })}
             placeholder="按体系筛选"

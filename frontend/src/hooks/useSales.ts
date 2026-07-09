@@ -11,7 +11,6 @@ export interface SalesListSearch {
   status_filter?: 'active' | 'voided'
   record_group_id?: string
   customer_id?: string
-  department_id?: string
   system_id?: string
   store_id?: string
   handler_user_id?: string

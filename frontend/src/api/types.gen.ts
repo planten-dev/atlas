@@ -630,7 +630,7 @@ export interface paths {
         };
         /**
          * List systems
-         * @description Requires permission systems:read. Lists systems with optional status and department filtering plus pagination.
+         * @description Requires permission systems:read. Lists systems with optional status filtering plus pagination.
          */
         get: operations["listSystems"];
         put?: never;
@@ -672,7 +672,7 @@ export interface paths {
         put?: never;
         /**
          * Create system
-         * @description Requires permission systems:write. Creates a system and requires department_id to reference an existing local department.
+         * @description Requires permission systems:write. Creates a system.
          */
         post: operations["createSystem"];
         delete?: never;
@@ -912,7 +912,7 @@ export interface paths {
         put?: never;
         /**
          * Create customer
-         * @description Requires permission customers:write. Creates a customer. creator_user_id is always taken from the authenticated session. department_id, system_id and store_id must exist and describe one consistent scope.
+         * @description Requires permission customers:write. Creates a customer. creator_user_id is always taken from the authenticated session. Only name and store_id are required; system_id is derived from the store and checked for consistency when provided.
          */
         post: operations["createCustomer"];
         delete?: never;
@@ -1704,11 +1704,6 @@ export interface components {
             /** Format: uuid */
             id: string;
             name: string;
-            /**
-             * Format: uuid
-             * @description Local department id from departments.id.
-             */
-            department_id: string;
             /** @enum {string} */
             status: "active" | "disabled";
             /** Format: date-time */
@@ -1725,11 +1720,6 @@ export interface components {
         CreateSystemRequest: {
             name: string;
             /**
-             * Format: uuid
-             * @description Must reference an existing local department id from departments.id.
-             */
-            department_id: string;
-            /**
              * @default active
              * @enum {string}
              */
@@ -1738,11 +1728,6 @@ export interface components {
         UpdateSystemRequest: {
             /** @description Omit to leave unchanged. null is rejected because name is required. */
             name?: string;
-            /**
-             * Format: uuid
-             * @description Omit to leave unchanged. null is rejected because department_id is required. The value must reference an existing local department.
-             */
-            department_id?: string;
             /**
              * @description Omit to leave unchanged. null is rejected because status is required.
              * @enum {string}
@@ -1813,8 +1798,6 @@ export interface components {
              */
             creator_user_id: string;
             /** Format: uuid */
-            department_id: string;
-            /** Format: uuid */
             system_id: string;
             /** Format: uuid */
             store_id: string;
@@ -1838,22 +1821,17 @@ export interface components {
             name: string;
             /**
              * Format: uuid
-             * @description Must reference an existing department id. The system must belong to this department.
+             * @description Optional compatibility field. On create, the backend derives the system from store_id; when provided, this value must match the store's system.
              */
-            department_id: string;
+            system_id?: string | null;
             /**
              * Format: uuid
-             * @description Must reference an existing system id. The store must belong to this system.
-             */
-            system_id: string;
-            /**
-             * Format: uuid
-             * @description Must reference an existing store id owned by system_id.
+             * @description Required existing store id. The backend derives system_id from this store.
              */
             store_id: string;
             remark?: string;
-            /** @description External image attachment metadata. The backend stores this as JSON text and does not upload or store image bytes. */
-            attachments?: components["schemas"]["CustomerAttachment"][];
+            /** @description Optional external image attachment metadata. Omit or pass an empty array when the customer has no attachments. The backend stores this as JSON text and does not upload or store image bytes. */
+            attachments?: components["schemas"]["CustomerAttachment"][] | null;
             /**
              * @default active
              * @enum {string}
@@ -1865,17 +1843,12 @@ export interface components {
             name?: string;
             /**
              * Format: uuid
-             * @description Omit to leave unchanged. null is rejected because department_id is required. If changed, the final department/system/store scope must stay consistent.
-             */
-            department_id?: string;
-            /**
-             * Format: uuid
-             * @description Omit to leave unchanged. null is rejected because system_id is required. If changed, the final department/system/store scope must stay consistent.
+             * @description Omit to leave unchanged. null is rejected because system_id is required. If changed, the final system/store scope must stay consistent.
              */
             system_id?: string;
             /**
              * Format: uuid
-             * @description Omit to leave unchanged. null is rejected because store_id is required. If changed, the final department/system/store scope must stay consistent.
+             * @description Omit to leave unchanged. null is rejected because store_id is required. If changed, the final system/store scope must stay consistent.
              */
             store_id?: string;
             /** @description Omit to leave unchanged. null clears the customer remark. */
@@ -1911,8 +1884,6 @@ export interface components {
             record_group_id: string | null;
             /** Format: uuid */
             customer_id: string;
-            /** Format: uuid */
-            department_id: string;
             /** Format: date */
             sale_date: string;
             /** @enum {string} */
@@ -1941,11 +1912,7 @@ export interface components {
             /** Format: uuid */
             expert_user_id: string | null;
             /** Format: uuid */
-            expert_department_id: string | null;
-            /** Format: uuid */
             consultant_user_id: string | null;
-            /** Format: uuid */
-            consultant_department_id: string | null;
             /** Format: uuid */
             doctor_user_id: string | null;
             /** @enum {string} */
@@ -1974,11 +1941,6 @@ export interface components {
         CreateSalesRecordRequest: {
             /** Format: uuid */
             customer_id: string;
-            /**
-             * Format: uuid
-             * @description Must reference an existing department. The selected system must belong to this department.
-             */
-            department_id: string;
             /** Format: date */
             sale_date: string;
             /** @enum {string} */
@@ -2003,7 +1965,7 @@ export interface components {
             unpaid_amount: string;
             /**
              * Format: uuid
-             * @description Must reference an existing system owned by department_id.
+             * @description Must reference an existing system.
              */
             system_id: string;
             /**
@@ -2012,7 +1974,7 @@ export interface components {
              */
             store_id: string;
             /**
-             * @description expert_consultation requires expert_user_id and expert_department_id; self_sale requires both to be omitted.
+             * @description expert_consultation requires expert_user_id; self_sale requires it to be omitted.
              * @enum {string}
              */
             collaboration_type: "expert_consultation" | "self_sale";
@@ -2021,15 +1983,8 @@ export interface components {
              * @description Required for expert_consultation and not allowed for self_sale.
              */
             expert_user_id?: string | null;
-            /**
-             * Format: uuid
-             * @description Required for expert_consultation and not allowed for self_sale.
-             */
-            expert_department_id?: string | null;
             /** Format: uuid */
             consultant_user_id?: string | null;
-            /** Format: uuid */
-            consultant_department_id?: string | null;
             /** Format: uuid */
             doctor_user_id?: string | null;
             /** @description Required when content_category_id.requires_operation_count is true and rejected otherwise. */
@@ -2041,11 +1996,6 @@ export interface components {
              * @description Omit to leave unchanged. null is rejected because customer_id is required.
              */
             customer_id?: string;
-            /**
-             * Format: uuid
-             * @description Omit to leave unchanged. null is rejected because department_id is required.
-             */
-            department_id?: string;
             /**
              * Format: date
              * @description Omit to leave unchanged. null is rejected because sale_date is required.
@@ -2102,19 +2052,9 @@ export interface components {
             expert_user_id?: string | null;
             /**
              * Format: uuid
-             * @description Omit to leave unchanged. null clears the expert department.
-             */
-            expert_department_id?: string | null;
-            /**
-             * Format: uuid
              * @description Omit to leave unchanged. null clears the consultant user.
              */
             consultant_user_id?: string | null;
-            /**
-             * Format: uuid
-             * @description Omit to leave unchanged. null clears the consultant department.
-             */
-            consultant_department_id?: string | null;
             /**
              * Format: uuid
              * @description Omit to leave unchanged. null clears the doctor user.
@@ -3359,8 +3299,6 @@ export interface operations {
             query?: {
                 /** @description Only return systems with this status. */
                 status_filter?: "active" | "disabled";
-                /** @description Only return systems owned by this local department id. */
-                department_id?: string;
                 page_number?: number;
                 page_size?: number;
             };
@@ -3708,8 +3646,6 @@ export interface operations {
             query?: {
                 /** @description Only return customers with this status. */
                 status_filter?: "active" | "disabled";
-                /** @description Only return customers owned by this department id. */
-                department_id?: string;
                 /** @description Only return customers owned by this system id. */
                 system_id?: string;
                 /** @description Only return customers owned by this store id. */
@@ -3893,7 +3829,6 @@ export interface operations {
                 /** @description Only return records created by the same batch request. */
                 record_group_id?: string;
                 customer_id?: string;
-                department_id?: string;
                 system_id?: string;
                 store_id?: string;
                 handler_user_id?: string;

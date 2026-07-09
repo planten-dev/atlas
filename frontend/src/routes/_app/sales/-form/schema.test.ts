@@ -18,7 +18,6 @@ function validValues(overrides: Partial<SalesFormValues> = {}): SalesFormValues 
     ...SALES_FORM_DEFAULTS,
     customer_id: 'c1',
     sale_date: '2026-07-08',
-    department_id: 'd1',
     system_id: 'sys1',
     store_id: 'st1',
     handler_user_id: 'u1',
@@ -34,14 +33,13 @@ describe('buildSalesFormSchema', () => {
     expect(schema.safeParse(validValues()).success).toBe(true)
   })
 
-  it('专家诊必填专家与专家部门', () => {
+  it('专家诊必填专家', () => {
     const result = schema.safeParse(
       validValues({ collaboration_type: 'expert_consultation' }),
     )
     expect(result.success).toBe(false)
     const paths = result.success ? [] : result.error.issues.map((i) => i.path.join('.'))
     expect(paths).toContain('expert_user_id')
-    expect(paths).toContain('expert_department_id')
   })
 
   it('专家诊填齐后通过', () => {
@@ -49,7 +47,6 @@ describe('buildSalesFormSchema', () => {
       validValues({
         collaboration_type: 'expert_consultation',
         expert_user_id: 'e1',
-        expert_department_id: 'ed1',
       }),
     )
     expect(result.success).toBe(true)
@@ -104,17 +101,15 @@ describe('assembleRecords', () => {
     expect(records[1]?.operation_total_count).toBe(10)
   })
 
-  it('自销强制清空专家字段(呼应 DB CHECK)', () => {
+  it('自销强制清空专家字段(与后端校验对齐)', () => {
     const records = assembleRecords(
       validValues({
         collaboration_type: 'self_sale',
         expert_user_id: 'e1',
-        expert_department_id: 'ed1',
       }),
       requiresMap,
     )
     expect(records[0]?.expert_user_id).toBeNull()
-    expect(records[0]?.expert_department_id).toBeNull()
   })
 
   it('专家诊保留专家字段', () => {
@@ -122,12 +117,10 @@ describe('assembleRecords', () => {
       validValues({
         collaboration_type: 'expert_consultation',
         expert_user_id: 'e1',
-        expert_department_id: 'ed1',
       }),
       requiresMap,
     )
     expect(records[0]?.expert_user_id).toBe('e1')
-    expect(records[0]?.expert_department_id).toBe('ed1')
   })
 
   it('不需要次数的类别忽略残留 operation_total_count', () => {
