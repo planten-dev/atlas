@@ -203,11 +203,16 @@ mod tests {
         config::{AuthConfig, DatabaseConfig, DatabaseKind, DingTalkConfig, SessionConfig},
         db,
         repositories::{
-            authz::AuthzRepository, customers::CustomerRepository,
-            departments::DepartmentRepository, events::EventRepository,
-            product_categories::ProductCategoryRepository, products::ProductRepository,
-            sales_records::SalesRecordRepository, sessions::SessionRepository,
-            stores::StoreRepository, systems::SystemRepository,
+            authz::AuthzRepository,
+            customers::{CustomerRepository, NewCustomer},
+            departments::DepartmentRepository,
+            events::EventRepository,
+            product_categories::ProductCategoryRepository,
+            products::ProductRepository,
+            sales_records::{NewSalesRecord, NewSalesRecordLine, SalesRecordRepository},
+            sessions::SessionRepository,
+            stores::{NewStore, StoreRepository},
+            systems::{NewSystem, SystemRepository},
             user_profiles::UserProfileRepository, users::UserRepository,
         },
         services::{
@@ -224,6 +229,7 @@ mod tests {
         http::{Method, Request, header},
         routing::{get, post},
     };
+    use sea_orm::entity::prelude::Decimal;
     use serde_json::{Value, json};
     use std::path::PathBuf;
     use tokio::net::TcpListener;
@@ -234,6 +240,11 @@ mod tests {
         users: UserRepository,
         authz: AuthzService,
         product_categories: ProductCategoryRepository,
+        products: ProductRepository,
+        systems: SystemRepository,
+        stores: StoreRepository,
+        customers: CustomerRepository,
+        sales_records: SalesRecordRepository,
     }
 
     #[tokio::test]
@@ -498,6 +509,123 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn product_search_suggestions_and_reference_delete_via_http() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+        let cookie = login_and_cookie(context.app.clone()).await;
+        let user_id = logged_in_user_id(&context).await;
+        let category_id = default_category_id(&context).await;
+        grant(&context, user_id, "products", "read").await;
+        grant(&context, user_id, "products", "write").await;
+
+        let create_response = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/api/v1/products/create",
+                Some(&cookie),
+                Some(json!({
+                    "name": "hydrating serum",
+                    "category_id": category_id,
+                    "series": "skin line",
+                    "brand_name": "atlas lab",
+                    "specification": "30ml bottle",
+                    "unit": "bottle",
+                    "unit_price": "12.30"
+                })),
+            ))
+            .await
+            .expect("product create request should be handled");
+        assert_eq!(create_response.status(), StatusCode::CREATED);
+        let created = response_json(create_response).await;
+        let product_id = created
+            .pointer("/id")
+            .and_then(Value::as_str)
+            .expect("product id should be present")
+            .to_string();
+
+        let keyword_list = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/products/list?keyword=30ml",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("product keyword list request should be handled");
+        assert_eq!(keyword_list.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(keyword_list)
+                .await
+                .pointer("/products/0/id")
+                .and_then(Value::as_str),
+            Some(product_id.as_str())
+        );
+
+        let suggestions = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/products/suggestions?keyword=atlas&limit_per_field=10",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("product suggestions request should be handled");
+        assert_eq!(suggestions.status(), StatusCode::OK);
+        let suggestions = response_json(suggestions).await;
+        assert_eq!(
+            suggestions.pointer("/series/0").and_then(Value::as_str),
+            Some("skin line")
+        );
+        assert_eq!(
+            suggestions.pointer("/brand_names/0").and_then(Value::as_str),
+            Some("atlas lab")
+        );
+        assert_eq!(
+            suggestions.pointer("/units/0").and_then(Value::as_str),
+            Some("bottle")
+        );
+
+        let invalid_suggestions = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                "/api/v1/products/suggestions?limit_per_field=201",
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("invalid suggestions request should be handled");
+        assert_eq!(invalid_suggestions.status(), StatusCode::BAD_REQUEST);
+
+        create_sales_line_reference(&context, user_id, product_id.parse().unwrap()).await;
+        let delete_response = context
+            .app
+            .oneshot(request(
+                Method::POST,
+                &format!("/api/v1/products/delete/{product_id}"),
+                Some(&cookie),
+                None,
+            ))
+            .await
+            .expect("referenced product delete request should be handled");
+        assert_eq!(delete_response.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response_json(delete_response)
+                .await
+                .pointer("/error")
+                .and_then(Value::as_str),
+            Some("product_has_references")
+        );
+    }
+
+    #[tokio::test]
     async fn product_api_validates_inputs_and_missing_products() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
@@ -709,13 +837,13 @@ mod tests {
         let users_service = UserService::new(users.clone(), profiles, sessions);
         let product_categories_service =
             ProductCategoryService::new(product_categories.clone(), products.clone());
-        let products_service = ProductService::new(products, product_categories.clone());
+        let products_service = ProductService::new(products.clone(), product_categories.clone());
         let stores_service = StoreService::new(stores.clone(), systems.clone());
         let systems_service = SystemService::new(systems.clone(), stores.clone());
         let customers_service =
             CustomerService::new(customers.clone(), systems.clone(), stores.clone());
         let sales_records_service = SalesRecordService::new(
-            sales_records,
+            sales_records.clone(),
             customers.clone(),
             systems.clone(),
             stores.clone(),
@@ -753,7 +881,100 @@ mod tests {
             users,
             authz,
             product_categories,
+            products,
+            systems,
+            stores,
+            customers,
+            sales_records,
         }
+    }
+
+    async fn create_sales_line_reference(
+        context: &TestContext,
+        user_id: Uuid,
+        product_id: Uuid,
+    ) {
+        let now = chrono::Utc::now();
+        let system = context
+            .systems
+            .create_system(
+                NewSystem {
+                    name: "reference system".to_string(),
+                    status: "active".to_string(),
+                },
+                now,
+            )
+            .await
+            .expect("system should be created");
+        let store = context
+            .stores
+            .create_store(
+                NewStore {
+                    name: "reference store".to_string(),
+                    system_id: system.id,
+                    status: "active".to_string(),
+                },
+                now,
+            )
+            .await
+            .expect("store should be created");
+        let customer = context
+            .customers
+            .create_customer(
+                NewCustomer {
+                    name: "reference customer".to_string(),
+                    creator_user_id: user_id,
+                    system_id: system.id,
+                    store_id: store.id,
+                    remark: None,
+                    status: "active".to_string(),
+                    attachments: None,
+                },
+                now,
+            )
+            .await
+            .expect("customer should be created");
+        let record = context
+            .sales_records
+            .insert_sales_record(
+                &context.products.db,
+                NewSalesRecord {
+                    record_type: "sale".to_string(),
+                    customer_id: customer.id,
+                    record_date: now.date_naive(),
+                    customer_type: Some("new".to_string()),
+                    deal_type: Some("non_salon".to_string()),
+                    system_id: system.id,
+                    store_id: store.id,
+                    handler_user_id: user_id,
+                    expert_user_id: None,
+                    consultant_user_id: None,
+                    doctor_user_id: None,
+                    remark: None,
+                    status: "active".to_string(),
+                    created_by_user_id: user_id,
+                },
+                now,
+            )
+            .await
+            .expect("sales record should be inserted");
+        context
+            .sales_records
+            .insert_sales_record_line(
+                &context.products.db,
+                NewSalesRecordLine {
+                    sales_record_id: record.id,
+                    product_id,
+                    item_name: "referenced".to_string(),
+                    receivable_amount: Decimal::new(10000, 2),
+                    operation_total_count: None,
+                    remark: None,
+                    status: "active".to_string(),
+                },
+                now,
+            )
+            .await
+            .expect("sales line should be inserted");
     }
 
     async fn start_mock_dingtalk() -> String {

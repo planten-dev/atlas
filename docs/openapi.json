@@ -980,7 +980,7 @@
         ],
         "summary": "List products",
         "operationId": "listProducts",
-        "description": "Requires permission products:read. Lists products with optional status/category filtering and pagination.",
+        "description": "Requires permission products:read. Lists sales-content master records with optional status, category, keyword filtering and pagination. Products are the selectable sales/service content, not sales record types.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -1009,6 +1009,16 @@
               "format": "uuid"
             },
             "description": "Only return products in this product category."
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Trimmed keyword matched against name, series, brand_name, specification and unit. Blank values are ignored."
           },
           {
             "name": "page_number",
@@ -1289,7 +1299,7 @@
         ],
         "summary": "Delete product",
         "operationId": "deleteProduct",
-        "description": "Requires permission products:write. Hard deletes one product record by id.",
+        "description": "Requires permission products:write. Hard deletes one product record by id only when it has no business references. Products referenced by sales_record_lines.product_id must be disabled instead.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -1322,6 +1332,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
@@ -4870,6 +4883,92 @@
           }
         }
       }
+    },
+    "/api/v1/products/suggestions": {
+      "get": {
+        "tags": [
+          "Products"
+        ],
+        "summary": "Get product input suggestions",
+        "operationId": "getProductSuggestions",
+        "description": "Requires permission products:read. Returns distinct non-empty series, brand_name and unit values for product form suggestions. Supports the same status/category/keyword filters as product listing.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "disabled"
+              ]
+            },
+            "description": "Only use products with this status."
+          },
+          {
+            "name": "category_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Only use products in this product category."
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Trimmed keyword matched against name, series, brand_name, specification and unit. Blank values are ignored."
+          },
+          {
+            "name": "limit_per_field",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "description": "Maximum number of suggestions to return for each field."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Product input suggestions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductSuggestionsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5588,7 +5687,8 @@
             "type": "string",
             "format": "date-time"
           }
-        }
+        },
+        "description": "Sales-content master record. This represents selectable content such as products, medical items, instrument items and cards; sale/service is represented by sales_records.record_type, not by product category."
       },
       "ListProductsResponse": {
         "type": "object",
@@ -5678,7 +5778,8 @@
             ],
             "default": "active"
           }
-        }
+        },
+        "description": "Creates a sales-content master record. category_id must reference an active product category."
       },
       "UpdateProductRequest": {
         "type": "object",
@@ -5733,7 +5834,7 @@
             ]
           }
         },
-        "description": "Partial update request. Omitted fields are unchanged; nullable text fields can be cleared with null. category_id, name, unit_price and status reject null."
+        "description": "Partially updates a sales-content master record."
       },
       "SystemResponse": {
         "type": "object",
@@ -7593,6 +7694,37 @@
               "null"
             ],
             "maxLength": 2000
+          }
+        }
+      },
+      "ProductSuggestionsResponse": {
+        "type": "object",
+        "required": [
+          "series",
+          "brand_names",
+          "units"
+        ],
+        "properties": {
+          "series": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Distinct non-empty series values."
+          },
+          "brand_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Distinct non-empty brand_name values."
+          },
+          "units": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Distinct non-empty unit values."
           }
         }
       }
