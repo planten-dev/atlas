@@ -444,6 +444,10 @@ pub fn router(state: AppState) -> Router {
             get(handlers::auth::dingtalk_login),
         )
         .route(
+            "/api/v1/auth/login/dingtalk/h5",
+            post(handlers::auth::dingtalk_h5_login),
+        )
+        .route(
             "/api/v1/auth/callback/dingtalk",
             get(handlers::auth::dingtalk_callback),
         )

@@ -33,6 +33,7 @@ impl DingTalkClient {
             auth_url = %client.config.auth_url,
             token_url = %client.config.token_url,
             user_info_url = %client.config.user_info_url,
+            user_getuserinfo_url = %client.config.user_getuserinfo_url,
             user_detail_url = %client.config.user_detail_url,
             getbyunionid_url = %client.config.getbyunionid_url,
             redirect_uri = %client.config.redirect_uri,
@@ -156,6 +157,29 @@ impl DingTalkClient {
         Ok(identity)
     }
 
+    #[tracing::instrument(level = "info", skip(self, auth_code), fields(provider = PROVIDER))]
+    pub async fn identity_from_h5_auth_code(
+        &self,
+        auth_code: &str,
+    ) -> Result<DingTalkIdentity, DingTalkError> {
+        validate_required("authCode", auth_code)?;
+        let access_token = self.fetch_corp_access_token().await?;
+        let user_info = self
+            .fetch_h5_user_info(&access_token, auth_code.trim())
+            .await?;
+        let identity = resolve_h5_identity(&user_info)?;
+
+        info!(
+            provider = PROVIDER,
+            has_corp_id = identity.corp_id.is_some() || !self.config.corp_id.trim().is_empty(),
+            has_union_id = identity.union_id.is_some(),
+            has_open_id = identity.open_id.is_some(),
+            "resolved DingTalk H5 identity"
+        );
+
+        Ok(identity)
+    }
+
     #[tracing::instrument(
         level = "debug",
         skip(self, token),
@@ -202,6 +226,53 @@ impl DingTalkClient {
             "received DingTalk user info response"
         );
         Ok(DingTalkUserInfoResponse { raw: parsed })
+    }
+
+    #[tracing::instrument(
+        level = "debug",
+        skip(self, access_token, auth_code),
+        fields(provider = PROVIDER, user_getuserinfo_url = %self.config.user_getuserinfo_url)
+    )]
+    async fn fetch_h5_user_info(
+        &self,
+        access_token: &str,
+        auth_code: &str,
+    ) -> Result<Value, DingTalkError> {
+        validate_required("access_token", access_token)?;
+        validate_required("authCode", auth_code)?;
+
+        debug!(provider = PROVIDER, "fetching DingTalk H5 user info");
+        let response = self
+            .http
+            .post(&self.config.user_getuserinfo_url)
+            .form(&[("access_token", access_token), ("code", auth_code.trim())])
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body = response.text().await?;
+        let parsed = parse_json_or_raw(body);
+
+        if !status.is_success() {
+            warn!(
+                provider = PROVIDER,
+                status = status.as_u16(),
+                "DingTalk H5 user info request returned non-success status"
+            );
+            return Err(DingTalkError::ProviderHttp {
+                operation: "user_getuserinfo",
+                status: status.as_u16(),
+                body: parsed,
+            });
+        }
+
+        check_oapi_errcode("user_getuserinfo", &parsed)?;
+        debug!(
+            provider = PROVIDER,
+            status = status.as_u16(),
+            "received DingTalk H5 user info response"
+        );
+        Ok(parsed)
     }
 
     #[tracing::instrument(
@@ -627,6 +698,29 @@ fn resolve_identity(
     })
 }
 
+fn resolve_h5_identity(user_info: &Value) -> Result<DingTalkIdentity, DingTalkError> {
+    let dingtalk_user_id = first_string(user_info, &["userid", "userId", "user_id"])
+        .ok_or_else(|| DingTalkError::MissingIdentityField("userid".to_string()))?;
+
+    Ok(DingTalkIdentity {
+        dingtalk_user_id: dingtalk_user_id.clone(),
+        corp_id: first_string(user_info, &["corpId", "corp_id"]),
+        union_id: first_string(
+            user_info,
+            &[
+                "unionId",
+                "unionid",
+                "union_id",
+                "associated_unionid",
+                "associatedUnionid",
+            ],
+        ),
+        open_id: first_string(user_info, &["openId", "openid", "open_id"]),
+        provider_user_id: Some(dingtalk_user_id),
+        profile: parse_user_info_profile(user_info),
+    })
+}
+
 fn validate_config(config: &DingTalkConfig) -> Result<(), DingTalkError> {
     validate_config_value("client_id", &config.client_id)?;
     validate_config_value("client_secret", &config.client_secret)?;
@@ -634,6 +728,7 @@ fn validate_config(config: &DingTalkConfig) -> Result<(), DingTalkError> {
     validate_config_value("auth_url", &config.auth_url)?;
     validate_config_value("token_url", &config.token_url)?;
     validate_config_value("user_info_url", &config.user_info_url)?;
+    validate_config_value("user_getuserinfo_url", &config.user_getuserinfo_url)?;
     validate_config_value("corp_token_url", &config.corp_token_url)?;
     validate_config_value("department_listsub_url", &config.department_listsub_url)?;
     validate_config_value("user_detail_url", &config.user_detail_url)?;
@@ -868,6 +963,8 @@ mod tests {
             auth_url: "https://login.dingtalk.com/oauth2/auth".to_string(),
             token_url: "https://api.dingtalk.com/v1.0/oauth2/userAccessToken".to_string(),
             user_info_url: "https://api.dingtalk.com/v1.0/contact/users/me".to_string(),
+            user_getuserinfo_url: "https://oapi.dingtalk.com/topapi/v2/user/getuserinfo"
+                .to_string(),
             corp_token_url: "https://oapi.dingtalk.com/gettoken".to_string(),
             department_listsub_url: "https://oapi.dingtalk.com/topapi/v2/department/listsub"
                 .to_string(),
@@ -1073,6 +1170,227 @@ mod tests {
         assert_eq!(identity.open_id.as_deref(), Some("open-id"));
         assert_eq!(identity.profile.name.as_deref(), Some("张三"));
         assert_eq!(identity.profile.mobile.as_deref(), Some("13800000000"));
+    }
+
+    #[tokio::test]
+    async fn identity_from_h5_auth_code_fetches_real_userid() {
+        use axum::{
+            Form, Json, Router,
+            extract::Query,
+            routing::{get, post},
+        };
+        use tokio::net::TcpListener;
+
+        #[derive(serde::Deserialize)]
+        struct GetTokenQuery {
+            appkey: String,
+            appsecret: String,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct H5UserInfoForm {
+            access_token: String,
+            code: String,
+        }
+
+        let gettoken = |Query(query): Query<GetTokenQuery>| async move {
+            assert_eq!(query.appkey, "client-id");
+            assert_eq!(query.appsecret, "client-secret");
+            Json(json!({
+                "errcode": 0,
+                "errmsg": "ok",
+                "access_token": "corp-token"
+            }))
+        };
+
+        let getuserinfo = |Form(form): Form<H5UserInfoForm>| async move {
+            assert_eq!(form.access_token, "corp-token");
+            assert_eq!(form.code, "h5-code");
+            Json(json!({
+                "errcode": 0,
+                "errmsg": "ok",
+                "result": {
+                    "userid": "h5-userid",
+                    "associated_unionid": "union-id"
+                }
+            }))
+        };
+
+        let app = Router::new()
+            .route("/gettoken", get(gettoken))
+            .route("/getuserinfo", post(getuserinfo));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("mock DingTalk listener should bind");
+        let addr = listener.local_addr().expect("mock address should be known");
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("mock DingTalk server should run");
+        });
+
+        let mut config = test_config();
+        let base_url = format!("http://{addr}");
+        config.corp_token_url = format!("{base_url}/gettoken");
+        config.user_getuserinfo_url = format!("{base_url}/getuserinfo");
+        let client = DingTalkClient::new(config).expect("config should be valid");
+
+        let identity = client
+            .identity_from_h5_auth_code("h5-code")
+            .await
+            .expect("H5 identity should resolve");
+
+        assert_eq!(identity.dingtalk_user_id, "h5-userid");
+        assert_eq!(identity.provider_user_id.as_deref(), Some("h5-userid"));
+        assert_eq!(identity.union_id.as_deref(), Some("union-id"));
+    }
+
+    #[tokio::test]
+    async fn identity_from_h5_auth_code_reports_nonzero_errcode() {
+        let mock_base_url = start_mock_h5_dingtalk(
+            axum::http::StatusCode::OK,
+            json!({
+                "errcode": 60020,
+                "errmsg": "invalid code"
+            }),
+        )
+        .await;
+        let mut config = test_config();
+        config.corp_token_url = format!("{mock_base_url}/gettoken");
+        config.user_getuserinfo_url = format!("{mock_base_url}/getuserinfo");
+        let client = DingTalkClient::new(config).expect("config should be valid");
+
+        let error = client
+            .identity_from_h5_auth_code("h5-code")
+            .await
+            .expect_err("non-zero errcode should fail");
+
+        assert!(matches!(
+            error,
+            DingTalkError::ProviderApi {
+                operation: "user_getuserinfo",
+                errcode: 60020,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn identity_from_h5_auth_code_reports_http_errors() {
+        let mock_base_url = start_mock_h5_dingtalk(
+            axum::http::StatusCode::BAD_GATEWAY,
+            json!({
+                "errcode": 500,
+                "errmsg": "gateway error"
+            }),
+        )
+        .await;
+        let mut config = test_config();
+        config.corp_token_url = format!("{mock_base_url}/gettoken");
+        config.user_getuserinfo_url = format!("{mock_base_url}/getuserinfo");
+        let client = DingTalkClient::new(config).expect("config should be valid");
+
+        let error = client
+            .identity_from_h5_auth_code("h5-code")
+            .await
+            .expect_err("HTTP non-success status should fail");
+
+        assert!(matches!(
+            error,
+            DingTalkError::ProviderHttp {
+                operation: "user_getuserinfo",
+                status: 502,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn resolves_h5_identity_from_userid_variants() {
+        let identity = resolve_h5_identity(&json!({
+            "errcode": 0,
+            "errmsg": "ok",
+            "result": {
+                "userId": "camel-userid",
+                "unionId": "union-id"
+            }
+        }))
+        .expect("H5 identity should resolve");
+
+        assert_eq!(identity.dingtalk_user_id, "camel-userid");
+        assert_eq!(identity.provider_user_id.as_deref(), Some("camel-userid"));
+        assert_eq!(identity.union_id.as_deref(), Some("union-id"));
+    }
+
+    #[test]
+    fn h5_identity_reports_missing_userid() {
+        let error = resolve_h5_identity(&json!({
+            "errcode": 0,
+            "errmsg": "ok",
+            "result": {
+                "associated_unionid": "union-id"
+            }
+        }))
+        .expect_err("missing userid should fail");
+
+        assert!(matches!(error, DingTalkError::MissingIdentityField(_)));
+    }
+
+    async fn start_mock_h5_dingtalk(
+        getuserinfo_status: axum::http::StatusCode,
+        getuserinfo_response: Value,
+    ) -> String {
+        use axum::{
+            Form, Json, Router,
+            extract::Query,
+            routing::{get, post},
+        };
+        use tokio::net::TcpListener;
+
+        #[derive(serde::Deserialize)]
+        struct GetTokenQuery {
+            appkey: String,
+            appsecret: String,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct H5UserInfoForm {
+            access_token: String,
+            code: String,
+        }
+
+        let gettoken = |Query(query): Query<GetTokenQuery>| async move {
+            assert_eq!(query.appkey, "client-id");
+            assert_eq!(query.appsecret, "client-secret");
+            Json(json!({
+                "errcode": 0,
+                "errmsg": "ok",
+                "access_token": "corp-token"
+            }))
+        };
+
+        let getuserinfo = move |Form(form): Form<H5UserInfoForm>| {
+            let getuserinfo_response = getuserinfo_response.clone();
+            async move {
+                assert_eq!(form.access_token, "corp-token");
+                assert_eq!(form.code, "h5-code");
+                (getuserinfo_status, Json(getuserinfo_response))
+            }
+        };
+
+        let app = Router::new()
+            .route("/gettoken", get(gettoken))
+            .route("/getuserinfo", post(getuserinfo));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("mock DingTalk listener should bind");
+        let addr = listener.local_addr().expect("mock address should be known");
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("mock DingTalk server should run");
+        });
+        format!("http://{addr}")
     }
 
     #[test]

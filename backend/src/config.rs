@@ -53,6 +53,7 @@ pub struct DingTalkConfig {
     pub auth_url: String,
     pub token_url: String,
     pub user_info_url: String,
+    pub user_getuserinfo_url: String,
     pub corp_token_url: String,
     pub department_listsub_url: String,
     pub user_detail_url: String,
@@ -210,6 +211,7 @@ redirect_uri = "http://127.0.0.1:3000/api/v1/auth/callback/dingtalk"
 auth_url = "https://login.dingtalk.com/oauth2/auth"
 token_url = "https://api.dingtalk.com/v1.0/oauth2/userAccessToken"
 user_info_url = "https://api.dingtalk.com/v1.0/contact/users/me"
+user_getuserinfo_url = "https://oapi.dingtalk.com/topapi/v2/user/getuserinfo"
 corp_token_url = "https://oapi.dingtalk.com/gettoken"
 department_listsub_url = "https://oapi.dingtalk.com/topapi/v2/department/listsub"
 user_detail_url = "https://oapi.dingtalk.com/topapi/v2/user/get"
@@ -248,6 +250,10 @@ cookie_secure = false
         );
         assert_eq!(config.session.ttl_seconds, 86_400);
         assert!(!config.session.cookie_secure);
+        assert_eq!(
+            config.dingtalk.user_getuserinfo_url,
+            "https://oapi.dingtalk.com/topapi/v2/user/getuserinfo"
+        );
         assert_eq!(config.logging.directory, PathBuf::from("logs"));
         assert_eq!(config.logging.file_prefix, "atlas.log");
         assert_eq!(config.events.retention_days, 180);
@@ -352,6 +358,7 @@ file_prefix = "custom.log"
             "ATLAS__DATABASE__SQLITE_FILE",
             "ATLAS__SESSION__TTL_SECONDS",
             "ATLAS__SESSION__COOKIE_SECURE",
+            "ATLAS__DINGTALK__USER_GETUSERINFO_URL",
             "ATLAS__DINGTALK__USER_DETAIL_URL",
             "ATLAS__DINGTALK__GETBYUNIONID_URL",
             "ATLAS__EVENTS__RETENTION_DAYS",

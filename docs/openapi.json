@@ -55,6 +55,59 @@
         }
       }
     },
+    "/api/v1/auth/login/dingtalk/h5": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Complete DingTalk H5 login",
+        "operationId": "completeDingTalkH5Login",
+        "description": "Accepts a temporary DingTalk H5 logon-free authCode from the frontend, exchanges it server-side for the real DingTalk contact userid, maps or creates the Atlas user, syncs DingTalk organization profile fields, creates a server-side session, and sets atlas_session as an HttpOnly cookie. This flow does not use OAuth state or a callback redirect.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DingTalkH5LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "DingTalk H5 identity verified and mapped to an Atlas user. A session cookie is set.",
+            "headers": {
+              "Set-Cookie": {
+                "description": "HttpOnly atlas_session cookie.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          }
+        }
+      }
+    },
     "/api/v1/auth/callback/dingtalk": {
       "get": {
         "tags": [
@@ -5001,6 +5054,18 @@
         "properties": {
           "user": {
             "$ref": "#/components/schemas/UserResponse"
+          }
+        }
+      },
+      "DingTalkH5LoginRequest": {
+        "type": "object",
+        "required": [
+          "authCode"
+        ],
+        "properties": {
+          "authCode": {
+            "type": "string",
+            "description": "Temporary DingTalk H5 logon-free authorization code obtained by the frontend in the DingTalk container."
           }
         }
       },

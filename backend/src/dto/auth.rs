@@ -10,6 +10,12 @@ pub struct DingTalkCallbackQuery {
     pub error_description: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DingTalkH5LoginRequest {
+    #[serde(rename = "authCode")]
+    pub auth_code: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ErrorResponse {
     pub error: String,

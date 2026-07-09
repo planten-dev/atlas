@@ -21,7 +21,7 @@ use crate::{
         events::{EventRepository, NewEvent},
         sessions::{SessionRepository, hash_secret},
         user_profiles::{UserProfileRepository, UserProfileUpsert},
-        users::UserRepository,
+        users::{LoginUser, UserRepository},
     },
 };
 
@@ -143,33 +143,43 @@ impl AuthService {
         let client = DingTalkClient::new(self.dingtalk_config.clone())?;
         let token = client.exchange_code_for_token(&code).await?;
         let identity = client.identity_from_token(token).await?;
-        let login_user = if self.super_admin_bootstrap_enabled {
-            self.users
-                .find_or_create_for_login_with_super_admin_bootstrap(
-                    &identity.dingtalk_user_id,
-                    now,
-                )
-                .await?
-        } else {
-            crate::repositories::users::LoginUser {
-                user: self
-                    .users
-                    .find_or_create_for_login(&identity.dingtalk_user_id, now)
-                    .await?,
-                assigned_super_admin: false,
-            }
-        };
+        self.complete_dingtalk_login(&client, &identity, true, now)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, auth_code), fields(provider = PROVIDER_DINGTALK))]
+    pub async fn complete_dingtalk_h5_login(
+        &self,
+        auth_code: &str,
+    ) -> Result<LoginSession, AuthError> {
+        let now = Utc::now();
+        let client = DingTalkClient::new(self.dingtalk_config.clone())?;
+        let identity = client.identity_from_h5_auth_code(auth_code).await?;
+        self.complete_dingtalk_login(&client, &identity, false, now)
+            .await
+    }
+
+    async fn complete_dingtalk_login(
+        &self,
+        client: &DingTalkClient,
+        identity: &DingTalkIdentity,
+        sync_personal_profile: bool,
+        now: DateTime<Utc>,
+    ) -> Result<LoginSession, AuthError> {
+        let login_user = self.resolve_login_user(identity, now).await?;
         let user = login_user.user;
 
-        if let Err(error) = self
-            .sync_dingtalk_personal_profile(&identity, user.id, now)
-            .await
-        {
-            warn!(
-                user_id = %user.id,
-                error_code = error.code(),
-                "DingTalk personal profile sync failed; continuing login"
-            );
+        if sync_personal_profile {
+            if let Err(error) = self
+                .sync_dingtalk_personal_profile(identity, user.id, now)
+                .await
+            {
+                warn!(
+                    user_id = %user.id,
+                    error_code = error.code(),
+                    "DingTalk personal profile sync failed; continuing login"
+                );
+            }
         }
 
         if let Err(error) = self
@@ -209,6 +219,30 @@ impl AuthService {
             expires_at,
             assigned_super_admin: login_user.assigned_super_admin,
         })
+    }
+
+    async fn resolve_login_user(
+        &self,
+        identity: &DingTalkIdentity,
+        now: DateTime<Utc>,
+    ) -> Result<LoginUser, AuthError> {
+        if self.super_admin_bootstrap_enabled {
+            Ok(self
+                .users
+                .find_or_create_for_login_with_super_admin_bootstrap(
+                    &identity.dingtalk_user_id,
+                    now,
+                )
+                .await?)
+        } else {
+            Ok(LoginUser {
+                user: self
+                    .users
+                    .find_or_create_for_login(&identity.dingtalk_user_id, now)
+                    .await?,
+                assigned_super_admin: false,
+            })
+        }
     }
 
     async fn sync_dingtalk_personal_profile(

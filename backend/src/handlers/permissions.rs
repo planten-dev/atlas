@@ -337,6 +337,7 @@ mod tests {
             auth_url: "https://login.dingtalk.com/oauth2/auth".to_string(),
             token_url: format!("{mock_base_url}/token"),
             user_info_url: format!("{mock_base_url}/me"),
+            user_getuserinfo_url: format!("{mock_base_url}/getuserinfo"),
             corp_token_url: format!("{mock_base_url}/gettoken"),
             department_listsub_url: format!("{mock_base_url}/listsub"),
             user_detail_url: format!("{mock_base_url}/user_detail"),
