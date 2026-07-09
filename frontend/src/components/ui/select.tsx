@@ -61,9 +61,11 @@ function SelectContent({
   children,
   side = "bottom",
   sideOffset = 4,
-  align = "center",
+  align = "start",
   alignOffset = 0,
-  alignItemWithTrigger = true,
+  // false:常规下拉(弹层在触发器下方)。true 是 macOS 式"选中项叠在触发器上",
+  // 会产生轻微的覆盖错位观感。
+  alignItemWithTrigger = false,
   ...props
 }: SelectPrimitive.Popup.Props &
   Pick<

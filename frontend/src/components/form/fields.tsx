@@ -133,6 +133,8 @@ export function FormSelect<T extends FieldValues>({
             <LabelText label={label} required={required} />
           </FieldLabel>
           <Select
+            // items 让触发器按选项 label 渲染选中值,而非原始 value
+            items={options}
             value={field.value ?? null}
             onValueChange={(value) => field.onChange(value ?? undefined)}
             disabled={disabled}

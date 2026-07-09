@@ -2,16 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { PickerBase } from '@/components/pickers/PickerBase'
-import { CustomerFormFields, useCustomerForm } from '@/components/customers/CustomerForm'
-import { customersListOptions, customerDetailOptions, useCreateCustomer } from '@/hooks/useCustomers'
-import { notify } from '@/lib/notify'
+import { CreateCustomerDialog } from '@/components/customers/CreateCustomerDialog'
+import { customersListOptions, customerDetailOptions } from '@/hooks/useCustomers'
 
 function useDebounced<T>(value: T, delay = 300): T {
   const [debounced, setDebounced] = useState(value)
@@ -95,6 +88,7 @@ export function CustomerPicker({
           open={createOpen}
           onOpenChange={setCreateOpen}
           initialName={keyword}
+          submitText="创建并选择"
           onCreated={(id) => {
             onChange(id)
             setCreateOpen(false)
@@ -102,67 +96,5 @@ export function CustomerPicker({
         />
       )}
     </>
-  )
-}
-
-function CreateCustomerDialog({
-  open,
-  onOpenChange,
-  initialName,
-  onCreated,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  initialName: string
-  onCreated: (customerId: string) => void
-}) {
-  const form = useCustomerForm({ name: initialName })
-  const createMutation = useCreateCustomer()
-
-  const submit = form.handleSubmit((values) => {
-    createMutation.mutate(
-      {
-        name: values.name,
-        system_id: values.system_id,
-        store_id: values.store_id,
-        remark: values.remark || undefined,
-        status: 'active',
-      },
-      {
-        onSuccess: (outcome) => {
-          if (outcome.kind === 'applied') {
-            notify.success('客户已创建')
-            onCreated(outcome.data.id)
-          } else {
-            notify.info('客户已提交审批,通过后可选择')
-            onOpenChange(false)
-          }
-          form.reset()
-        },
-        onError: (error) => notify.error(error),
-      },
-    )
-  })
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>新建客户</DialogTitle>
-        </DialogHeader>
-        <form
-          className="flex flex-col gap-4"
-          onSubmit={(e) => {
-            e.stopPropagation()
-            void submit(e)
-          }}
-        >
-          <CustomerFormFields form={form} />
-          <Button type="submit" disabled={createMutation.isPending}>
-            {createMutation.isPending ? '创建中…' : '创建并选择'}
-          </Button>
-        </form>
-      </DialogContent>
-    </Dialog>
   )
 }

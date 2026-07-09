@@ -32,6 +32,7 @@ import { requirePerm } from '@/auth/route-guard'
 import { salesDetailOptions, useVoidSalesRecord } from '@/hooks/useSales'
 import { useUpdateOperationCount } from '@/hooks/useCounts'
 import { usagesListOptions, useVoidUsage } from '@/hooks/useUsages'
+import { UsageFormDialog } from '@/components/usages/UsageForm'
 import { customerDetailOptions } from '@/hooks/useCustomers'
 import { activeCategoriesOptions } from '@/hooks/useCategories'
 import { formatDate, formatDateTime } from '@/lib/date'
@@ -291,6 +292,7 @@ function UsagesCard({ salesRecordId, hasCounts }: { salesRecordId: string; hasCo
   const query = useQuery(usagesListOptions({ sales_record_id: salesRecordId, page_size: 200 }))
   const voidMutation = useVoidUsage()
   const usages = query.data?.items ?? []
+  const [createOpen, setCreateOpen] = useState(false)
 
   return (
     <Card>
@@ -298,17 +300,18 @@ function UsagesCard({ salesRecordId, hasCounts }: { salesRecordId: string; hasCo
         <CardTitle className="text-base">耗用记录</CardTitle>
         {hasCounts && (
           <Guard perm="sales:operation-usages:write">
-            <Button
-              variant="outline"
-              size="sm"
-              render={<Link to="/usages/new" search={{ salesRecordId }} />}
-            >
+            <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>
               <Plus />
               登记耗用
             </Button>
           </Guard>
         )}
       </CardHeader>
+      <UsageFormDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        lockedSalesRecordId={salesRecordId}
+      />
       <CardContent>
         {query.isLoading ? (
           <p className="text-sm text-muted-foreground">加载中…</p>

@@ -116,6 +116,11 @@ function CountsListPage() {
         }}
       >
         <Select
+          items={[
+            { value: 'all', label: '全部状态' },
+            { value: 'active', label: '正常' },
+            { value: 'voided', label: '已作废' },
+          ]}
           value={search.status_filter ?? 'all'}
           onValueChange={(value) => {
             void navigate({

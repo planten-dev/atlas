@@ -1,4 +1,5 @@
-import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
+import { useState } from 'react'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import type { ColumnDef } from '@tanstack/react-table'
@@ -22,6 +23,7 @@ import { requirePerm } from '@/auth/route-guard'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { DesktopOnlyNotice } from '@/layouts/AppShell'
 import { usagesListOptions, type OperationUsageResponse } from '@/hooks/useUsages'
+import { UsageFormDialog } from '@/components/usages/UsageForm'
 import { formatDateTime } from '@/lib/date'
 import { RECORD_STATUS_LABELS } from '@/lib/labels'
 
@@ -90,6 +92,7 @@ function UsagesListPage() {
   const navigate = useNavigate({ from: Route.fullPath })
   const query = useQuery(usagesListOptions(search))
   const rows = query.data?.items ?? []
+  const [createOpen, setCreateOpen] = useState(false)
 
   if (isMobile) return <DesktopOnlyNotice />
 
@@ -102,12 +105,14 @@ function UsagesListPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">耗用记录</h1>
         <Guard perm="sales:operation-usages:write">
-          <Button render={<Link to="/usages/new" search={{}} />}>
+          <Button onClick={() => setCreateOpen(true)}>
             <Plus />
             登记耗用
           </Button>
         </Guard>
       </div>
+
+      <UsageFormDialog open={createOpen} onOpenChange={setCreateOpen} />
 
       <DataTableToolbar
         exportConfig={{
@@ -157,6 +162,11 @@ function UsagesListPage() {
             />
           </div>
           <Select
+            items={[
+              { value: 'all', label: '全部状态' },
+              { value: 'active', label: '正常' },
+              { value: 'voided', label: '已作废' },
+            ]}
             value={search.status_filter ?? 'all'}
             onValueChange={(value) =>
               patchSearch({

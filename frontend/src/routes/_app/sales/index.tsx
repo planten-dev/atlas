@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
@@ -23,8 +24,10 @@ import { UserPicker } from '@/components/pickers/UserPicker'
 import { CustomerPicker } from '@/components/pickers/CustomerPicker'
 import { Guard } from '@/auth/PermissionProvider'
 import { requirePerm } from '@/auth/route-guard'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { salesListOptions, type SalesRecordResponse } from '@/hooks/useSales'
 import { activeCategoriesOptions } from '@/hooks/useCategories'
+import { SalesFormDialog } from './-form/SalesFormDialog'
 import { customerNameCell } from './-form/cells'
 import { formatDate } from '@/lib/date'
 import { formatAmount, sumAmounts } from '@/lib/money'
@@ -102,6 +105,8 @@ const columns: ColumnDef<SalesRecordResponse>[] = [
 function SalesListPage() {
   const search = Route.useSearch()
   const navigate = useNavigate({ from: Route.fullPath })
+  const isMobile = useIsMobile()
+  const [createOpen, setCreateOpen] = useState(false)
   // 业务目录 ?category=<类别名> 预设:运行时按名解析为 content_category_id
   const { data: categories } = useQuery(activeCategoriesOptions)
   const presetCategoryId = search.category
@@ -126,12 +131,22 @@ function SalesListPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">销售记录</h1>
         <Guard perm="sales:records:write">
-          <Button render={<Link to="/sales/new" />}>
-            <Plus />
-            销售录入
-          </Button>
+          {/* 桌面弹窗;移动端跳分步页(表单过长不适合弹窗) */}
+          {isMobile ? (
+            <Button render={<Link to="/sales/new" />}>
+              <Plus />
+              销售录入
+            </Button>
+          ) : (
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus />
+              销售录入
+            </Button>
+          )}
         </Guard>
       </div>
+
+      {!isMobile && <SalesFormDialog open={createOpen} onOpenChange={setCreateOpen} />}
 
       <DataTableToolbar
         exportConfig={{
@@ -190,6 +205,11 @@ function SalesListPage() {
             />
           </div>
           <Select
+            items={[
+              { value: 'all', label: '全部状态' },
+              { value: 'active', label: '正常' },
+              { value: 'voided', label: '已作废' },
+            ]}
             value={search.status_filter ?? 'all'}
             onValueChange={(value) =>
               patchSearch({

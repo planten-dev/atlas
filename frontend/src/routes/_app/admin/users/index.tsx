@@ -96,6 +96,11 @@ function UsersPage() {
       <h1 className="text-xl font-semibold">用户</h1>
       <DataTableToolbar>
         <Select
+          items={[
+            { value: 'all', label: '全部状态' },
+            { value: 'active', label: '启用' },
+            { value: 'disabled', label: '停用' },
+          ]}
           value={search.status_filter ?? 'all'}
           onValueChange={(value) => {
             void navigate({
