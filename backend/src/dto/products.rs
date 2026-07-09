@@ -58,8 +58,24 @@ impl ProductResponse {
 pub struct ListProductsQuery {
     pub status_filter: Option<String>,
     pub category_id: Option<Uuid>,
+    pub keyword: Option<String>,
     pub page_number: Option<u64>,
     pub page_size: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ProductSuggestionsQuery {
+    pub status_filter: Option<String>,
+    pub category_id: Option<Uuid>,
+    pub keyword: Option<String>,
+    pub limit_per_field: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProductSuggestionsResponse {
+    pub series: Vec<String>,
+    pub brand_names: Vec<String>,
+    pub units: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

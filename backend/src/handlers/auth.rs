@@ -1,15 +1,18 @@
 use axum::{
     Json,
+    extract::rejection::JsonRejection,
     extract::{Extension, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
 };
 
 use crate::{
-    dto::auth::DingTalkCallbackQuery,
+    dto::auth::{DingTalkCallbackQuery, DingTalkH5LoginRequest, ErrorResponse},
     handlers::error::{auth_error_response, authz_error_response},
     middleware::auth::SESSION_COOKIE_NAME,
-    services::auth::{AuthError, CurrentSession, DingTalkCallbackInput, LoginResponse},
+    services::auth::{
+        AuthError, CurrentSession, DingTalkCallbackInput, LoginResponse, LoginSession,
+    },
     state::AppState,
 };
 
@@ -36,35 +39,12 @@ pub async fn dingtalk_callback(
 
     match state.auth.complete_dingtalk_callback(input).await {
         Ok(login) => {
-            if login.assigned_super_admin
-                && let Err(error) = state.authz.reload().await
-            {
-                return authz_error_response(error);
-            }
-
-            let cookie = session_cookie(
-                &login.session_token,
-                state.session_config.ttl_seconds,
-                state.session_config.cookie_secure,
-            );
-
-            if wants_html_redirect
-                && let Some(mut redirect) =
-                    frontend_success_redirect(&state.auth_config.frontend_callback_url)
-            {
-                redirect.headers_mut().insert(header::SET_COOKIE, cookie);
-                return redirect;
-            }
-
-            let mut response = (
-                StatusCode::OK,
-                Json(LoginResponse {
-                    user: login.user.clone(),
-                }),
+            login_response(
+                &state,
+                login,
+                wants_html_redirect.then_some(state.auth_config.frontend_callback_url.as_str()),
             )
-                .into_response();
-            response.headers_mut().insert(header::SET_COOKIE, cookie);
-            response
+            .await
         }
         Err(error) => {
             if wants_html_redirect
@@ -76,6 +56,34 @@ pub async fn dingtalk_callback(
 
             auth_error_response(error)
         }
+    }
+}
+
+pub async fn dingtalk_h5_login(
+    State(state): State<AppState>,
+    payload: Result<Json<DingTalkH5LoginRequest>, JsonRejection>,
+) -> Response {
+    let payload = match payload {
+        Ok(Json(payload)) => payload,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "validation_error".to_string(),
+                    message: error.to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    match state
+        .auth
+        .complete_dingtalk_h5_login(&payload.auth_code)
+        .await
+    {
+        Ok(login) => login_response(&state, login, None).await,
+        Err(error) => auth_error_response(error),
     }
 }
 
@@ -105,6 +113,41 @@ pub async fn logout(
             response
         }
     }
+}
+
+async fn login_response(
+    state: &AppState,
+    login: LoginSession,
+    frontend_redirect_url: Option<&str>,
+) -> Response {
+    if login.assigned_super_admin
+        && let Err(error) = state.authz.reload().await
+    {
+        return authz_error_response(error);
+    }
+
+    let cookie = session_cookie(
+        &login.session_token,
+        state.session_config.ttl_seconds,
+        state.session_config.cookie_secure,
+    );
+
+    if let Some(callback_url) = frontend_redirect_url
+        && let Some(mut redirect) = frontend_success_redirect(callback_url)
+    {
+        redirect.headers_mut().insert(header::SET_COOKIE, cookie);
+        return redirect;
+    }
+
+    let mut response = (
+        StatusCode::OK,
+        Json(LoginResponse {
+            user: login.user.clone(),
+        }),
+    )
+        .into_response();
+    response.headers_mut().insert(header::SET_COOKIE, cookie);
+    response
 }
 
 fn request_prefers_html(headers: &HeaderMap) -> bool {
@@ -435,6 +478,235 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn h5_login_creates_session_cookie_and_authenticated_session() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let app = test_app(&mock_base_url).await;
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/auth/login/dingtalk/h5")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"authCode":"h5-code"}"#))
+                    .unwrap(),
+            )
+            .await
+            .expect("H5 login should be handled");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let cookie = response
+            .headers()
+            .get(header::SET_COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .expect("H5 login should set session cookie")
+            .split(';')
+            .next()
+            .expect("cookie pair should be present")
+            .to_string();
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("H5 login body should be readable");
+        let body: Value = serde_json::from_slice(&body).expect("H5 login body should be json");
+        assert_eq!(
+            body.pointer("/user/dingtalk_user_id")
+                .and_then(Value::as_str),
+            Some("ding-user-1")
+        );
+
+        let me_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/auth/me")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("me request should be handled");
+        assert_eq!(me_response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn h5_login_reuses_existing_user_and_updates_login_time() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+
+        let first_login = context
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/auth/login/dingtalk/h5")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"authCode":"h5-code"}"#))
+                    .unwrap(),
+            )
+            .await
+            .expect("first H5 login should be handled");
+        assert_eq!(first_login.status(), StatusCode::OK);
+
+        let first_user = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("user should exist after first H5 login");
+        let stale_login = chrono::Utc::now() - chrono::Duration::days(1);
+        let mut active: users_entity::ActiveModel = first_user.clone().into();
+        active.updated_at = Set(stale_login);
+        active.last_login_at = Set(Some(stale_login));
+        active
+            .update(&context.users.db)
+            .await
+            .expect("user login timestamp should be made stale");
+
+        let second_login = context
+            .app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/auth/login/dingtalk/h5")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"authCode":"h5-code"}"#))
+                    .unwrap(),
+            )
+            .await
+            .expect("second H5 login should be handled");
+        assert_eq!(second_login.status(), StatusCode::OK);
+
+        let second_user = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("user should still exist after second H5 login");
+        assert_eq!(second_user.id, first_user.id);
+        assert!(
+            second_user
+                .last_login_at
+                .expect("login timestamp should be set")
+                > stale_login
+        );
+    }
+
+    #[tokio::test]
+    async fn h5_login_rejects_empty_auth_code() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let app = test_app(&mock_base_url).await;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/auth/login/dingtalk/h5")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"authCode":"   "}"#))
+                    .unwrap(),
+            )
+            .await
+            .expect("H5 login should be handled");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn h5_login_rejects_missing_auth_code() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let app = test_app(&mock_base_url).await;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/auth/login/dingtalk/h5")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .expect("H5 login should be handled");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn h5_login_blocks_disabled_user() {
+        let mock_base_url = start_mock_dingtalk().await;
+        let context = test_context(&mock_base_url).await;
+
+        let first_login = context
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/auth/login/dingtalk/h5")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"authCode":"h5-code"}"#))
+                    .unwrap(),
+            )
+            .await
+            .expect("first H5 login should be handled");
+        assert_eq!(first_login.status(), StatusCode::OK);
+
+        let user = context
+            .users
+            .find_by_dingtalk_user_id("ding-user-1")
+            .await
+            .expect("user lookup should succeed")
+            .expect("user should exist after H5 login");
+        let mut active: users_entity::ActiveModel = user.into();
+        active.status = Set("disabled".to_string());
+        active
+            .update(&context.users.db)
+            .await
+            .expect("user should be disabled");
+
+        let blocked = context
+            .app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/auth/login/dingtalk/h5")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"authCode":"h5-code"}"#))
+                    .unwrap(),
+            )
+            .await
+            .expect("second H5 login should be handled");
+
+        assert_eq!(blocked.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn h5_login_reports_dingtalk_api_errors() {
+        let mock_base_url = start_mock_dingtalk_with_getuserinfo_response(json!({
+            "errcode": 60020,
+            "errmsg": "invalid code"
+        }))
+        .await;
+        let app = test_app(&mock_base_url).await;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/auth/login/dingtalk/h5")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"authCode":"bad-code"}"#))
+                    .unwrap(),
+            )
+            .await
+            .expect("H5 login should be handled");
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
     async fn missing_session_cookie_returns_unauthorized() {
         let mock_base_url = start_mock_dingtalk().await;
         let app = test_app(&mock_base_url).await;
@@ -574,6 +846,7 @@ mod tests {
             auth_url: "https://login.dingtalk.com/oauth2/auth".to_string(),
             token_url: format!("{mock_base_url}/token"),
             user_info_url: format!("{mock_base_url}/me"),
+            user_getuserinfo_url: format!("{mock_base_url}/getuserinfo"),
             corp_token_url: format!("{mock_base_url}/gettoken"),
             department_listsub_url: format!("{mock_base_url}/listsub"),
             user_detail_url: format!("{mock_base_url}/user_detail"),
@@ -645,6 +918,18 @@ mod tests {
     }
 
     async fn start_mock_dingtalk() -> String {
+        start_mock_dingtalk_with_getuserinfo_response(json!({
+            "errcode": 0,
+            "errmsg": "ok",
+            "result": {
+                "userid": "ding-user-1",
+                "associated_unionid": "union-id"
+            }
+        }))
+        .await
+    }
+
+    async fn start_mock_dingtalk_with_getuserinfo_response(getuserinfo_response: Value) -> String {
         async fn token() -> Json<Value> {
             Json(json!({
                 "accessToken": "provider-token",
@@ -670,6 +955,12 @@ mod tests {
             language: String,
         }
 
+        #[derive(serde::Deserialize)]
+        struct H5UserInfoForm {
+            access_token: String,
+            code: String,
+        }
+
         async fn gettoken() -> Json<Value> {
             Json(json!({
                 "errcode": 0,
@@ -693,10 +984,20 @@ mod tests {
             }))
         };
 
+        let getuserinfo = move |Form(form): Form<H5UserInfoForm>| {
+            let getuserinfo_response = getuserinfo_response.clone();
+            async move {
+                assert_eq!(form.access_token, "corp-token");
+                assert!(!form.code.trim().is_empty());
+                Json(getuserinfo_response)
+            }
+        };
+
         let app = Router::new()
             .route("/token", post(token))
             .route("/me", get(me))
             .route("/gettoken", get(gettoken))
+            .route("/getuserinfo", post(getuserinfo))
             .route("/user_detail", post(user_detail));
         let listener = TcpListener::bind("127.0.0.1:0")
             .await

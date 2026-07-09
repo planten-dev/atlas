@@ -8,21 +8,25 @@ use uuid::Uuid;
 use crate::{
     dto::products::{
         CreateProductRequest, ListProductsQuery, ListProductsResponse, PatchField, ProductResponse,
-        ProductStatus, ProductStatusParseError, UpdateProductRequest,
+        ProductStatus, ProductStatusParseError, ProductSuggestionsQuery, ProductSuggestionsResponse,
+        UpdateProductRequest,
     },
     entities::product_category,
     repositories::{
         RepositoryError,
         product_categories::ProductCategoryRepository,
-        products::{NewProduct, ProductChanges, ProductRepository},
+        products::{NewProduct, ProductChanges, ProductFilters, ProductRepository},
     },
 };
 
 const DEFAULT_PAGE_NUMBER: u64 = 1;
 const DEFAULT_PAGE_SIZE: u64 = 50;
 const MAX_PAGE_SIZE: u64 = 200;
+const DEFAULT_SUGGESTIONS_LIMIT: u64 = 50;
+const MAX_SUGGESTIONS_LIMIT: u64 = 200;
 
 const MAX_NAME_LENGTH: usize = 128;
+const MAX_KEYWORD_LENGTH: usize = 128;
 const MAX_SERIES_LENGTH: usize = 128;
 const MAX_BRAND_NAME_LENGTH: usize = 128;
 const MAX_SPECIFICATION_LENGTH: usize = 255;
@@ -87,11 +91,15 @@ impl ProductService {
             .as_deref()
             .map(|value| ProductStatus::parse("status_filter", value))
             .transpose()?;
+        let keyword = normalize_keyword("keyword", query.keyword, MAX_KEYWORD_LENGTH)?;
         let (products, total_count) = self
             .products
             .list_products(
-                status_filter.map(ProductStatus::as_str),
-                query.category_id,
+                ProductFilters {
+                    status_filter: status_filter.map(ProductStatus::as_str),
+                    category_id: query.category_id,
+                    keyword: keyword.as_deref(),
+                },
                 page_number,
                 page_size,
             )
@@ -107,6 +115,46 @@ impl ProductService {
             page_number,
             page_size,
             total_count,
+        })
+    }
+
+    #[tracing::instrument(level = "debug", skip(self, query))]
+    pub async fn product_suggestions(
+        &self,
+        query: ProductSuggestionsQuery,
+    ) -> Result<ProductSuggestionsResponse, ProductError> {
+        let status_filter = query
+            .status_filter
+            .as_deref()
+            .map(|value| ProductStatus::parse("status_filter", value))
+            .transpose()?;
+        let keyword = normalize_keyword("keyword", query.keyword, MAX_KEYWORD_LENGTH)?;
+        let limit_per_field = query.limit_per_field.unwrap_or(DEFAULT_SUGGESTIONS_LIMIT);
+        validate_suggestions_limit(limit_per_field)?;
+
+        let suggestions = self
+            .products
+            .product_suggestions(
+                ProductFilters {
+                    status_filter: status_filter.map(ProductStatus::as_str),
+                    category_id: query.category_id,
+                    keyword: keyword.as_deref(),
+                },
+                limit_per_field,
+            )
+            .await?;
+
+        debug!(
+            series_count = suggestions.series.len(),
+            brand_name_count = suggestions.brand_names.len(),
+            unit_count = suggestions.units.len(),
+            limit_per_field,
+            "loaded product suggestions through service"
+        );
+        Ok(ProductSuggestionsResponse {
+            series: suggestions.series,
+            brand_names: suggestions.brand_names,
+            units: suggestions.units,
         })
     }
 
@@ -195,6 +243,11 @@ impl ProductService {
         if self.products.find_by_id(product_id).await?.is_none() {
             return Err(ProductError::ProductNotFound);
         }
+        let reference_count = self.products.count_business_references(product_id).await?;
+        if reference_count > 0 {
+            warn!(%product_id, reference_count, "rejected product delete because it has business references");
+            return Err(ProductError::ProductHasReferences);
+        }
 
         let deleted = self.products.delete_by_id(product_id).await?;
         if !deleted {
@@ -265,6 +318,8 @@ pub enum ProductError {
     Repository(#[from] RepositoryError),
     #[error("product was not found")]
     ProductNotFound,
+    #[error("product has business references and cannot be deleted")]
+    ProductHasReferences,
     #[error("product category was not found")]
     ProductCategoryNotFound,
     #[error("product category is disabled")]
@@ -296,6 +351,7 @@ impl ProductError {
                 RepositoryError::Database(_) => "database_error",
             },
             Self::ProductNotFound => "product_not_found",
+            Self::ProductHasReferences => "product_has_references",
             Self::ProductCategoryNotFound => "product_category_not_found",
             Self::ProductCategoryDisabled => "product_category_disabled",
             Self::MissingRequiredField { .. }
@@ -338,6 +394,22 @@ fn required_text(
 }
 
 fn nullable_text(
+    field: &'static str,
+    value: Option<String>,
+    maximum: usize,
+) -> Result<Option<String>, ProductError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    validate_length(field, value, maximum)?;
+    Ok(Some(value.to_string()))
+}
+
+fn normalize_keyword(
     field: &'static str,
     value: Option<String>,
     maximum: usize,
@@ -481,6 +553,24 @@ fn validate_page_size(page_size: u64) -> Result<(), ProductError> {
     Ok(())
 }
 
+fn validate_suggestions_limit(limit: u64) -> Result<(), ProductError> {
+    if limit == 0 {
+        return Err(ProductError::InvalidPaginationMinimum {
+            field: "limit_per_field",
+            minimum: 1,
+        });
+    }
+
+    if limit > MAX_SUGGESTIONS_LIMIT {
+        return Err(ProductError::InvalidPaginationMaximum {
+            field: "limit_per_field",
+            maximum: MAX_SUGGESTIONS_LIMIT,
+        });
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,6 +617,104 @@ mod tests {
             .id
     }
 
+    async fn create_sales_line_reference(products: &ProductRepository, product_id: Uuid) {
+        use crate::repositories::{
+            customers::{CustomerRepository, NewCustomer},
+            sales_records::{NewSalesRecord, NewSalesRecordLine, SalesRecordRepository},
+            stores::{NewStore, StoreRepository},
+            systems::{NewSystem, SystemRepository},
+            users::UserRepository,
+        };
+        use chrono::TimeZone;
+
+        let now = chrono::Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
+        let users = UserRepository::new(products.db.clone());
+        let systems = SystemRepository::new(products.db.clone());
+        let stores = StoreRepository::new(products.db.clone());
+        let customers = CustomerRepository::new(products.db.clone());
+        let sales_records = SalesRecordRepository::new(products.db.clone());
+
+        let user = users
+            .find_or_create_for_login("product-reference-user", now)
+            .await
+            .expect("user should be created");
+        let system = systems
+            .create_system(
+                NewSystem {
+                    name: "reference system".to_string(),
+                    status: "active".to_string(),
+                },
+                now,
+            )
+            .await
+            .expect("system should be created");
+        let store = stores
+            .create_store(
+                NewStore {
+                    name: "reference store".to_string(),
+                    system_id: system.id,
+                    status: "active".to_string(),
+                },
+                now,
+            )
+            .await
+            .expect("store should be created");
+        let customer = customers
+            .create_customer(
+                NewCustomer {
+                    name: "reference customer".to_string(),
+                    creator_user_id: user.id,
+                    system_id: system.id,
+                    store_id: store.id,
+                    remark: None,
+                    status: "active".to_string(),
+                    attachments: None,
+                },
+                now,
+            )
+            .await
+            .expect("customer should be created");
+        let record = sales_records
+            .insert_sales_record(
+                &products.db,
+                NewSalesRecord {
+                    record_type: "sale".to_string(),
+                    customer_id: customer.id,
+                    record_date: now.date_naive(),
+                    customer_type: Some("new".to_string()),
+                    deal_type: Some("non_salon".to_string()),
+                    system_id: system.id,
+                    store_id: store.id,
+                    handler_user_id: user.id,
+                    expert_user_id: None,
+                    consultant_user_id: None,
+                    doctor_user_id: None,
+                    remark: None,
+                    status: "active".to_string(),
+                    created_by_user_id: user.id,
+                },
+                now,
+            )
+            .await
+            .expect("sales record should be inserted");
+        sales_records
+            .insert_sales_record_line(
+                &products.db,
+                NewSalesRecordLine {
+                    sales_record_id: record.id,
+                    product_id,
+                    item_name: "referenced".to_string(),
+                    receivable_amount: Decimal::new(10000, 2),
+                    operation_total_count: None,
+                    remark: None,
+                    status: "active".to_string(),
+                },
+                now,
+            )
+            .await
+            .expect("sales line should be inserted");
+    }
+
     fn create_request(name: &str, category_id: Uuid, price: &str) -> CreateProductRequest {
         CreateProductRequest {
             name: name.to_string(),
@@ -561,6 +749,7 @@ mod tests {
             .list_products(ListProductsQuery {
                 status_filter: Some("active".to_string()),
                 category_id: Some(category_id),
+                keyword: None,
                 page_number: None,
                 page_size: None,
             })
@@ -697,6 +886,7 @@ mod tests {
                 .list_products(ListProductsQuery {
                     status_filter: Some("deleted".to_string()),
                     category_id: None,
+                    keyword: None,
                     page_number: None,
                     page_size: None,
                 })
@@ -711,6 +901,7 @@ mod tests {
                 .list_products(ListProductsQuery {
                     status_filter: None,
                     category_id: None,
+                    keyword: None,
                     page_number: Some(0),
                     page_size: None,
                 })
@@ -725,12 +916,29 @@ mod tests {
                 .list_products(ListProductsQuery {
                     status_filter: None,
                     category_id: None,
+                    keyword: None,
                     page_number: None,
                     page_size: Some(MAX_PAGE_SIZE + 1),
                 })
                 .await,
             Err(ProductError::InvalidPaginationMaximum {
                 field: "page_size",
+                ..
+            })
+        ));
+
+        assert!(matches!(
+            service
+                .list_products(ListProductsQuery {
+                    status_filter: None,
+                    category_id: None,
+                    keyword: Some("x".repeat(MAX_KEYWORD_LENGTH + 1)),
+                    page_number: None,
+                    page_size: None,
+                })
+                .await,
+            Err(ProductError::FieldTooLong {
+                field: "keyword",
                 ..
             })
         ));
@@ -789,6 +997,101 @@ mod tests {
                 )
                 .await,
             Err(ProductError::ProductCategoryDisabled)
+        ));
+    }
+
+    #[tokio::test]
+    async fn searches_products_and_returns_input_suggestions() {
+        let (categories, _, service) = test_services().await;
+        let category_id = default_category(&categories).await;
+        let mut serum = create_request("hydrating serum", category_id, "12.30");
+        serum.series = Some("skin line".to_string());
+        serum.brand_name = Some("atlas lab".to_string());
+        serum.specification = Some("30ml bottle".to_string());
+        serum.unit = Some("bottle".to_string());
+        let serum = service
+            .create_product(serum)
+            .await
+            .expect("serum product should be created");
+        let mut cream = create_request("repair cream", category_id, "25.00");
+        cream.series = Some("skin line".to_string());
+        cream.brand_name = Some("atlas lab".to_string());
+        cream.specification = Some("50g jar".to_string());
+        cream.unit = Some("jar".to_string());
+        service
+            .create_product(cream)
+            .await
+            .expect("cream product should be created");
+
+        let list = service
+            .list_products(ListProductsQuery {
+                status_filter: Some("active".to_string()),
+                category_id: Some(category_id),
+                keyword: Some("30ml".to_string()),
+                page_number: None,
+                page_size: None,
+            })
+            .await
+            .expect("products should list by keyword");
+        assert_eq!(list.total_count, 1);
+        assert_eq!(list.products[0].id, serum.id);
+
+        let blank_keyword = service
+            .list_products(ListProductsQuery {
+                status_filter: Some("active".to_string()),
+                category_id: Some(category_id),
+                keyword: Some("   ".to_string()),
+                page_number: None,
+                page_size: None,
+            })
+            .await
+            .expect("blank keyword should be ignored");
+        assert_eq!(blank_keyword.total_count, 2);
+
+        let suggestions = service
+            .product_suggestions(ProductSuggestionsQuery {
+                status_filter: Some("active".to_string()),
+                category_id: Some(category_id),
+                keyword: Some("atlas".to_string()),
+                limit_per_field: Some(10),
+            })
+            .await
+            .expect("suggestions should load");
+        assert_eq!(suggestions.series, vec!["skin line".to_string()]);
+        assert_eq!(suggestions.brand_names, vec!["atlas lab".to_string()]);
+        assert_eq!(
+            suggestions.units,
+            vec!["bottle".to_string(), "jar".to_string()]
+        );
+
+        assert!(matches!(
+            service
+                .product_suggestions(ProductSuggestionsQuery {
+                    limit_per_field: Some(MAX_SUGGESTIONS_LIMIT + 1),
+                    ..ProductSuggestionsQuery::default()
+                })
+                .await,
+            Err(ProductError::InvalidPaginationMaximum {
+                field: "limit_per_field",
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejects_delete_when_product_has_sales_line_references() {
+        let (categories, products, service) = test_services().await;
+        let category_id = default_category(&categories).await;
+        let product = service
+            .create_product(create_request("referenced", category_id, "12.30"))
+            .await
+            .expect("product should be created");
+
+        create_sales_line_reference(&products, product.id).await;
+
+        assert!(matches!(
+            service.delete_product(product.id).await,
+            Err(ProductError::ProductHasReferences)
         ));
     }
 }

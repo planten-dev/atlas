@@ -1,5 +1,5 @@
 use axum::{
-    Json,
+    Extension, Json,
     extract::{
         Path, Query, State,
         rejection::{JsonRejection, PathRejection, QueryRejection},
@@ -14,13 +14,14 @@ use crate::{
     dto::{
         auth::ErrorResponse,
         sales_records::{
-            CreateOperationUsageRequest, CreateSalesRecordBatchRequest, ListOperationCountsQuery,
-            ListOperationUsagesQuery, ListSalesRecordsQuery, UpdateOperationCountRequest,
-            UpdateOperationUsageRequest, UpdateSalesRecordRequest,
+            CreateCollectionPaymentRequest, CreateOperationUsageRequest, CreateSaleRecordRequest,
+            CreateServiceRecordRequest, ListOperationCountsQuery, ListOperationUsagesQuery,
+            ListSalesPaymentsQuery, ListSalesRecordsQuery, UpdateOperationCountRequest,
+            UpdateOperationUsageRequest,
         },
     },
     repositories::RepositoryError,
-    services::sales_records::SalesRecordError,
+    services::{auth::CurrentSession, sales_records::SalesRecordError},
     state::AppState,
 };
 
@@ -60,32 +61,11 @@ pub async fn sales_record_detail(
     }
 }
 
-pub async fn create_sales_record_batch(
+pub async fn create_sale_record(
     State(state): State<AppState>,
-    request: Result<Json<CreateSalesRecordBatchRequest>, JsonRejection>,
+    Extension(current_session): Extension<CurrentSession>,
+    request: Result<Json<CreateSaleRecordRequest>, JsonRejection>,
 ) -> Response {
-    let request = match request {
-        Ok(Json(request)) => request,
-        Err(error) => return validation_error_response("invalid request body", error),
-    };
-
-    match state.sales_records.create_sales_record_batch(request).await {
-        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
-        Err(error) => sales_record_error_response(error),
-    }
-}
-
-pub async fn update_sales_record(
-    State(state): State<AppState>,
-    path: Result<Path<Uuid>, PathRejection>,
-    request: Result<Json<UpdateSalesRecordRequest>, JsonRejection>,
-) -> Response {
-    let sales_record_id = match path {
-        Ok(Path(sales_record_id)) => sales_record_id,
-        Err(error) => {
-            return validation_error_response("invalid sales_record_id path parameter", error);
-        }
-    };
     let request = match request {
         Ok(Json(request)) => request,
         Err(error) => return validation_error_response("invalid request body", error),
@@ -93,10 +73,30 @@ pub async fn update_sales_record(
 
     match state
         .sales_records
-        .update_sales_record(sales_record_id, request)
+        .create_sale_record(current_session.user.id, request)
         .await
     {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+        Err(error) => sales_record_error_response(error),
+    }
+}
+
+pub async fn create_service_record(
+    State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
+    request: Result<Json<CreateServiceRecordRequest>, JsonRejection>,
+) -> Response {
+    let request = match request {
+        Ok(Json(request)) => request,
+        Err(error) => return validation_error_response("invalid request body", error),
+    };
+
+    match state
+        .sales_records
+        .create_service_record(current_session.user.id, request)
+        .await
+    {
+        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
         Err(error) => sales_record_error_response(error),
     }
 }
@@ -118,23 +118,67 @@ pub async fn void_sales_record(
     }
 }
 
-pub async fn delete_sales_record(
+pub async fn list_sales_payments(
+    State(state): State<AppState>,
+    query: Result<Query<ListSalesPaymentsQuery>, QueryRejection>,
+) -> Response {
+    let query = match query {
+        Ok(Query(query)) => query,
+        Err(error) => return validation_error_response("invalid query parameters", error),
+    };
+
+    match state.sales_records.list_sales_payments(query).await {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => sales_record_error_response(error),
+    }
+}
+
+pub async fn sales_payment_detail(
     State(state): State<AppState>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
-    let sales_record_id = match path {
-        Ok(Path(sales_record_id)) => sales_record_id,
-        Err(error) => {
-            return validation_error_response("invalid sales_record_id path parameter", error);
-        }
+    let payment_id = match path {
+        Ok(Path(payment_id)) => payment_id,
+        Err(error) => return validation_error_response("invalid payment_id path parameter", error),
+    };
+
+    match state.sales_records.sales_payment_detail(payment_id).await {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => sales_record_error_response(error),
+    }
+}
+
+pub async fn create_collection_payment(
+    State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
+    request: Result<Json<CreateCollectionPaymentRequest>, JsonRejection>,
+) -> Response {
+    let request = match request {
+        Ok(Json(request)) => request,
+        Err(error) => return validation_error_response("invalid request body", error),
     };
 
     match state
         .sales_records
-        .delete_sales_record(sales_record_id)
+        .create_collection_payment(current_session.user.id, request)
         .await
     {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+        Err(error) => sales_record_error_response(error),
+    }
+}
+
+pub async fn void_sales_payment(
+    State(state): State<AppState>,
+    path: Result<Path<Uuid>, PathRejection>,
+) -> Response {
+    let payment_id = match path {
+        Ok(Path(payment_id)) => payment_id,
+        Err(error) => return validation_error_response("invalid payment_id path parameter", error),
+    };
+
+    match state.sales_records.void_sales_payment(payment_id).await {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => sales_record_error_response(error),
     }
 }
@@ -158,16 +202,16 @@ pub async fn operation_count_detail(
     State(state): State<AppState>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
-    let sales_record_id = match path {
-        Ok(Path(sales_record_id)) => sales_record_id,
+    let sales_record_line_id = match path {
+        Ok(Path(sales_record_line_id)) => sales_record_line_id,
         Err(error) => {
-            return validation_error_response("invalid sales_record_id path parameter", error);
+            return validation_error_response("invalid sales_record_line_id path parameter", error);
         }
     };
 
     match state
         .sales_records
-        .operation_count_detail(sales_record_id)
+        .operation_count_detail(sales_record_line_id)
         .await
     {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
@@ -180,10 +224,10 @@ pub async fn update_operation_count(
     path: Result<Path<Uuid>, PathRejection>,
     request: Result<Json<UpdateOperationCountRequest>, JsonRejection>,
 ) -> Response {
-    let sales_record_id = match path {
-        Ok(Path(sales_record_id)) => sales_record_id,
+    let sales_record_line_id = match path {
+        Ok(Path(sales_record_line_id)) => sales_record_line_id,
         Err(error) => {
-            return validation_error_response("invalid sales_record_id path parameter", error);
+            return validation_error_response("invalid sales_record_line_id path parameter", error);
         }
     };
     let request = match request {
@@ -193,7 +237,7 @@ pub async fn update_operation_count(
 
     match state
         .sales_records
-        .update_operation_count(sales_record_id, request)
+        .update_operation_count(sales_record_line_id, request)
         .await
     {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
@@ -350,38 +394,56 @@ fn status_code(error: &SalesRecordError) -> StatusCode {
             RepositoryError::DisabledUser => StatusCode::FORBIDDEN,
         },
         SalesRecordError::SalesRecordNotFound
+        | SalesRecordError::SalesRecordLineNotFound
+        | SalesRecordError::SalesPaymentNotFound
         | SalesRecordError::OperationCountNotFound
         | SalesRecordError::OperationUsageNotFound
         | SalesRecordError::CustomerNotFound
         | SalesRecordError::SystemNotFound
         | SalesRecordError::StoreNotFound
+        | SalesRecordError::ProductNotFound
         | SalesRecordError::ProductCategoryNotFound
         | SalesRecordError::UserNotFound { .. } => StatusCode::NOT_FOUND,
-        SalesRecordError::OperationCountInsufficient
-        | SalesRecordError::OperationCountBelowUsed
-        | SalesRecordError::SalesRecordHasActiveUsages
+        SalesRecordError::PaymentExceedsOutstanding
+        | SalesRecordError::CollectionRequiresSaleRecord
+        | SalesRecordError::OperationCountRequiresSaleRecord
         | SalesRecordError::SalesRecordVoided
+        | SalesRecordError::SalesRecordLineVoided
         | SalesRecordError::OperationCountVoided
-        | SalesRecordError::OperationUsageVoided => StatusCode::CONFLICT,
+        | SalesRecordError::OperationUsageVoided
+        | SalesRecordError::OperationCountInsufficient
+        | SalesRecordError::OperationCountBelowUsed
+        | SalesRecordError::SalesRecordHasActiveUsages => StatusCode::CONFLICT,
         SalesRecordError::CustomerDisabled
+        | SalesRecordError::SystemDisabled
+        | SalesRecordError::StoreDisabled
+        | SalesRecordError::ProductDisabled
         | SalesRecordError::ProductCategoryDisabled
         | SalesRecordError::ReferencedUserDisabled { .. }
         | SalesRecordError::StoreSystemMismatch
-        | SalesRecordError::EmptyBatch
+        | SalesRecordError::SalesRecordLinesRequired
+        | SalesRecordError::PaymentAllocationsRequired
+        | SalesRecordError::DuplicatePaymentGuide
         | SalesRecordError::MissingRequiredField { .. }
         | SalesRecordError::FieldTooLong { .. }
         | SalesRecordError::InvalidEnumValue { .. }
         | SalesRecordError::InvalidMoney { .. }
         | SalesRecordError::NegativeMoney { .. }
+        | SalesRecordError::NonPositiveMoney { .. }
         | SalesRecordError::MoneyTooLarge { .. }
+        | SalesRecordError::InvalidRatio { .. }
+        | SalesRecordError::RatioOutOfRange { .. }
+        | SalesRecordError::PaymentAllocationRatioTotalInvalid
+        | SalesRecordError::PaymentAllocationAmountTotalInvalid
         | SalesRecordError::InvalidCountMinimum { .. }
         | SalesRecordError::OperationTotalCountRequired
         | SalesRecordError::OperationTotalCountNotAllowed
-        | SalesRecordError::MissingExpertFields
-        | SalesRecordError::UnexpectedExpertFields
-        | SalesRecordError::ContentCategoryOperationCountMismatch
+        | SalesRecordError::ServiceOperationCountNotAllowed
+        | SalesRecordError::SaleReceivableRequired
+        | SalesRecordError::ServiceReceivableMustBeZero
         | SalesRecordError::InvalidPaginationMinimum { .. }
-        | SalesRecordError::InvalidPaginationMaximum { .. } => StatusCode::BAD_REQUEST,
+        | SalesRecordError::InvalidPaginationMaximum { .. }
+        | SalesRecordError::InvalidRecordTypeInternal => StatusCode::BAD_REQUEST,
     }
 }
 
@@ -398,7 +460,7 @@ mod tests {
             departments::DepartmentRepository,
             events::EventRepository,
             product_categories::ProductCategoryRepository,
-            products::ProductRepository,
+            products::{NewProduct, ProductRepository},
             sales_records::SalesRecordRepository,
             sessions::SessionRepository,
             stores::{NewStore, StoreRepository},
@@ -420,6 +482,7 @@ mod tests {
         http::{Method, Request, header},
         routing::{get, post},
     };
+    use sea_orm::entity::prelude::Decimal;
     use serde_json::{Value, json};
     use std::path::PathBuf;
     use tokio::net::TcpListener;
@@ -433,6 +496,7 @@ mod tests {
         stores: StoreRepository,
         customers: CustomerRepository,
         categories: ProductCategoryRepository,
+        products: ProductRepository,
     }
 
     #[tokio::test]
@@ -457,15 +521,12 @@ mod tests {
             .app
             .oneshot(request(
                 Method::POST,
-                &format!(
-                    "/api/v1/sales-record-operation-usages/delete/{}",
-                    Uuid::new_v4()
-                ),
+                "/api/v1/sales-records/create-sale",
                 None,
-                None,
+                Some(json!({})),
             ))
             .await
-            .expect("operation usage delete request should be handled");
+            .expect("sales create request should be handled");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
@@ -475,9 +536,6 @@ mod tests {
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        let (system_id, store_id) = create_scope(&context, "scope-a").await;
-        let customer_id = create_customer(&context, user_id, system_id, store_id).await;
-        let category_id = operation_category(&context).await;
 
         let forbidden = context
             .app
@@ -510,16 +568,9 @@ mod tests {
             .app
             .oneshot(request(
                 Method::POST,
-                "/api/v1/sales-records/create-batch",
+                "/api/v1/sales-records/create-sale",
                 Some(&cookie),
-                Some(create_batch_body(
-                    customer_id,
-                    system_id,
-                    store_id,
-                    category_id,
-                    user_id,
-                    Some(2),
-                )),
+                Some(json!({})),
             ))
             .await
             .expect("sales create request should be handled");
@@ -527,7 +578,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sales_record_operation_flow_via_http() {
+    async fn sales_record_and_payment_flow_via_http() {
         let mock_base_url = start_mock_dingtalk().await;
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
@@ -535,61 +586,86 @@ mod tests {
         grant_all_sales_permissions(&context, user_id).await;
         let (system_id, store_id) = create_scope(&context, "scope-a").await;
         let customer_id = create_customer(&context, user_id, system_id, store_id).await;
-        let category_id = operation_category(&context).await;
-
-        let mut legacy_body = create_batch_body(
-            customer_id,
-            system_id,
-            store_id,
-            category_id,
-            user_id,
-            Some(2),
-        );
-        legacy_body["records"][0]["department_id"] = json!(Uuid::new_v4());
-        let legacy_response = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::POST,
-                "/api/v1/sales-records/create-batch",
-                Some(&cookie),
-                Some(legacy_body),
-            ))
-            .await
-            .expect("legacy sales create request should be handled");
-        assert_eq!(legacy_response.status(), StatusCode::BAD_REQUEST);
+        let product_id = create_product(&context, true).await;
 
         let create_response = context
             .app
             .clone()
             .oneshot(request(
                 Method::POST,
-                "/api/v1/sales-records/create-batch",
+                "/api/v1/sales-records/create-sale",
                 Some(&cookie),
-                Some(create_batch_body(
-                    customer_id,
-                    system_id,
-                    store_id,
-                    category_id,
-                    user_id,
-                    Some(2),
-                )),
+                Some(json!({
+                    "customer_id": customer_id,
+                    "record_date": "2026-07-08",
+                    "customer_type": "new",
+                    "deal_type": "non_salon",
+                    "handler_user_id": user_id,
+                    "lines": [{
+                        "product_id": product_id,
+                        "item_name": "operation item",
+                        "receivable_amount": "300.00",
+                        "operation_total_count": 3
+                    }],
+                    "payment": {
+                        "paid_amount": "100.00",
+                        "paid_at": "2026-07-08T10:00:00Z",
+                        "allocations": [{
+                            "guide_user_id": user_id,
+                            "allocation_ratio": "100.00"
+                        }]
+                    }
+                })),
             ))
             .await
             .expect("sales create request should be handled");
-        assert_eq!(create_response.status(), StatusCode::CREATED);
+        let create_status = create_response.status();
         let created = response_json(create_response).await;
-        assert!(created.pointer("/sales_records/0/department_id").is_none());
+        assert_eq!(create_status, StatusCode::CREATED, "{created}");
         let sales_record_id = created
-            .pointer("/sales_records/0/id")
+            .pointer("/id")
             .and_then(Value::as_str)
             .expect("sales record id should exist")
             .to_string();
+        let sales_record_line_id = created
+            .pointer("/lines/0/id")
+            .and_then(Value::as_str)
+            .expect("line id should exist")
+            .to_string();
         assert_eq!(
-            created
-                .pointer("/sales_records/0/operation_count/total_count")
-                .and_then(Value::as_i64),
-            Some(2)
+            created.pointer("/outstanding_amount").and_then(Value::as_str),
+            Some("200.00")
+        );
+
+        let collect_response = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/api/v1/sales-payments/collect",
+                Some(&cookie),
+                Some(json!({
+                    "sales_record_id": sales_record_id,
+                    "paid_amount": "200.00",
+                    "paid_at": "2026-07-09T10:00:00Z",
+                    "allocations": [{
+                        "guide_user_id": user_id,
+                        "allocation_ratio": "100.00"
+                    }]
+                })),
+            ))
+            .await
+            .expect("collection request should be handled");
+        assert_eq!(collect_response.status(), StatusCode::CREATED);
+        let collection = response_json(collect_response).await;
+        let payment_id = collection
+            .pointer("/id")
+            .and_then(Value::as_str)
+            .expect("payment id should exist")
+            .to_string();
+        assert_eq!(
+            collection.pointer("/payment_type").and_then(Value::as_str),
+            Some("collection")
         );
 
         let count_detail = context
@@ -597,12 +673,12 @@ mod tests {
             .clone()
             .oneshot(request(
                 Method::GET,
-                &format!("/api/v1/sales-record-operation-counts/detail/{sales_record_id}"),
+                &format!("/api/v1/sales-record-operation-counts/detail/{sales_record_line_id}"),
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("count detail request should be handled");
+            .expect("operation count detail should be handled");
         assert_eq!(count_detail.status(), StatusCode::OK);
 
         let usage_response = context
@@ -613,122 +689,27 @@ mod tests {
                 "/api/v1/sales-record-operation-usages/create",
                 Some(&cookie),
                 Some(json!({
-                    "sales_record_id": sales_record_id,
-                    "operated_at": "2026-07-08T09:00:00Z",
+                    "sales_record_line_id": sales_record_line_id,
+                    "operated_at": "2026-07-09T09:00:00Z",
                     "operator_user_id": user_id,
-                    "operation_count": 1,
-                    "remark": "first"
+                    "operation_count": 1
                 })),
             ))
             .await
-            .expect("usage create request should be handled");
+            .expect("operation usage create should be handled");
         assert_eq!(usage_response.status(), StatusCode::CREATED);
-        let usage = response_json(usage_response).await;
-        let usage_id = usage
-            .pointer("/id")
-            .and_then(Value::as_str)
-            .expect("usage id should exist")
-            .to_string();
 
-        let update_usage = context
+        let void_payment = context
             .app
-            .clone()
             .oneshot(request(
                 Method::POST,
-                &format!("/api/v1/sales-record-operation-usages/update/{usage_id}"),
-                Some(&cookie),
-                Some(json!({"operation_count": 2, "remark": null})),
-            ))
-            .await
-            .expect("usage update request should be handled");
-        assert_eq!(update_usage.status(), StatusCode::OK);
-        let updated_usage = response_json(update_usage).await;
-        assert_eq!(
-            updated_usage
-                .pointer("/operation_count")
-                .and_then(Value::as_i64),
-            Some(2)
-        );
-
-        let list_usages = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::GET,
-                &format!(
-                    "/api/v1/sales-record-operation-usages/list?sales_record_id={sales_record_id}"
-                ),
+                &format!("/api/v1/sales-payments/void/{payment_id}"),
                 Some(&cookie),
                 None,
             ))
             .await
-            .expect("usages list request should be handled");
-        assert_eq!(list_usages.status(), StatusCode::OK);
-        assert_eq!(
-            response_json(list_usages)
-                .await
-                .pointer("/total_count")
-                .and_then(Value::as_u64),
-            Some(1)
-        );
-
-        let void_usage = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::POST,
-                &format!("/api/v1/sales-record-operation-usages/void/{usage_id}"),
-                Some(&cookie),
-                None,
-            ))
-            .await
-            .expect("usage void request should be handled");
-        assert_eq!(void_usage.status(), StatusCode::OK);
-
-        let delete_usage = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::POST,
-                &format!("/api/v1/sales-record-operation-usages/delete/{usage_id}"),
-                Some(&cookie),
-                None,
-            ))
-            .await
-            .expect("usage delete request should be handled");
-        assert_eq!(delete_usage.status(), StatusCode::NO_CONTENT);
-
-        let void_record = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::POST,
-                &format!("/api/v1/sales-records/void/{sales_record_id}"),
-                Some(&cookie),
-                None,
-            ))
-            .await
-            .expect("sales void request should be handled");
-        assert_eq!(void_record.status(), StatusCode::OK);
-        assert_eq!(
-            response_json(void_record)
-                .await
-                .pointer("/status")
-                .and_then(Value::as_str),
-            Some("voided")
-        );
-
-        let delete_record = context
-            .app
-            .oneshot(request(
-                Method::POST,
-                &format!("/api/v1/sales-records/delete/{sales_record_id}"),
-                Some(&cookie),
-                None,
-            ))
-            .await
-            .expect("sales delete request should be handled");
-        assert_eq!(delete_record.status(), StatusCode::NO_CONTENT);
+            .expect("payment void should be handled");
+        assert_eq!(void_payment.status(), StatusCode::OK);
     }
 
     async fn test_context(mock_base_url: &str) -> TestContext {
@@ -757,6 +738,7 @@ mod tests {
             auth_url: "https://login.dingtalk.com/oauth2/auth".to_string(),
             token_url: format!("{mock_base_url}/token"),
             user_info_url: format!("{mock_base_url}/me"),
+            user_getuserinfo_url: format!("{mock_base_url}/getuserinfo"),
             corp_token_url: format!("{mock_base_url}/gettoken"),
             department_listsub_url: format!("{mock_base_url}/listsub"),
             user_detail_url: format!("{mock_base_url}/user_detail"),
@@ -780,7 +762,7 @@ mod tests {
         let users_service = UserService::new(users.clone(), profiles, sessions);
         let product_categories_service =
             ProductCategoryService::new(product_categories.clone(), products.clone());
-        let products_service = ProductService::new(products, product_categories.clone());
+        let products_service = ProductService::new(products.clone(), product_categories.clone());
         let stores_service = StoreService::new(stores.clone(), systems.clone());
         let systems_service = SystemService::new(systems.clone(), stores.clone());
         let customers_service =
@@ -827,6 +809,7 @@ mod tests {
             stores,
             customers,
             categories: product_categories,
+            products,
         }
     }
 
@@ -837,7 +820,6 @@ mod tests {
                 "userId": "ding-user-1"
             }))
         }
-
         async fn me() -> Json<Value> {
             Json(json!({
                 "result": {
@@ -962,13 +944,31 @@ mod tests {
             .id
     }
 
-    async fn operation_category(context: &TestContext) -> Uuid {
-        context
+    async fn create_product(context: &TestContext, requires_operation_count: bool) -> Uuid {
+        let category = context
             .categories
-            .list_categories(Some("active"), Some(true), 1, 50)
+            .list_categories(Some("active"), Some(requires_operation_count), 1, 50)
             .await
             .expect("categories should list")
             .0[0]
+            .clone();
+        context
+            .products
+            .create_product(
+                NewProduct {
+                    name: "operation item".to_string(),
+                    category_id: category.id,
+                    series: None,
+                    brand_name: None,
+                    specification: None,
+                    unit: Some("unit".to_string()),
+                    unit_price: Decimal::new(10000, 2),
+                    status: "active".to_string(),
+                },
+                chrono::Utc::now(),
+            )
+            .await
+            .expect("product should be created")
             .id
     }
 
@@ -997,33 +997,6 @@ mod tests {
         ] {
             grant(context, user_id, object, action).await;
         }
-    }
-
-    fn create_batch_body(
-        customer_id: Uuid,
-        system_id: Uuid,
-        store_id: Uuid,
-        category_id: Uuid,
-        handler_user_id: Uuid,
-        operation_total_count: Option<i32>,
-    ) -> Value {
-        json!({
-            "records": [{
-                "customer_id": customer_id,
-                "sale_date": "2026-07-08",
-                "deal_status": "closed",
-                "customer_type": "new",
-                "deal_type": "non_salon",
-                "content_category_id": category_id,
-                "handler_user_id": handler_user_id,
-                "paid_amount": "100.00",
-                "unpaid_amount": "0.00",
-                "system_id": system_id,
-                "store_id": store_id,
-                "collaboration_type": "self_sale",
-                "operation_total_count": operation_total_count
-            }]
-        })
     }
 
     fn request(

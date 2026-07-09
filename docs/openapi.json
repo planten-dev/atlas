@@ -55,6 +55,59 @@
         }
       }
     },
+    "/api/v1/auth/login/dingtalk/h5": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Complete DingTalk H5 login",
+        "operationId": "completeDingTalkH5Login",
+        "description": "Accepts a temporary DingTalk H5 logon-free authCode from the frontend, exchanges it server-side for the real DingTalk contact userid, maps or creates the Atlas user, syncs DingTalk organization profile fields, creates a server-side session, and sets atlas_session as an HttpOnly cookie. This flow does not use OAuth state or a callback redirect.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DingTalkH5LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "DingTalk H5 identity verified and mapped to an Atlas user. A session cookie is set.",
+            "headers": {
+              "Set-Cookie": {
+                "description": "HttpOnly atlas_session cookie.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          }
+        }
+      }
+    },
     "/api/v1/auth/callback/dingtalk": {
       "get": {
         "tags": [
@@ -980,7 +1033,7 @@
         ],
         "summary": "List products",
         "operationId": "listProducts",
-        "description": "Requires permission products:read. Lists products with optional status/category filtering and pagination.",
+        "description": "Requires permission products:read. Lists sales-content master records with optional status, category, keyword filtering and pagination. Products are the selectable sales/service content, not sales record types.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -1009,6 +1062,16 @@
               "format": "uuid"
             },
             "description": "Only return products in this product category."
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Trimmed keyword matched against name, series, brand_name, specification and unit. Blank values are ignored."
           },
           {
             "name": "page_number",
@@ -1289,7 +1352,7 @@
         ],
         "summary": "Delete product",
         "operationId": "deleteProduct",
-        "description": "Requires permission products:write. Hard deletes one product record by id.",
+        "description": "Requires permission products:write. Hard deletes one product record by id only when it has no business references. Products referenced by sales_record_lines.product_id must be disabled instead.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -1322,6 +1385,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
@@ -2967,1047 +3033,6 @@
         }
       }
     },
-    "/api/v1/sales-records/list": {
-      "get": {
-        "tags": [
-          "Sales Records"
-        ],
-        "summary": "List sales records",
-        "operationId": "listSalesRecords",
-        "description": "Requires permission sales:records:read. Lists sales records with status, group, reference and sale-date filtering plus pagination.",
-        "security": [
-          {
-            "AtlasSessionCookie": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "status_filter",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "active",
-                "voided"
-              ]
-            },
-            "description": "Only return sales records with this status."
-          },
-          {
-            "name": "record_group_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "description": "Only return records created by the same batch request."
-          },
-          {
-            "name": "customer_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "system_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "store_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "handler_user_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "content_category_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "description": "Product category id used as sales content category."
-          },
-          {
-            "name": "sale_date_from",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "date"
-            },
-            "description": "Inclusive lower bound for sale_date."
-          },
-          {
-            "name": "sale_date_to",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "date"
-            },
-            "description": "Inclusive upper bound for sale_date."
-          },
-          {
-            "name": "page_number",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "default": 1
-            }
-          },
-          {
-            "name": "page_size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 200,
-              "default": 50
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Sales records page.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ListSalesRecordsResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/PermissionDenied"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/api/v1/sales-records/detail/{sales_record_id}": {
-      "get": {
-        "tags": [
-          "Sales Records"
-        ],
-        "summary": "Get sales record detail",
-        "operationId": "getSalesRecordDetail",
-        "description": "Requires permission sales:records:read. Returns one sales record by id, including its operation-count account when one exists.",
-        "security": [
-          {
-            "AtlasSessionCookie": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "sales_record_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "description": "Sales record id."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Sales record detail.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SalesRecordResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/PermissionDenied"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/api/v1/sales-records/create-batch": {
-      "post": {
-        "tags": [
-          "Sales Records"
-        ],
-        "summary": "Create sales records in a batch",
-        "operationId": "createSalesRecordBatch",
-        "description": "Requires permission sales:records:write. Creates one or more sales records in a single transaction. All records in the request share one record_group_id; categories requiring operation counts also create an operation-count account.",
-        "security": [
-          {
-            "AtlasSessionCookie": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateSalesRecordBatchRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Created sales records.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CreateSalesRecordBatchResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/PermissionDenied"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/api/v1/sales-records/update/{sales_record_id}": {
-      "post": {
-        "tags": [
-          "Sales Records"
-        ],
-        "summary": "Update sales record",
-        "operationId": "updateSalesRecord",
-        "description": "Requires permission sales:records:write. Applies a partial update. Omitted fields are unchanged; required fields reject null. Content category can only switch within the same operation-count requirement type.",
-        "security": [
-          {
-            "AtlasSessionCookie": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "sales_record_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "description": "Sales record id."
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateSalesRecordRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Updated sales record.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SalesRecordResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/PermissionDenied"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/api/v1/sales-records/void/{sales_record_id}": {
-      "post": {
-        "tags": [
-          "Sales Records"
-        ],
-        "summary": "Void sales record",
-        "operationId": "voidSalesRecord",
-        "description": "Requires permission sales:records:write. Marks the sales record and its operation-count account as voided. Returns 409 when active operation usages still exist.",
-        "security": [
-          {
-            "AtlasSessionCookie": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "sales_record_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "description": "Sales record id."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Voided sales record.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SalesRecordResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/PermissionDenied"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/api/v1/sales-records/delete/{sales_record_id}": {
-      "post": {
-        "tags": [
-          "Sales Records"
-        ],
-        "summary": "Delete sales record",
-        "operationId": "deleteSalesRecord",
-        "description": "Requires permission sales:records:write. Hard deletes one sales record. Returns 409 when active operation usages still exist.",
-        "security": [
-          {
-            "AtlasSessionCookie": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "sales_record_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "description": "Sales record id."
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Sales record was deleted."
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/PermissionDenied"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/api/v1/sales-record-operation-counts/list": {
-      "get": {
-        "tags": [
-          "Sales Record Operation Counts"
-        ],
-        "summary": "List sales record operation-count accounts",
-        "operationId": "listSalesRecordOperationCounts",
-        "description": "Requires permission sales:operation-counts:read. Lists operation-count accounts with optional status and sales-record filtering plus pagination.",
-        "security": [
-          {
-            "AtlasSessionCookie": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "status_filter",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "active",
-                "voided"
-              ]
-            },
-            "description": "Only return operation-count accounts with this status."
-          },
-          {
-            "name": "sales_record_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "page_number",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "default": 1
-            }
-          },
-          {
-            "name": "page_size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 200,
-              "default": 50
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Operation-count accounts page.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ListOperationCountsResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/PermissionDenied"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/api/v1/sales-record-operation-counts/detail/{sales_record_id}": {
-      "get": {
-        "tags": [
-          "Sales Record Operation Counts"
-        ],
-        "summary": "Get sales record operation-count account",
-        "operationId": "getSalesRecordOperationCountDetail",
-        "description": "Requires permission sales:operation-counts:read. Returns the operation-count account for one sales record.",
-        "security": [
-          {
-            "AtlasSessionCookie": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "sales_record_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "description": "Sales record id."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Operation-count account detail.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationCountResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/PermissionDenied"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/api/v1/sales-record-operation-counts/update/{sales_record_id}": {
-      "post": {
-        "tags": [
-          "Sales Record Operation Counts"
-        ],
-        "summary": "Update sales record operation-count account",
-        "operationId": "updateSalesRecordOperationCount",
-        "description": "Requires permission sales:operation-counts:write. Updates total_count while preserving used_count. Returns 409 if total_count would become lower than used_count or the account is voided.",
-        "security": [
-          {
-            "AtlasSessionCookie": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "sales_record_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "description": "Sales record id."
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateOperationCountRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Updated operation-count account.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationCountResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/PermissionDenied"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/api/v1/sales-record-operation-usages/list": {
-      "get": {
-        "tags": [
-          "Sales Record Operation Usages"
-        ],
-        "summary": "List operation usage records",
-        "operationId": "listSalesRecordOperationUsages",
-        "description": "Requires permission sales:operation-usages:read. Lists operation usage records with status, sales record, operator, doctor and operated-at filtering plus pagination.",
-        "security": [
-          {
-            "AtlasSessionCookie": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "status_filter",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "active",
-                "voided"
-              ]
-            },
-            "description": "Only return operation usage records with this status."
-          },
-          {
-            "name": "sales_record_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "operator_user_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "doctor_user_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "operated_at_from",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "date-time"
-            },
-            "description": "Inclusive lower bound for operated_at."
-          },
-          {
-            "name": "operated_at_to",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "date-time"
-            },
-            "description": "Inclusive upper bound for operated_at."
-          },
-          {
-            "name": "page_number",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "default": 1
-            }
-          },
-          {
-            "name": "page_size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 200,
-              "default": 50
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Operation usage records page.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ListOperationUsagesResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/PermissionDenied"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/api/v1/sales-record-operation-usages/detail/{usage_id}": {
-      "get": {
-        "tags": [
-          "Sales Record Operation Usages"
-        ],
-        "summary": "Get operation usage detail",
-        "operationId": "getSalesRecordOperationUsageDetail",
-        "description": "Requires permission sales:operation-usages:read. Returns one operation usage record by id.",
-        "security": [
-          {
-            "AtlasSessionCookie": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "usage_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "description": "Operation usage id."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Operation usage detail.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationUsageResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/PermissionDenied"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/api/v1/sales-record-operation-usages/create": {
-      "post": {
-        "tags": [
-          "Sales Record Operation Usages"
-        ],
-        "summary": "Create operation usage",
-        "operationId": "createSalesRecordOperationUsage",
-        "description": "Requires permission sales:operation-usages:write. Creates an active operation usage and increments the matching operation-count account used_count in the same transaction.",
-        "security": [
-          {
-            "AtlasSessionCookie": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateOperationUsageRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Created operation usage.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationUsageResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/PermissionDenied"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/api/v1/sales-record-operation-usages/update/{usage_id}": {
-      "post": {
-        "tags": [
-          "Sales Record Operation Usages"
-        ],
-        "summary": "Update operation usage",
-        "operationId": "updateSalesRecordOperationUsage",
-        "description": "Requires permission sales:operation-usages:write. Applies a partial update. Changing operation_count adjusts the matching operation-count account used_count in the same transaction.",
-        "security": [
-          {
-            "AtlasSessionCookie": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "usage_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "description": "Operation usage id."
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateOperationUsageRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Updated operation usage.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationUsageResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/PermissionDenied"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/api/v1/sales-record-operation-usages/void/{usage_id}": {
-      "post": {
-        "tags": [
-          "Sales Record Operation Usages"
-        ],
-        "summary": "Void operation usage",
-        "operationId": "voidSalesRecordOperationUsage",
-        "description": "Requires permission sales:operation-usages:write. Marks an active operation usage as voided and subtracts its operation_count from the matching used_count.",
-        "security": [
-          {
-            "AtlasSessionCookie": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "usage_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "description": "Operation usage id."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Voided operation usage.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationUsageResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/PermissionDenied"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/api/v1/sales-record-operation-usages/delete/{usage_id}": {
-      "post": {
-        "tags": [
-          "Sales Record Operation Usages"
-        ],
-        "summary": "Delete operation usage",
-        "operationId": "deleteSalesRecordOperationUsage",
-        "description": "Requires permission sales:operation-usages:write. Hard deletes one operation usage. Active usages are subtracted from used_count before deletion.",
-        "security": [
-          {
-            "AtlasSessionCookie": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "usage_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "description": "Operation usage id."
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Operation usage was deleted."
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/PermissionDenied"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
     "/api/v1/permissions/roles": {
       "get": {
         "tags": [
@@ -4798,6 +3823,1340 @@
           }
         }
       }
+    },
+    "/api/v1/sales-records/list": {
+      "get": {
+        "tags": [
+          "Sales Records"
+        ],
+        "summary": "List sales records",
+        "operationId": "listSalesRecords",
+        "description": "Requires permission sales:records:read. Lists sales or service facts. Sales records are the receivable/source facts; payments are the performance source.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "voided"
+              ]
+            },
+            "description": "Only return records with this status."
+          },
+          {
+            "name": "record_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sale",
+                "service"
+              ]
+            },
+            "description": "sale is a closed sale; service is service/pre-sale groundwork with zero receivable and no payment."
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "system_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "store_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "handler_user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "record_date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Inclusive lower bound for record_date."
+          },
+          {
+            "name": "record_date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Inclusive upper bound for record_date."
+          },
+          {
+            "name": "page_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sales records page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListSalesRecordsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-records/detail/{sales_record_id}": {
+      "get": {
+        "tags": [
+          "Sales Records"
+        ],
+        "summary": "Get sales record detail",
+        "operationId": "getSalesRecordDetail",
+        "description": "Requires permission sales:records:read. Returns one sales or service fact with lines, payments and payment allocations.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sales_record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Sales record id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sales record detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SalesRecordResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-records/create-sale": {
+      "post": {
+        "tags": [
+          "Sales Records"
+        ],
+        "summary": "Create sale record",
+        "operationId": "createSaleRecord",
+        "description": "Requires permission sales:records:write. Creates one sale fact, one or more product lines, and one initial payment in a single transaction. The customer determines system_id and store_id; product category determines whether a line needs operation counts.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSaleRecordRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created sale record.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SalesRecordResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-records/create-service": {
+      "post": {
+        "tags": [
+          "Sales Records"
+        ],
+        "summary": "Create service record",
+        "operationId": "createServiceRecord",
+        "description": "Requires permission sales:records:write. Creates a service/pre-sale groundwork fact. Lines must have receivable_amount 0.00. No payment, debt or performance is created.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateServiceRecordRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created service record.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SalesRecordResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-records/void/{sales_record_id}": {
+      "post": {
+        "tags": [
+          "Sales Records"
+        ],
+        "summary": "Void sales record",
+        "operationId": "voidSalesRecord",
+        "description": "Requires permission sales:records:write. Voids a sales record and its lines, payments and operation-count accounts. Active operation usages must be voided or deleted first.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sales_record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Sales record id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Voided sales record.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SalesRecordResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-payments/list": {
+      "get": {
+        "tags": [
+          "Sales Payments"
+        ],
+        "summary": "List sales payments",
+        "operationId": "listSalesPayments",
+        "description": "Requires permission sales:records:read. Lists initial payments and collection payments. Payments are the source of performance.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "voided"
+              ]
+            },
+            "description": "Only return payments with this status."
+          },
+          {
+            "name": "payment_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "initial",
+                "collection"
+              ]
+            },
+            "description": "initial is the sale-time payment; collection is later debt collection."
+          },
+          {
+            "name": "sales_record_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "paid_at_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Inclusive lower bound for paid_at."
+          },
+          {
+            "name": "paid_at_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Inclusive upper bound for paid_at."
+          },
+          {
+            "name": "page_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sales payments page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListSalesPaymentsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-payments/detail/{payment_id}": {
+      "get": {
+        "tags": [
+          "Sales Payments"
+        ],
+        "summary": "Get sales payment detail",
+        "operationId": "getSalesPaymentDetail",
+        "description": "Requires permission sales:records:read. Returns one payment with guide allocations.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "payment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Sales payment id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sales payment detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SalesPaymentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-payments/collect": {
+      "post": {
+        "tags": [
+          "Sales Payments"
+        ],
+        "summary": "Create collection payment",
+        "operationId": "createCollectionPayment",
+        "description": "Requires permission sales:records:write. Adds a collection payment to an existing active sale record. The payment cannot exceed the dynamic outstanding amount.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCollectionPaymentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created collection payment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SalesPaymentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-payments/void/{payment_id}": {
+      "post": {
+        "tags": [
+          "Sales Payments"
+        ],
+        "summary": "Void sales payment",
+        "operationId": "voidSalesPayment",
+        "description": "Requires permission sales:records:write. Voids one payment; outstanding amount is recalculated from active payments.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "payment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Sales payment id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Voided sales payment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SalesPaymentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-record-operation-counts/list": {
+      "get": {
+        "tags": [
+          "Sales Operation Counts"
+        ],
+        "summary": "List operation-count accounts",
+        "operationId": "listSalesRecordOperationCounts",
+        "description": "Requires permission sales:operation-counts:read. Operation-count accounts are attached to sales_record_lines.id.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "voided"
+              ]
+            }
+          },
+          {
+            "name": "sales_record_line_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "page_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operation-count account page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListOperationCountsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-record-operation-counts/detail/{sales_record_line_id}": {
+      "get": {
+        "tags": [
+          "Sales Operation Counts"
+        ],
+        "summary": "Get operation-count account",
+        "operationId": "getSalesRecordOperationCount",
+        "description": "Requires permission sales:operation-counts:read. Uses sales_record_line_id as the account id.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sales_record_line_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Sales record line id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operation-count account detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationCountResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-record-operation-counts/update/{sales_record_line_id}": {
+      "post": {
+        "tags": [
+          "Sales Operation Counts"
+        ],
+        "summary": "Update operation-count total",
+        "operationId": "updateSalesRecordOperationCount",
+        "description": "Requires permission sales:operation-counts:write. total_count cannot be lower than used_count.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sales_record_line_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Sales record line id."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateOperationCountRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated operation-count account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationCountResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-record-operation-usages/list": {
+      "get": {
+        "tags": [
+          "Sales Operation Usages"
+        ],
+        "summary": "List operation usages",
+        "operationId": "listSalesRecordOperationUsages",
+        "description": "Requires permission sales:operation-usages:read. Operation usages consume operation counts on a sales record line.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "voided"
+              ]
+            }
+          },
+          {
+            "name": "sales_record_line_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "operator_user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "doctor_user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "operated_at_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "operated_at_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "page_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operation usage page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListOperationUsagesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-record-operation-usages/detail/{usage_id}": {
+      "get": {
+        "tags": [
+          "Sales Operation Usages"
+        ],
+        "summary": "Get operation usage",
+        "operationId": "getSalesRecordOperationUsage",
+        "description": "Requires permission sales:operation-usages:read.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "usage_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Operation usage id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operation usage detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationUsageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-record-operation-usages/create": {
+      "post": {
+        "tags": [
+          "Sales Operation Usages"
+        ],
+        "summary": "Create operation usage",
+        "operationId": "createSalesRecordOperationUsage",
+        "description": "Requires permission sales:operation-usages:write. Creates an operation usage and increments used_count on the sales record line account.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOperationUsageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created operation usage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationUsageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-record-operation-usages/update/{usage_id}": {
+      "post": {
+        "tags": [
+          "Sales Operation Usages"
+        ],
+        "summary": "Update operation usage",
+        "operationId": "updateSalesRecordOperationUsage",
+        "description": "Requires permission sales:operation-usages:write. Adjusts used_count when operation_count changes.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "usage_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Operation usage id."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateOperationUsageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated operation usage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationUsageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-record-operation-usages/void/{usage_id}": {
+      "post": {
+        "tags": [
+          "Sales Operation Usages"
+        ],
+        "summary": "Void operation usage",
+        "operationId": "voidSalesRecordOperationUsage",
+        "description": "Requires permission sales:operation-usages:write. Voids an active usage and decrements used_count.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "usage_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Operation usage id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Voided operation usage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationUsageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/sales-record-operation-usages/delete/{usage_id}": {
+      "post": {
+        "tags": [
+          "Sales Operation Usages"
+        ],
+        "summary": "Delete operation usage",
+        "operationId": "deleteSalesRecordOperationUsage",
+        "description": "Requires permission sales:operation-usages:write. Hard deletes a usage and decrements used_count if it was active.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "usage_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Operation usage id."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Operation usage was deleted."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/v1/products/suggestions": {
+      "get": {
+        "tags": [
+          "Products"
+        ],
+        "summary": "Get product input suggestions",
+        "operationId": "getProductSuggestions",
+        "description": "Requires permission products:read. Returns distinct non-empty series, brand_name and unit values for product form suggestions. Supports the same status/category/keyword filters as product listing.",
+        "security": [
+          {
+            "AtlasSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "disabled"
+              ]
+            },
+            "description": "Only use products with this status."
+          },
+          {
+            "name": "category_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Only use products in this product category."
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Trimmed keyword matched against name, series, brand_name, specification and unit. Blank values are ignored."
+          },
+          {
+            "name": "limit_per_field",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "description": "Maximum number of suggestions to return for each field."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Product input suggestions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductSuggestionsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4830,6 +5189,18 @@
         "properties": {
           "user": {
             "$ref": "#/components/schemas/UserResponse"
+          }
+        }
+      },
+      "DingTalkH5LoginRequest": {
+        "type": "object",
+        "required": [
+          "authCode"
+        ],
+        "properties": {
+          "authCode": {
+            "type": "string",
+            "description": "Temporary DingTalk H5 logon-free authorization code obtained by the frontend in the DingTalk container."
           }
         }
       },
@@ -5556,7 +5927,8 @@
             "type": "string",
             "format": "date-time"
           }
-        }
+        },
+        "description": "Sales-content master record. This represents selectable content such as products, medical items, instrument items and cards; sale/service is represented by sales_records.record_type, not by product category."
       },
       "ListProductsResponse": {
         "type": "object",
@@ -5646,7 +6018,8 @@
             ],
             "default": "active"
           }
-        }
+        },
+        "description": "Creates a sales-content master record. category_id must reference an active product category."
       },
       "UpdateProductRequest": {
         "type": "object",
@@ -5701,7 +6074,7 @@
             ]
           }
         },
-        "description": "Partial update request. Omitted fields are unchanged; nullable text fields can be cleared with null. category_id, name, unit_price and status reject null."
+        "description": "Partially updates a sales-content master record."
       },
       "SystemResponse": {
         "type": "object",
@@ -6150,7 +6523,7 @@
       "OperationCountResponse": {
         "type": "object",
         "required": [
-          "sales_record_id",
+          "sales_record_line_id",
           "total_count",
           "used_count",
           "remaining_count",
@@ -6159,7 +6532,7 @@
           "updated_at"
         ],
         "properties": {
-          "sales_record_id": {
+          "sales_record_line_id": {
             "type": "string",
             "format": "uuid"
           },
@@ -6196,24 +6569,25 @@
         "type": "object",
         "required": [
           "id",
-          "record_group_id",
+          "record_type",
           "customer_id",
-          "sale_date",
-          "deal_status",
+          "record_date",
           "customer_type",
           "deal_type",
-          "content_category_id",
-          "handler_user_id",
-          "paid_amount",
-          "unpaid_amount",
           "system_id",
           "store_id",
-          "collaboration_type",
+          "handler_user_id",
           "expert_user_id",
           "consultant_user_id",
           "doctor_user_id",
+          "remark",
           "status",
-          "operation_count",
+          "created_by_user_id",
+          "receivable_amount",
+          "paid_amount",
+          "outstanding_amount",
+          "lines",
+          "payments",
           "created_at",
           "updated_at"
         ],
@@ -6222,61 +6596,48 @@
             "type": "string",
             "format": "uuid"
           },
-          "record_group_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid",
-            "description": "Shared by records created from the same create-batch request."
+          "record_type": {
+            "type": "string",
+            "enum": [
+              "sale",
+              "service"
+            ]
           },
           "customer_id": {
             "type": "string",
             "format": "uuid"
           },
-          "sale_date": {
+          "record_date": {
             "type": "string",
             "format": "date"
           },
-          "deal_status": {
-            "type": "string",
-            "enum": [
-              "closed",
-              "not_closed"
-            ]
-          },
           "customer_type": {
-            "type": "string",
-            "enum": [
-              "new",
-              "returning"
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "new",
+                  "returning"
+                ]
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "deal_type": {
-            "type": "string",
-            "enum": [
-              "non_salon",
-              "salon"
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "non_salon",
+                  "salon"
+                ]
+              },
+              {
+                "type": "null"
+              }
             ]
-          },
-          "content_category_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Product category id used as sales content category."
-          },
-          "handler_user_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "paid_amount": {
-            "type": "string",
-            "pattern": "^\\d{1,10}(\\.\\d{2})$",
-            "description": "Decimal amount string returned with exactly two decimal places."
-          },
-          "unpaid_amount": {
-            "type": "string",
-            "pattern": "^\\d{1,10}(\\.\\d{2})$",
-            "description": "Decimal amount string returned with exactly two decimal places."
           },
           "system_id": {
             "type": "string",
@@ -6286,12 +6647,9 @@
             "type": "string",
             "format": "uuid"
           },
-          "collaboration_type": {
+          "handler_user_id": {
             "type": "string",
-            "enum": [
-              "expert_consultation",
-              "self_sale"
-            ]
+            "format": "uuid"
           },
           "expert_user_id": {
             "type": [
@@ -6314,6 +6672,13 @@
             ],
             "format": "uuid"
           },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          },
           "status": {
             "type": "string",
             "enum": [
@@ -6321,16 +6686,36 @@
               "voided"
             ]
           },
-          "operation_count": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/OperationCountResponse"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Present when the content category requires operation counts."
+          "created_by_user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "receivable_amount": {
+            "type": "string",
+            "pattern": "^\\d{1,10}(\\.\\d{2})$",
+            "description": "Decimal amount string returned with exactly two decimal places."
+          },
+          "paid_amount": {
+            "type": "string",
+            "pattern": "^\\d{1,10}(\\.\\d{2})$",
+            "description": "Decimal amount string returned with exactly two decimal places."
+          },
+          "outstanding_amount": {
+            "type": "string",
+            "pattern": "^\\d{1,10}(\\.\\d{2})$",
+            "description": "Decimal amount string returned with exactly two decimal places."
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SalesRecordLineResponse"
+            }
+          },
+          "payments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SalesPaymentResponse"
+            }
           },
           "created_at": {
             "type": "string",
@@ -6369,260 +6754,6 @@
           "total_count": {
             "type": "integer",
             "minimum": 0
-          }
-        }
-      },
-      "CreateSalesRecordBatchResponse": {
-        "type": "object",
-        "required": [
-          "record_group_id",
-          "sales_records"
-        ],
-        "properties": {
-          "record_group_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "sales_records": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SalesRecordResponse"
-            }
-          }
-        }
-      },
-      "CreateSalesRecordBatchRequest": {
-        "type": "object",
-        "required": [
-          "records"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "records": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-              "$ref": "#/components/schemas/CreateSalesRecordRequest"
-            }
-          }
-        }
-      },
-      "CreateSalesRecordRequest": {
-        "type": "object",
-        "required": [
-          "customer_id",
-          "sale_date",
-          "deal_status",
-          "customer_type",
-          "deal_type",
-          "content_category_id",
-          "handler_user_id",
-          "paid_amount",
-          "unpaid_amount",
-          "system_id",
-          "store_id",
-          "collaboration_type"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "customer_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "sale_date": {
-            "type": "string",
-            "format": "date"
-          },
-          "deal_status": {
-            "type": "string",
-            "enum": [
-              "closed",
-              "not_closed"
-            ]
-          },
-          "customer_type": {
-            "type": "string",
-            "enum": [
-              "new",
-              "returning"
-            ]
-          },
-          "deal_type": {
-            "type": "string",
-            "enum": [
-              "non_salon",
-              "salon"
-            ]
-          },
-          "content_category_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Must reference an active product category. If the category requires operation counts, operation_total_count is required; otherwise it is not allowed."
-          },
-          "handler_user_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Must reference an active user."
-          },
-          "paid_amount": {
-            "type": "string",
-            "pattern": "^\\d{1,10}(\\.\\d{1,2})?$",
-            "description": "Decimal amount string stored as DECIMAL(12,2)."
-          },
-          "unpaid_amount": {
-            "type": "string",
-            "pattern": "^\\d{1,10}(\\.\\d{1,2})?$",
-            "description": "Decimal amount string stored as DECIMAL(12,2)."
-          },
-          "system_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Must reference an existing system."
-          },
-          "store_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Must reference an existing store owned by system_id."
-          },
-          "collaboration_type": {
-            "type": "string",
-            "enum": [
-              "expert_consultation",
-              "self_sale"
-            ],
-            "description": "expert_consultation requires expert_user_id; self_sale requires it to be omitted."
-          },
-          "expert_user_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid",
-            "description": "Required for expert_consultation and not allowed for self_sale."
-          },
-          "consultant_user_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "doctor_user_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "operation_total_count": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "minimum": 1,
-            "description": "Required when content_category_id.requires_operation_count is true and rejected otherwise."
-          }
-        }
-      },
-      "UpdateSalesRecordRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "customer_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Omit to leave unchanged. null is rejected because customer_id is required."
-          },
-          "sale_date": {
-            "type": "string",
-            "format": "date",
-            "description": "Omit to leave unchanged. null is rejected because sale_date is required."
-          },
-          "deal_status": {
-            "type": "string",
-            "enum": [
-              "closed",
-              "not_closed"
-            ],
-            "description": "Omit to leave unchanged. null is rejected because deal_status is required."
-          },
-          "customer_type": {
-            "type": "string",
-            "enum": [
-              "new",
-              "returning"
-            ],
-            "description": "Omit to leave unchanged. null is rejected because customer_type is required."
-          },
-          "deal_type": {
-            "type": "string",
-            "enum": [
-              "non_salon",
-              "salon"
-            ],
-            "description": "Omit to leave unchanged. null is rejected because deal_type is required."
-          },
-          "content_category_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Omit to leave unchanged. null is rejected. The new category must have the same operation-count requirement type as the current record."
-          },
-          "handler_user_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Omit to leave unchanged. null is rejected because handler_user_id is required."
-          },
-          "paid_amount": {
-            "type": "string",
-            "pattern": "^\\d{1,10}(\\.\\d{1,2})?$",
-            "description": "Omit to leave unchanged. null is rejected because paid_amount is required."
-          },
-          "unpaid_amount": {
-            "type": "string",
-            "pattern": "^\\d{1,10}(\\.\\d{1,2})?$",
-            "description": "Omit to leave unchanged. null is rejected because unpaid_amount is required."
-          },
-          "system_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Omit to leave unchanged. null is rejected because system_id is required."
-          },
-          "store_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Omit to leave unchanged. null is rejected because store_id is required."
-          },
-          "collaboration_type": {
-            "type": "string",
-            "enum": [
-              "expert_consultation",
-              "self_sale"
-            ],
-            "description": "Omit to leave unchanged. null is rejected because collaboration_type is required."
-          },
-          "expert_user_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid",
-            "description": "Omit to leave unchanged. null clears the expert user."
-          },
-          "consultant_user_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid",
-            "description": "Omit to leave unchanged. null clears the consultant user."
-          },
-          "doctor_user_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid",
-            "description": "Omit to leave unchanged. null clears the doctor user."
           }
         }
       },
@@ -6665,8 +6796,7 @@
         "properties": {
           "total_count": {
             "type": "integer",
-            "minimum": 1,
-            "description": "Cannot be lower than the current used_count."
+            "minimum": 1
           }
         }
       },
@@ -6674,7 +6804,7 @@
         "type": "object",
         "required": [
           "id",
-          "sales_record_id",
+          "sales_record_line_id",
           "operated_at",
           "operator_user_id",
           "doctor_user_id",
@@ -6689,7 +6819,7 @@
             "type": "string",
             "format": "uuid"
           },
-          "sales_record_id": {
+          "sales_record_line_id": {
             "type": "string",
             "format": "uuid"
           },
@@ -6769,13 +6899,13 @@
       "CreateOperationUsageRequest": {
         "type": "object",
         "required": [
-          "sales_record_id",
+          "sales_record_line_id",
           "operated_at",
           "operator_user_id"
         ],
         "additionalProperties": false,
         "properties": {
-          "sales_record_id": {
+          "sales_record_line_id": {
             "type": "string",
             "format": "uuid"
           },
@@ -6785,16 +6915,14 @@
           },
           "operator_user_id": {
             "type": "string",
-            "format": "uuid",
-            "description": "Must reference an active user."
+            "format": "uuid"
           },
           "doctor_user_id": {
             "type": [
               "string",
               "null"
             ],
-            "format": "uuid",
-            "description": "When provided, must reference an active user."
+            "format": "uuid"
           },
           "operation_count": {
             "type": "integer",
@@ -6816,34 +6944,29 @@
         "properties": {
           "operated_at": {
             "type": "string",
-            "format": "date-time",
-            "description": "Omit to leave unchanged. null is rejected because operated_at is required."
+            "format": "date-time"
           },
           "operator_user_id": {
             "type": "string",
-            "format": "uuid",
-            "description": "Omit to leave unchanged. null is rejected because operator_user_id is required."
+            "format": "uuid"
           },
           "doctor_user_id": {
             "type": [
               "string",
               "null"
             ],
-            "format": "uuid",
-            "description": "Omit to leave unchanged. null clears the doctor user."
+            "format": "uuid"
           },
           "operation_count": {
             "type": "integer",
-            "minimum": 1,
-            "description": "Omit to leave unchanged. null is rejected because operation_count is required. Increasing this value requires enough remaining_count."
+            "minimum": 1
           },
           "remark": {
             "type": [
               "string",
               "null"
             ],
-            "maxLength": 2000,
-            "description": "Omit to leave unchanged. null or an empty string clears the remark."
+            "maxLength": 2000
           }
         }
       },
@@ -7276,6 +7399,572 @@
           "unchanged": {
             "type": "integer",
             "minimum": 0
+          }
+        }
+      },
+      "SalesRecordLineResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "sales_record_id",
+          "product_id",
+          "item_name",
+          "receivable_amount",
+          "operation_total_count",
+          "remark",
+          "status",
+          "operation_count",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sales_record_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "product_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "item_name": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "receivable_amount": {
+            "type": "string",
+            "pattern": "^\\d{1,10}(\\.\\d{2})$",
+            "description": "Decimal amount string returned with exactly two decimal places."
+          },
+          "operation_total_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "voided"
+            ]
+          },
+          "operation_count": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OperationCountResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SalesPaymentResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "sales_record_id",
+          "payment_type",
+          "paid_amount",
+          "paid_at",
+          "performance_status",
+          "status",
+          "remark",
+          "created_by_user_id",
+          "allocations",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sales_record_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "payment_type": {
+            "type": "string",
+            "enum": [
+              "initial",
+              "collection"
+            ]
+          },
+          "paid_amount": {
+            "type": "string",
+            "pattern": "^\\d{1,10}(\\.\\d{2})$",
+            "description": "Decimal amount string returned with exactly two decimal places."
+          },
+          "paid_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "performance_status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "posted"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "voided"
+            ]
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          },
+          "created_by_user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "allocations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SalesPaymentAllocationResponse"
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SalesPaymentAllocationResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "payment_id",
+          "guide_user_id",
+          "allocation_ratio",
+          "allocated_amount",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "payment_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "guide_user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "allocation_ratio": {
+            "type": "string",
+            "pattern": "^\\d{1,3}(\\.\\d{2})$"
+          },
+          "allocated_amount": {
+            "type": "string",
+            "pattern": "^\\d{1,10}(\\.\\d{2})$",
+            "description": "Decimal amount string returned with exactly two decimal places."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ListSalesPaymentsResponse": {
+        "type": "object",
+        "required": [
+          "sales_payments",
+          "page_number",
+          "page_size",
+          "total_count"
+        ],
+        "properties": {
+          "sales_payments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SalesPaymentResponse"
+            }
+          },
+          "page_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "total_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "CreateSaleRecordRequest": {
+        "type": "object",
+        "required": [
+          "customer_id",
+          "record_date",
+          "customer_type",
+          "deal_type",
+          "handler_user_id",
+          "lines",
+          "payment"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "record_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "customer_type": {
+            "type": "string",
+            "enum": [
+              "new",
+              "returning"
+            ]
+          },
+          "deal_type": {
+            "type": "string",
+            "enum": [
+              "non_salon",
+              "salon"
+            ]
+          },
+          "handler_user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expert_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "consultant_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "doctor_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          },
+          "lines": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/SalesRecordLineInput"
+            }
+          },
+          "payment": {
+            "$ref": "#/components/schemas/SalesPaymentInput"
+          }
+        }
+      },
+      "CreateServiceRecordRequest": {
+        "type": "object",
+        "required": [
+          "customer_id",
+          "record_date",
+          "handler_user_id",
+          "lines"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "record_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "customer_type": {
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "new",
+                  "returning"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deal_type": {
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "non_salon",
+                  "salon"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "handler_user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expert_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "consultant_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "doctor_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          },
+          "lines": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/SalesRecordLineInput"
+            },
+            "description": "For service records, every line receivable_amount must be 0.00 and operation_total_count is not allowed."
+          }
+        }
+      },
+      "SalesRecordLineInput": {
+        "type": "object",
+        "required": [
+          "product_id",
+          "item_name",
+          "receivable_amount"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "product_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Must reference an active product/sales-content master record."
+          },
+          "item_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Name snapshot at entry time."
+          },
+          "receivable_amount": {
+            "type": "string",
+            "pattern": "^\\d{1,10}(\\.\\d{1,2})?$",
+            "description": "Decimal amount string stored as DECIMAL(12,2)."
+          },
+          "operation_total_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "description": "Required for sale lines whose product category requires operation counts. Not allowed for service records."
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          }
+        }
+      },
+      "SalesPaymentInput": {
+        "type": "object",
+        "required": [
+          "paid_amount",
+          "paid_at",
+          "allocations"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "paid_amount": {
+            "type": "string",
+            "pattern": "^\\d{1,10}(\\.\\d{1,2})?$",
+            "description": "Initial payment amount. Must be greater than 0.00 and cannot exceed sale receivable amount."
+          },
+          "paid_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "allocations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/SalesPaymentAllocationInput"
+            }
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          }
+        }
+      },
+      "SalesPaymentAllocationInput": {
+        "type": "object",
+        "required": [
+          "guide_user_id",
+          "allocation_ratio"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "guide_user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "allocation_ratio": {
+            "type": "string",
+            "pattern": "^(100(\\.00)?|[1-9]?\\d(\\.\\d{1,2})?)$",
+            "description": "Allocation ratio. Ratios within one payment must total 100.00."
+          }
+        }
+      },
+      "CreateCollectionPaymentRequest": {
+        "type": "object",
+        "required": [
+          "sales_record_id",
+          "paid_amount",
+          "paid_at",
+          "allocations"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "sales_record_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Must reference an active sale record."
+          },
+          "paid_amount": {
+            "type": "string",
+            "pattern": "^\\d{1,10}(\\.\\d{1,2})?$",
+            "description": "Collection amount. Must be greater than 0.00 and cannot exceed outstanding amount."
+          },
+          "paid_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "allocations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/SalesPaymentAllocationInput"
+            }
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          }
+        }
+      },
+      "ProductSuggestionsResponse": {
+        "type": "object",
+        "required": [
+          "series",
+          "brand_names",
+          "units"
+        ],
+        "properties": {
+          "series": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Distinct non-empty series values."
+          },
+          "brand_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Distinct non-empty brand_name values."
+          },
+          "units": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Distinct non-empty unit values."
           }
         }
       }
