@@ -21,7 +21,6 @@ pub struct SalesRecordRepository {
 pub struct NewSalesRecord {
     pub record_group_id: Option<Uuid>,
     pub customer_id: Uuid,
-    pub department_id: Uuid,
     pub sale_date: NaiveDate,
     pub deal_status: String,
     pub customer_type: String,
@@ -34,9 +33,7 @@ pub struct NewSalesRecord {
     pub store_id: Uuid,
     pub collaboration_type: String,
     pub expert_user_id: Option<Uuid>,
-    pub expert_department_id: Option<Uuid>,
     pub consultant_user_id: Option<Uuid>,
-    pub consultant_department_id: Option<Uuid>,
     pub doctor_user_id: Option<Uuid>,
     pub status: String,
 }
@@ -44,7 +41,6 @@ pub struct NewSalesRecord {
 #[derive(Debug, Clone, Default)]
 pub struct SalesRecordChanges {
     pub customer_id: Option<Uuid>,
-    pub department_id: Option<Uuid>,
     pub sale_date: Option<NaiveDate>,
     pub deal_status: Option<String>,
     pub customer_type: Option<String>,
@@ -57,16 +53,13 @@ pub struct SalesRecordChanges {
     pub store_id: Option<Uuid>,
     pub collaboration_type: Option<String>,
     pub expert_user_id: Option<Option<Uuid>>,
-    pub expert_department_id: Option<Option<Uuid>>,
     pub consultant_user_id: Option<Option<Uuid>>,
-    pub consultant_department_id: Option<Option<Uuid>>,
     pub doctor_user_id: Option<Option<Uuid>>,
 }
 
 impl SalesRecordChanges {
     pub fn is_empty(&self) -> bool {
         self.customer_id.is_none()
-            && self.department_id.is_none()
             && self.sale_date.is_none()
             && self.deal_status.is_none()
             && self.customer_type.is_none()
@@ -79,9 +72,7 @@ impl SalesRecordChanges {
             && self.store_id.is_none()
             && self.collaboration_type.is_none()
             && self.expert_user_id.is_none()
-            && self.expert_department_id.is_none()
             && self.consultant_user_id.is_none()
-            && self.consultant_department_id.is_none()
             && self.doctor_user_id.is_none()
     }
 }
@@ -91,7 +82,6 @@ pub struct SalesRecordFilters<'a> {
     pub status_filter: Option<&'a str>,
     pub record_group_id: Option<Uuid>,
     pub customer_id: Option<Uuid>,
-    pub department_id: Option<Uuid>,
     pub system_id: Option<Uuid>,
     pub store_id: Option<Uuid>,
     pub handler_user_id: Option<Uuid>,
@@ -189,7 +179,6 @@ impl SalesRecordRepository {
             id: Set(Uuid::new_v4()),
             record_group_id: Set(record.record_group_id),
             customer_id: Set(record.customer_id),
-            department_id: Set(record.department_id),
             sale_date: Set(record.sale_date),
             deal_status: Set(record.deal_status),
             customer_type: Set(record.customer_type),
@@ -202,9 +191,7 @@ impl SalesRecordRepository {
             store_id: Set(record.store_id),
             collaboration_type: Set(record.collaboration_type),
             expert_user_id: Set(record.expert_user_id),
-            expert_department_id: Set(record.expert_department_id),
             consultant_user_id: Set(record.consultant_user_id),
-            consultant_department_id: Set(record.consultant_department_id),
             doctor_user_id: Set(record.doctor_user_id),
             status: Set(record.status),
             created_at: Set(now),
@@ -267,9 +254,6 @@ impl SalesRecordRepository {
         if let Some(customer_id) = filters.customer_id {
             query = query.filter(sales_records::Column::CustomerId.eq(customer_id));
         }
-        if let Some(department_id) = filters.department_id {
-            query = query.filter(sales_records::Column::DepartmentId.eq(department_id));
-        }
         if let Some(system_id) = filters.system_id {
             query = query.filter(sales_records::Column::SystemId.eq(system_id));
         }
@@ -313,9 +297,6 @@ impl SalesRecordRepository {
         if let Some(customer_id) = changes.customer_id {
             active.customer_id = Set(customer_id);
         }
-        if let Some(department_id) = changes.department_id {
-            active.department_id = Set(department_id);
-        }
         if let Some(sale_date) = changes.sale_date {
             active.sale_date = Set(sale_date);
         }
@@ -356,14 +337,8 @@ impl SalesRecordRepository {
         if let Some(expert_user_id) = changes.expert_user_id {
             active.expert_user_id = Set(expert_user_id);
         }
-        if let Some(expert_department_id) = changes.expert_department_id {
-            active.expert_department_id = Set(expert_department_id);
-        }
         if let Some(consultant_user_id) = changes.consultant_user_id {
             active.consultant_user_id = Set(consultant_user_id);
-        }
-        if let Some(consultant_department_id) = changes.consultant_department_id {
-            active.consultant_department_id = Set(consultant_department_id);
         }
         if let Some(doctor_user_id) = changes.doctor_user_id {
             active.doctor_user_id = Set(doctor_user_id);
@@ -730,7 +705,6 @@ mod tests {
         db,
         repositories::{
             customers::{CustomerRepository, NewCustomer},
-            departments::DepartmentRepository,
             product_categories::ProductCategoryRepository,
             stores::{NewStore, StoreRepository},
             systems::{NewSystem, SystemRepository},
@@ -742,7 +716,6 @@ mod tests {
 
     struct Repos {
         users: UserRepository,
-        departments: DepartmentRepository,
         systems: SystemRepository,
         stores: StoreRepository,
         customers: CustomerRepository,
@@ -764,7 +737,6 @@ mod tests {
             .expect("sqlite memory database should initialize");
         Repos {
             users: UserRepository::new(db.clone()),
-            departments: DepartmentRepository::new(db.clone()),
             systems: SystemRepository::new(db.clone()),
             stores: StoreRepository::new(db.clone()),
             customers: CustomerRepository::new(db.clone()),
@@ -773,24 +745,18 @@ mod tests {
         }
     }
 
-    async fn fixture(repos: &Repos) -> (Uuid, Uuid, Uuid, Uuid, Uuid, Uuid) {
+    async fn fixture(repos: &Repos) -> (Uuid, Uuid, Uuid, Uuid, Uuid) {
         let now = Utc.with_ymd_and_hms(2026, 7, 8, 0, 0, 0).unwrap();
         let user = repos
             .users
             .find_or_create_for_login("repo-user", now)
             .await
             .expect("user should be created");
-        let department = repos
-            .departments
-            .insert_department(Uuid::new_v4(), "manual", "scope", "scope", None, now)
-            .await
-            .expect("department should be created");
         let system = repos
             .systems
             .create_system(
                 NewSystem {
                     name: "system".to_string(),
-                    department_id: department.id,
                     status: "active".to_string(),
                 },
                 now,
@@ -815,7 +781,6 @@ mod tests {
                 NewCustomer {
                     name: "Alice".to_string(),
                     creator_user_id: user.id,
-                    department_id: department.id,
                     system_id: system.id,
                     store_id: store.id,
                     remark: None,
@@ -834,19 +799,11 @@ mod tests {
             .0[0]
             .clone();
 
-        (
-            user.id,
-            department.id,
-            system.id,
-            store.id,
-            customer.id,
-            category.id,
-        )
+        (user.id, system.id, store.id, customer.id, category.id)
     }
 
     fn new_record(
         user_id: Uuid,
-        department_id: Uuid,
         system_id: Uuid,
         store_id: Uuid,
         customer_id: Uuid,
@@ -855,7 +812,6 @@ mod tests {
         NewSalesRecord {
             record_group_id: Some(Uuid::new_v4()),
             customer_id,
-            department_id,
             sale_date: Utc
                 .with_ymd_and_hms(2026, 7, 8, 0, 0, 0)
                 .unwrap()
@@ -871,9 +827,7 @@ mod tests {
             store_id,
             collaboration_type: "self_sale".to_string(),
             expert_user_id: None,
-            expert_department_id: None,
             consultant_user_id: None,
-            consultant_department_id: None,
             doctor_user_id: None,
             status: "active".to_string(),
         }
@@ -882,21 +836,13 @@ mod tests {
     #[tokio::test]
     async fn repository_creates_lists_updates_and_deletes_sales_data() {
         let repos = repos().await;
-        let (user_id, department_id, system_id, store_id, customer_id, category_id) =
-            fixture(&repos).await;
+        let (user_id, system_id, store_id, customer_id, category_id) = fixture(&repos).await;
         let now = Utc.with_ymd_and_hms(2026, 7, 8, 0, 0, 0).unwrap();
         let record = repos
             .sales_records
             .insert_sales_record(
                 &repos.sales_records.db,
-                new_record(
-                    user_id,
-                    department_id,
-                    system_id,
-                    store_id,
-                    customer_id,
-                    category_id,
-                ),
+                new_record(user_id, system_id, store_id, customer_id, category_id),
                 now,
             )
             .await
@@ -993,34 +939,19 @@ mod tests {
     #[tokio::test]
     async fn repository_database_constraints_reject_invalid_values() {
         let repos = repos().await;
-        let (user_id, department_id, system_id, store_id, customer_id, category_id) =
-            fixture(&repos).await;
+        let (user_id, system_id, store_id, customer_id, category_id) = fixture(&repos).await;
         let now = Utc.with_ymd_and_hms(2026, 7, 8, 0, 0, 0).unwrap();
         let record = repos
             .sales_records
             .insert_sales_record(
                 &repos.sales_records.db,
-                new_record(
-                    user_id,
-                    department_id,
-                    system_id,
-                    store_id,
-                    customer_id,
-                    category_id,
-                ),
+                new_record(user_id, system_id, store_id, customer_id, category_id),
                 now,
             )
             .await
             .expect("sales record should insert");
 
-        let mut negative = new_record(
-            user_id,
-            department_id,
-            system_id,
-            store_id,
-            customer_id,
-            category_id,
-        );
+        let mut negative = new_record(user_id, system_id, store_id, customer_id, category_id);
         negative.paid_amount = Decimal::new(-1, 2);
         assert!(
             repos

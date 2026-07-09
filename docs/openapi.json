@@ -1883,7 +1883,7 @@
         ],
         "summary": "List systems",
         "operationId": "listSystems",
-        "description": "Requires permission systems:read. Lists systems with optional status and department filtering plus pagination.",
+        "description": "Requires permission systems:read. Lists systems with optional status filtering plus pagination.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -1902,16 +1902,6 @@
               ]
             },
             "description": "Only return systems with this status."
-          },
-          {
-            "name": "department_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "description": "Only return systems owned by this local department id."
           },
           {
             "name": "page_number",
@@ -2022,7 +2012,7 @@
         ],
         "summary": "Create system",
         "operationId": "createSystem",
-        "description": "Requires permission systems:write. Creates a system and requires department_id to reference an existing local department.",
+        "description": "Requires permission systems:write. Creates a system.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -2619,16 +2609,6 @@
             "description": "Only return customers with this status."
           },
           {
-            "name": "department_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "description": "Only return customers owned by this department id."
-          },
-          {
             "name": "system_id",
             "in": "query",
             "required": false,
@@ -2777,7 +2757,7 @@
         ],
         "summary": "Create customer",
         "operationId": "createCustomer",
-        "description": "Requires permission customers:write. Creates a customer. creator_user_id is always taken from the authenticated session. department_id, system_id and store_id must exist and describe one consistent scope.",
+        "description": "Requires permission customers:write. Creates a customer. creator_user_id is always taken from the authenticated session. Only name and store_id are required; system_id is derived from the store and checked for consistency when provided.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -3026,15 +3006,6 @@
           },
           {
             "name": "customer_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "department_id",
             "in": "query",
             "required": false,
             "schema": {
@@ -5556,7 +5527,6 @@
         "required": [
           "id",
           "name",
-          "department_id",
           "status",
           "created_at",
           "updated_at"
@@ -5569,11 +5539,6 @@
           "name": {
             "type": "string",
             "maxLength": 128
-          },
-          "department_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Local department id from departments.id."
           },
           "status": {
             "type": "string",
@@ -5625,19 +5590,13 @@
       "CreateSystemRequest": {
         "type": "object",
         "required": [
-          "name",
-          "department_id"
+          "name"
         ],
         "additionalProperties": false,
         "properties": {
           "name": {
             "type": "string",
             "maxLength": 128
-          },
-          "department_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Must reference an existing local department id from departments.id."
           },
           "status": {
             "type": "string",
@@ -5657,11 +5616,6 @@
             "type": "string",
             "maxLength": 128,
             "description": "Omit to leave unchanged. null is rejected because name is required."
-          },
-          "department_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Omit to leave unchanged. null is rejected because department_id is required. The value must reference an existing local department."
           },
           "status": {
             "type": "string",
@@ -5828,7 +5782,6 @@
           "id",
           "name",
           "creator_user_id",
-          "department_id",
           "system_id",
           "store_id",
           "remark",
@@ -5850,10 +5803,6 @@
             "type": "string",
             "format": "uuid",
             "description": "User who created this customer. This value is derived from the authenticated session on create and cannot be set by clients."
-          },
-          "department_id": {
-            "type": "string",
-            "format": "uuid"
           },
           "system_id": {
             "type": "string",
@@ -5927,8 +5876,6 @@
         "type": "object",
         "required": [
           "name",
-          "department_id",
-          "system_id",
           "store_id"
         ],
         "additionalProperties": false,
@@ -5937,30 +5884,31 @@
             "type": "string",
             "maxLength": 128
           },
-          "department_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Must reference an existing department id. The system must belong to this department."
-          },
           "system_id": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid",
-            "description": "Must reference an existing system id. The store must belong to this system."
+            "description": "Optional compatibility field. On create, the backend derives the system from store_id; when provided, this value must match the store's system."
           },
           "store_id": {
             "type": "string",
             "format": "uuid",
-            "description": "Must reference an existing store id owned by system_id."
+            "description": "Required existing store id. The backend derives system_id from this store."
           },
           "remark": {
             "type": "string"
           },
           "attachments": {
-            "type": "array",
+            "type": [
+              "array",
+              "null"
+            ],
             "items": {
               "$ref": "#/components/schemas/CustomerAttachment"
             },
-            "description": "External image attachment metadata. The backend stores this as JSON text and does not upload or store image bytes."
+            "description": "Optional external image attachment metadata. Omit or pass an empty array when the customer has no attachments. The backend stores this as JSON text and does not upload or store image bytes."
           },
           "status": {
             "type": "string",
@@ -5981,20 +5929,15 @@
             "maxLength": 128,
             "description": "Omit to leave unchanged. null is rejected because name is required."
           },
-          "department_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Omit to leave unchanged. null is rejected because department_id is required. If changed, the final department/system/store scope must stay consistent."
-          },
           "system_id": {
             "type": "string",
             "format": "uuid",
-            "description": "Omit to leave unchanged. null is rejected because system_id is required. If changed, the final department/system/store scope must stay consistent."
+            "description": "Omit to leave unchanged. null is rejected because system_id is required. If changed, the final system/store scope must stay consistent."
           },
           "store_id": {
             "type": "string",
             "format": "uuid",
-            "description": "Omit to leave unchanged. null is rejected because store_id is required. If changed, the final department/system/store scope must stay consistent."
+            "description": "Omit to leave unchanged. null is rejected because store_id is required. If changed, the final system/store scope must stay consistent."
           },
           "remark": {
             "type": [
@@ -6074,7 +6017,6 @@
           "id",
           "record_group_id",
           "customer_id",
-          "department_id",
           "sale_date",
           "deal_status",
           "customer_type",
@@ -6087,9 +6029,7 @@
           "store_id",
           "collaboration_type",
           "expert_user_id",
-          "expert_department_id",
           "consultant_user_id",
-          "consultant_department_id",
           "doctor_user_id",
           "status",
           "operation_count",
@@ -6110,10 +6050,6 @@
             "description": "Shared by records created from the same create-batch request."
           },
           "customer_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "department_id": {
             "type": "string",
             "format": "uuid"
           },
@@ -6183,21 +6119,7 @@
             ],
             "format": "uuid"
           },
-          "expert_department_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
           "consultant_user_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "consultant_department_id": {
             "type": [
               "string",
               "null"
@@ -6308,7 +6230,6 @@
         "type": "object",
         "required": [
           "customer_id",
-          "department_id",
           "sale_date",
           "deal_status",
           "customer_type",
@@ -6326,11 +6247,6 @@
           "customer_id": {
             "type": "string",
             "format": "uuid"
-          },
-          "department_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Must reference an existing department. The selected system must belong to this department."
           },
           "sale_date": {
             "type": "string",
@@ -6380,7 +6296,7 @@
           "system_id": {
             "type": "string",
             "format": "uuid",
-            "description": "Must reference an existing system owned by department_id."
+            "description": "Must reference an existing system."
           },
           "store_id": {
             "type": "string",
@@ -6393,7 +6309,7 @@
               "expert_consultation",
               "self_sale"
             ],
-            "description": "expert_consultation requires expert_user_id and expert_department_id; self_sale requires both to be omitted."
+            "description": "expert_consultation requires expert_user_id; self_sale requires it to be omitted."
           },
           "expert_user_id": {
             "type": [
@@ -6403,22 +6319,7 @@
             "format": "uuid",
             "description": "Required for expert_consultation and not allowed for self_sale."
           },
-          "expert_department_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid",
-            "description": "Required for expert_consultation and not allowed for self_sale."
-          },
           "consultant_user_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "consultant_department_id": {
             "type": [
               "string",
               "null"
@@ -6450,11 +6351,6 @@
             "type": "string",
             "format": "uuid",
             "description": "Omit to leave unchanged. null is rejected because customer_id is required."
-          },
-          "department_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Omit to leave unchanged. null is rejected because department_id is required."
           },
           "sale_date": {
             "type": "string",
@@ -6531,14 +6427,6 @@
             "format": "uuid",
             "description": "Omit to leave unchanged. null clears the expert user."
           },
-          "expert_department_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid",
-            "description": "Omit to leave unchanged. null clears the expert department."
-          },
           "consultant_user_id": {
             "type": [
               "string",
@@ -6546,14 +6434,6 @@
             ],
             "format": "uuid",
             "description": "Omit to leave unchanged. null clears the consultant user."
-          },
-          "consultant_department_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid",
-            "description": "Omit to leave unchanged. null clears the consultant department."
           },
           "doctor_user_id": {
             "type": [

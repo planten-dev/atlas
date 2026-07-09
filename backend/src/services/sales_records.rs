@@ -19,7 +19,6 @@ use crate::{
     repositories::{
         RepositoryError,
         customers::CustomerRepository,
-        departments::DepartmentRepository,
         product_categories::ProductCategoryRepository,
         sales_records::{
             NewOperationCount, NewOperationUsage, NewSalesRecord, OperationCountChanges,
@@ -42,7 +41,6 @@ const MAX_REMARK_LENGTH: usize = 2000;
 pub struct SalesRecordService {
     sales_records: SalesRecordRepository,
     customers: CustomerRepository,
-    departments: DepartmentRepository,
     systems: SystemRepository,
     stores: StoreRepository,
     categories: ProductCategoryRepository,
@@ -53,7 +51,6 @@ impl SalesRecordService {
     pub fn new(
         sales_records: SalesRecordRepository,
         customers: CustomerRepository,
-        departments: DepartmentRepository,
         systems: SystemRepository,
         stores: StoreRepository,
         categories: ProductCategoryRepository,
@@ -62,7 +59,6 @@ impl SalesRecordService {
         Self {
             sales_records,
             customers,
-            departments,
             systems,
             stores,
             categories,
@@ -144,7 +140,6 @@ impl SalesRecordService {
                     status_filter,
                     record_group_id: query.record_group_id,
                     customer_id: query.customer_id,
-                    department_id: query.department_id,
                     system_id: query.system_id,
                     store_id: query.store_id,
                     handler_user_id: query.handler_user_id,
@@ -638,14 +633,11 @@ impl SalesRecordService {
         self.ensure_sales_record_references(
             SalesRecordReferenceInput {
                 customer_id: request.customer_id,
-                department_id: request.department_id,
                 system_id: request.system_id,
                 store_id: request.store_id,
                 handler_user_id: request.handler_user_id,
                 expert_user_id: request.expert_user_id,
-                expert_department_id: request.expert_department_id,
                 consultant_user_id: request.consultant_user_id,
-                consultant_department_id: request.consultant_department_id,
                 doctor_user_id: request.doctor_user_id,
             },
             &collaboration_type,
@@ -656,7 +648,6 @@ impl SalesRecordService {
             NewSalesRecord {
                 record_group_id: Some(record_group_id),
                 customer_id: request.customer_id,
-                department_id: request.department_id,
                 sale_date: request.sale_date,
                 deal_status,
                 customer_type,
@@ -669,9 +660,7 @@ impl SalesRecordService {
                 store_id: request.store_id,
                 collaboration_type,
                 expert_user_id: request.expert_user_id,
-                expert_department_id: request.expert_department_id,
                 consultant_user_id: request.consultant_user_id,
-                consultant_department_id: request.consultant_department_id,
                 doctor_user_id: request.doctor_user_id,
                 status: "active".to_string(),
             },
@@ -685,7 +674,6 @@ impl SalesRecordService {
         request: UpdateSalesRecordRequest,
     ) -> Result<SalesRecordChanges, SalesRecordError> {
         let customer_id = required_uuid_change("customer_id", request.customer_id)?;
-        let department_id = required_uuid_change("department_id", request.department_id)?;
         let sale_date = required_date_change("sale_date", request.sale_date)?;
         let deal_status = enum_text_change("deal_status", request.deal_status, parse_deal_status)?;
         let customer_type =
@@ -704,16 +692,11 @@ impl SalesRecordService {
             parse_collaboration_type,
         )?;
         let expert_user_id = nullable_uuid_change("expert_user_id", request.expert_user_id)?;
-        let expert_department_id =
-            nullable_uuid_change("expert_department_id", request.expert_department_id)?;
         let consultant_user_id =
             nullable_uuid_change("consultant_user_id", request.consultant_user_id)?;
-        let consultant_department_id =
-            nullable_uuid_change("consultant_department_id", request.consultant_department_id)?;
         let doctor_user_id = nullable_uuid_change("doctor_user_id", request.doctor_user_id)?;
 
         let final_customer_id = customer_id.unwrap_or(record.customer_id);
-        let final_department_id = department_id.unwrap_or(record.department_id);
         let final_system_id = system_id.unwrap_or(record.system_id);
         let final_store_id = store_id.unwrap_or(record.store_id);
         let final_handler_user_id = handler_user_id.unwrap_or(record.handler_user_id);
@@ -722,24 +705,17 @@ impl SalesRecordService {
             .unwrap_or(&record.collaboration_type)
             .to_string();
         let final_expert_user_id = expert_user_id.unwrap_or(record.expert_user_id);
-        let final_expert_department_id =
-            expert_department_id.unwrap_or(record.expert_department_id);
         let final_consultant_user_id = consultant_user_id.unwrap_or(record.consultant_user_id);
-        let final_consultant_department_id =
-            consultant_department_id.unwrap_or(record.consultant_department_id);
         let final_doctor_user_id = doctor_user_id.unwrap_or(record.doctor_user_id);
 
         self.ensure_sales_record_references(
             SalesRecordReferenceInput {
                 customer_id: final_customer_id,
-                department_id: final_department_id,
                 system_id: final_system_id,
                 store_id: final_store_id,
                 handler_user_id: final_handler_user_id,
                 expert_user_id: final_expert_user_id,
-                expert_department_id: final_expert_department_id,
                 consultant_user_id: final_consultant_user_id,
-                consultant_department_id: final_consultant_department_id,
                 doctor_user_id: final_doctor_user_id,
             },
             &final_collaboration_type,
@@ -760,7 +736,6 @@ impl SalesRecordService {
 
         Ok(SalesRecordChanges {
             customer_id,
-            department_id,
             sale_date,
             deal_status,
             customer_type,
@@ -773,9 +748,7 @@ impl SalesRecordService {
             store_id,
             collaboration_type,
             expert_user_id,
-            expert_department_id,
             consultant_user_id,
-            consultant_department_id,
             doctor_user_id,
         })
     }
@@ -793,28 +766,10 @@ impl SalesRecordService {
         if customer.status != "active" {
             return Err(SalesRecordError::CustomerDisabled);
         }
-        if self
-            .departments
-            .find_by_id(refs.department_id)
-            .await?
-            .is_none()
-        {
-            return Err(SalesRecordError::DepartmentNotFound);
-        }
-        let system = self
-            .systems
+        self.systems
             .find_by_id(refs.system_id)
             .await?
             .ok_or(SalesRecordError::SystemNotFound)?;
-        if system.department_id != refs.department_id {
-            warn!(
-                department_id = %refs.department_id,
-                system_id = %refs.system_id,
-                system_department_id = %system.department_id,
-                "rejected sales record because system does not belong to department"
-            );
-            return Err(SalesRecordError::SystemDepartmentMismatch);
-        }
         let store = self
             .stores
             .find_by_id(refs.store_id)
@@ -838,33 +793,15 @@ impl SalesRecordService {
             .await?;
         self.ensure_optional_active_user("doctor_user_id", refs.doctor_user_id)
             .await?;
-        if let Some(expert_department_id) = refs.expert_department_id
-            && self
-                .departments
-                .find_by_id(expert_department_id)
-                .await?
-                .is_none()
-        {
-            return Err(SalesRecordError::DepartmentNotFound);
-        }
-        if let Some(consultant_department_id) = refs.consultant_department_id
-            && self
-                .departments
-                .find_by_id(consultant_department_id)
-                .await?
-                .is_none()
-        {
-            return Err(SalesRecordError::DepartmentNotFound);
-        }
 
         match collaboration_type {
             "expert_consultation" => {
-                if refs.expert_user_id.is_none() || refs.expert_department_id.is_none() {
+                if refs.expert_user_id.is_none() {
                     return Err(SalesRecordError::MissingExpertFields);
                 }
             }
             "self_sale" => {
-                if refs.expert_user_id.is_some() || refs.expert_department_id.is_some() {
+                if refs.expert_user_id.is_some() {
                     return Err(SalesRecordError::UnexpectedExpertFields);
                 }
             }
@@ -1037,14 +974,11 @@ impl SalesRecordService {
 #[derive(Debug, Clone, Copy)]
 struct SalesRecordReferenceInput {
     customer_id: Uuid,
-    department_id: Uuid,
     system_id: Uuid,
     store_id: Uuid,
     handler_user_id: Uuid,
     expert_user_id: Option<Uuid>,
-    expert_department_id: Option<Uuid>,
     consultant_user_id: Option<Uuid>,
-    consultant_department_id: Option<Uuid>,
     doctor_user_id: Option<Uuid>,
 }
 
@@ -1062,8 +996,6 @@ pub enum SalesRecordError {
     CustomerNotFound,
     #[error("customer is disabled")]
     CustomerDisabled,
-    #[error("department was not found")]
-    DepartmentNotFound,
     #[error("system was not found")]
     SystemNotFound,
     #[error("store was not found")]
@@ -1076,8 +1008,6 @@ pub enum SalesRecordError {
     UserNotFound { field: &'static str },
     #[error("{field} user is disabled")]
     ReferencedUserDisabled { field: &'static str },
-    #[error("system does not belong to the selected department")]
-    SystemDepartmentMismatch,
     #[error("store does not belong to the selected system")]
     StoreSystemMismatch,
     #[error("sales record batch must include at least one record")]
@@ -1104,9 +1034,9 @@ pub enum SalesRecordError {
     OperationTotalCountRequired,
     #[error("operation_total_count is not allowed for this content category")]
     OperationTotalCountNotAllowed,
-    #[error("expert_user_id and expert_department_id are required for expert consultation")]
+    #[error("expert_user_id is required for expert consultation")]
     MissingExpertFields,
-    #[error("expert_user_id and expert_department_id must be empty for self sale")]
+    #[error("expert_user_id must be empty for self sale")]
     UnexpectedExpertFields,
     #[error(
         "sales record content category cannot switch between operation-count and non-operation-count categories"
@@ -1143,14 +1073,12 @@ impl SalesRecordError {
             Self::OperationUsageNotFound => "operation_usage_not_found",
             Self::CustomerNotFound => "customer_not_found",
             Self::CustomerDisabled => "customer_disabled",
-            Self::DepartmentNotFound => "department_not_found",
             Self::SystemNotFound => "system_not_found",
             Self::StoreNotFound => "store_not_found",
             Self::ProductCategoryNotFound => "product_category_not_found",
             Self::ProductCategoryDisabled => "product_category_disabled",
             Self::UserNotFound { .. } => "user_not_found",
             Self::ReferencedUserDisabled { .. } => "referenced_user_disabled",
-            Self::SystemDepartmentMismatch => "system_department_mismatch",
             Self::StoreSystemMismatch => "store_system_mismatch",
             Self::OperationCountInsufficient => "operation_count_insufficient",
             Self::OperationCountBelowUsed => "operation_count_below_used",
@@ -1396,7 +1324,6 @@ mod tests {
         },
         repositories::{
             customers::{CustomerRepository, NewCustomer},
-            departments::DepartmentRepository,
             product_categories::ProductCategoryRepository,
             stores::{NewStore, StoreRepository},
             systems::{NewSystem, SystemRepository},
@@ -1409,7 +1336,6 @@ mod tests {
 
     struct Harness {
         users: UserRepository,
-        departments: DepartmentRepository,
         systems: SystemRepository,
         stores: StoreRepository,
         customers: CustomerRepository,
@@ -1431,7 +1357,6 @@ mod tests {
                 .await
                 .expect("sqlite memory database should initialize");
             let users = UserRepository::new(db.clone());
-            let departments = DepartmentRepository::new(db.clone());
             let systems = SystemRepository::new(db.clone());
             let stores = StoreRepository::new(db.clone());
             let customers = CustomerRepository::new(db.clone());
@@ -1440,7 +1365,6 @@ mod tests {
             let service = SalesRecordService::new(
                 sales_records,
                 customers.clone(),
-                departments.clone(),
                 systems.clone(),
                 stores.clone(),
                 categories.clone(),
@@ -1449,7 +1373,6 @@ mod tests {
 
             Self {
                 users,
-                departments,
                 systems,
                 stores,
                 customers,
@@ -1466,19 +1389,13 @@ mod tests {
                 .id
         }
 
-        async fn scope(&self, name: &str) -> (Uuid, Uuid, Uuid) {
+        async fn scope(&self, name: &str) -> (Uuid, Uuid) {
             let now = Utc::now();
-            let department = self
-                .departments
-                .insert_department(Uuid::new_v4(), "manual", name, name, None, now)
-                .await
-                .expect("department should be created");
             let system = self
                 .systems
                 .create_system(
                     NewSystem {
                         name: name.to_string(),
-                        department_id: department.id,
                         status: "active".to_string(),
                     },
                     now,
@@ -1498,22 +1415,15 @@ mod tests {
                 .await
                 .expect("store should be created");
 
-            (department.id, system.id, store.id)
+            (system.id, store.id)
         }
 
-        async fn customer(
-            &self,
-            creator_user_id: Uuid,
-            department_id: Uuid,
-            system_id: Uuid,
-            store_id: Uuid,
-        ) -> Uuid {
+        async fn customer(&self, creator_user_id: Uuid, system_id: Uuid, store_id: Uuid) -> Uuid {
             self.customers
                 .create_customer(
                     NewCustomer {
                         name: "Alice".to_string(),
                         creator_user_id,
-                        department_id,
                         system_id,
                         store_id,
                         remark: None,
@@ -1542,7 +1452,6 @@ mod tests {
 
     fn sales_request(
         customer_id: Uuid,
-        department_id: Uuid,
         system_id: Uuid,
         store_id: Uuid,
         category_id: Uuid,
@@ -1551,7 +1460,6 @@ mod tests {
     ) -> CreateSalesRecordRequest {
         CreateSalesRecordRequest {
             customer_id,
-            department_id,
             sale_date: Utc
                 .with_ymd_and_hms(2026, 7, 8, 0, 0, 0)
                 .unwrap()
@@ -1567,9 +1475,7 @@ mod tests {
             store_id,
             collaboration_type: "self_sale".to_string(),
             expert_user_id: None,
-            expert_department_id: None,
             consultant_user_id: None,
-            consultant_department_id: None,
             doctor_user_id: None,
             operation_total_count,
         }
@@ -1577,16 +1483,13 @@ mod tests {
 
     async fn create_operation_sales_record(h: &Harness, total_count: i32) -> Uuid {
         let handler = h.user("handler").await;
-        let (department_id, system_id, store_id) = h.scope("scope-a").await;
-        let customer_id = h
-            .customer(handler, department_id, system_id, store_id)
-            .await;
+        let (system_id, store_id) = h.scope("scope-a").await;
+        let customer_id = h.customer(handler, system_id, store_id).await;
         let category_id = h.category(true).await;
         h.service
             .create_sales_record_batch(CreateSalesRecordBatchRequest {
                 records: vec![sales_request(
                     customer_id,
-                    department_id,
                     system_id,
                     store_id,
                     category_id,
@@ -1604,10 +1507,8 @@ mod tests {
     async fn creates_batch_and_lists_records_with_counts() {
         let h = Harness::new().await;
         let handler = h.user("handler").await;
-        let (department_id, system_id, store_id) = h.scope("scope-a").await;
-        let customer_id = h
-            .customer(handler, department_id, system_id, store_id)
-            .await;
+        let (system_id, store_id) = h.scope("scope-a").await;
+        let customer_id = h.customer(handler, system_id, store_id).await;
         let product_category = h.category(false).await;
         let operation_category = h.category(true).await;
 
@@ -1617,7 +1518,6 @@ mod tests {
                 records: vec![
                     sales_request(
                         customer_id,
-                        department_id,
                         system_id,
                         store_id,
                         product_category,
@@ -1626,7 +1526,6 @@ mod tests {
                     ),
                     sales_request(
                         customer_id,
-                        department_id,
                         system_id,
                         store_id,
                         operation_category,
@@ -1671,10 +1570,8 @@ mod tests {
     async fn validates_sales_record_inputs() {
         let h = Harness::new().await;
         let handler = h.user("handler").await;
-        let (department_id, system_id, store_id) = h.scope("scope-a").await;
-        let customer_id = h
-            .customer(handler, department_id, system_id, store_id)
-            .await;
+        let (system_id, store_id) = h.scope("scope-a").await;
+        let customer_id = h.customer(handler, system_id, store_id).await;
         let product_category = h.category(false).await;
         let operation_category = h.category(true).await;
 
@@ -1689,7 +1586,6 @@ mod tests {
                 .create_sales_record_batch(CreateSalesRecordBatchRequest {
                     records: vec![sales_request(
                         customer_id,
-                        department_id,
                         system_id,
                         store_id,
                         operation_category,
@@ -1705,7 +1601,6 @@ mod tests {
                 .create_sales_record_batch(CreateSalesRecordBatchRequest {
                     records: vec![sales_request(
                         customer_id,
-                        department_id,
                         system_id,
                         store_id,
                         product_category,
@@ -1719,7 +1614,6 @@ mod tests {
 
         let mut invalid = sales_request(
             customer_id,
-            department_id,
             system_id,
             store_id,
             product_category,
@@ -1738,7 +1632,6 @@ mod tests {
 
         let mut invalid = sales_request(
             customer_id,
-            department_id,
             system_id,
             store_id,
             product_category,
@@ -1760,7 +1653,6 @@ mod tests {
 
         let mut invalid = sales_request(
             customer_id,
-            department_id,
             system_id,
             store_id,
             product_category,
@@ -1776,6 +1668,42 @@ mod tests {
                 .await,
             Err(SalesRecordError::UnexpectedExpertFields)
         ));
+
+        let mut expert_missing_user = sales_request(
+            customer_id,
+            system_id,
+            store_id,
+            product_category,
+            handler,
+            None,
+        );
+        expert_missing_user.collaboration_type = "expert_consultation".to_string();
+        assert!(matches!(
+            h.service
+                .create_sales_record_batch(CreateSalesRecordBatchRequest {
+                    records: vec![expert_missing_user],
+                })
+                .await,
+            Err(SalesRecordError::MissingExpertFields)
+        ));
+
+        let expert = h.user("expert").await;
+        let mut expert_consultation = sales_request(
+            customer_id,
+            system_id,
+            store_id,
+            product_category,
+            handler,
+            None,
+        );
+        expert_consultation.collaboration_type = "expert_consultation".to_string();
+        expert_consultation.expert_user_id = Some(expert);
+        h.service
+            .create_sales_record_batch(CreateSalesRecordBatchRequest {
+                records: vec![expert_consultation],
+            })
+            .await
+            .expect("expert consultation should only require an expert user");
     }
 
     #[tokio::test]

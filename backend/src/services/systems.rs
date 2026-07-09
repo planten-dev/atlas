@@ -10,7 +10,6 @@ use crate::{
     },
     repositories::{
         RepositoryError,
-        departments::DepartmentRepository,
         stores::StoreRepository,
         systems::{NewSystem, SystemChanges, SystemRepository},
     },
@@ -25,21 +24,12 @@ const MAX_NAME_LENGTH: usize = 128;
 #[derive(Clone)]
 pub struct SystemService {
     systems: SystemRepository,
-    departments: DepartmentRepository,
     stores: StoreRepository,
 }
 
 impl SystemService {
-    pub fn new(
-        systems: SystemRepository,
-        departments: DepartmentRepository,
-        stores: StoreRepository,
-    ) -> Self {
-        Self {
-            systems,
-            departments,
-            stores,
-        }
+    pub fn new(systems: SystemRepository, stores: StoreRepository) -> Self {
+        Self { systems, stores }
     }
 
     #[tracing::instrument(level = "info", skip(self, request))]
@@ -52,12 +42,9 @@ impl SystemService {
             None => SystemStatus::Active,
         };
         let name = required_text("name", request.name, MAX_NAME_LENGTH)?;
-        let department_id = request.department_id;
-        self.ensure_department_exists(department_id).await?;
 
         let system = NewSystem {
             name,
-            department_id,
             status: status.as_str().to_string(),
         };
 
@@ -85,7 +72,6 @@ impl SystemService {
             .systems
             .list_systems(
                 status_filter.map(SystemStatus::as_str),
-                query.department_id,
                 page_number,
                 page_size,
             )
@@ -126,14 +112,9 @@ impl SystemService {
             .find_by_id(system_id)
             .await?
             .ok_or(SystemError::SystemNotFound)?;
-        let department_id = required_uuid_change("department_id", request.department_id)?;
-        if let Some(department_id) = department_id {
-            self.ensure_department_exists(department_id).await?;
-        }
 
         let changes = SystemChanges {
             name: required_text_change("name", request.name, MAX_NAME_LENGTH)?,
-            department_id,
             status: status_change("status", request.status)?,
         };
 
@@ -185,14 +166,6 @@ impl SystemService {
         info!(%system_id, "deleted system through service");
         Ok(())
     }
-
-    async fn ensure_department_exists(&self, department_id: Uuid) -> Result<(), SystemError> {
-        if self.departments.find_by_id(department_id).await?.is_none() {
-            return Err(SystemError::DepartmentNotFound);
-        }
-
-        Ok(())
-    }
 }
 
 #[derive(Debug, Error)]
@@ -201,8 +174,6 @@ pub enum SystemError {
     Repository(#[from] RepositoryError),
     #[error("system was not found")]
     SystemNotFound,
-    #[error("department was not found")]
-    DepartmentNotFound,
     #[error("system has stores and cannot be deleted")]
     SystemHasStores,
     #[error("{field} is required")]
@@ -226,7 +197,6 @@ impl SystemError {
                 RepositoryError::Database(_) => "database_error",
             },
             Self::SystemNotFound => "system_not_found",
-            Self::DepartmentNotFound => "department_not_found",
             Self::SystemHasStores => "system_has_stores",
             Self::MissingRequiredField { .. }
             | Self::FieldTooLong { .. }
@@ -273,17 +243,6 @@ fn required_text_change(
         PatchField::Unset => Ok(None),
         PatchField::Null => Err(SystemError::MissingRequiredField { field }),
         PatchField::Value(value) => required_text(field, value, maximum).map(Some),
-    }
-}
-
-fn required_uuid_change(
-    field: &'static str,
-    value: PatchField<Uuid>,
-) -> Result<Option<Uuid>, SystemError> {
-    match value {
-        PatchField::Unset => Ok(None),
-        PatchField::Null => Err(SystemError::MissingRequiredField { field }),
-        PatchField::Value(value) => Ok(Some(value)),
     }
 }
 
@@ -357,55 +316,37 @@ mod tests {
         }
     }
 
-    async fn test_services() -> (
-        DepartmentRepository,
-        SystemRepository,
-        StoreRepository,
-        SystemService,
-    ) {
+    async fn test_services() -> (SystemRepository, StoreRepository, SystemService) {
         let db = db::connect_and_migrate(&sqlite_memory_config())
             .await
             .expect("sqlite memory database should initialize");
-        let departments = DepartmentRepository::new(db.clone());
         let systems = SystemRepository::new(db.clone());
         let stores = StoreRepository::new(db);
-        let service = SystemService::new(systems.clone(), departments.clone(), stores.clone());
-        (departments, systems, stores, service)
+        let service = SystemService::new(systems.clone(), stores.clone());
+        (systems, stores, service)
     }
 
-    async fn department(repository: &DepartmentRepository, name: &str) -> Uuid {
-        repository
-            .insert_department(Uuid::new_v4(), "manual", name, name, None, Utc::now())
-            .await
-            .expect("department should be created")
-            .id
-    }
-
-    fn create_request(name: &str, department_id: Uuid) -> CreateSystemRequest {
+    fn create_request(name: &str) -> CreateSystemRequest {
         CreateSystemRequest {
             name: name.to_string(),
-            department_id,
             status: None,
         }
     }
 
     #[tokio::test]
     async fn creates_lists_and_reads_system_detail() {
-        let (departments, _, _, service) = test_services().await;
-        let department_id = department(&departments, "dept-a").await;
+        let (_, _, service) = test_services().await;
         let created = service
-            .create_system(create_request("system-a", department_id))
+            .create_system(create_request("system-a"))
             .await
             .expect("system should be created");
 
         assert_eq!(created.name, "system-a");
-        assert_eq!(created.department_id, department_id);
         assert_eq!(created.status, "active");
 
         let list = service
             .list_systems(ListSystemsQuery {
                 status_filter: Some("active".to_string()),
-                department_id: Some(department_id),
                 page_number: None,
                 page_size: None,
             })
@@ -425,17 +366,14 @@ mod tests {
 
     #[tokio::test]
     async fn updates_disables_and_deletes_system() {
-        let (departments, _, _, service) = test_services().await;
-        let department_a = department(&departments, "dept-a").await;
-        let department_b = department(&departments, "dept-b").await;
+        let (_, _, service) = test_services().await;
         let created = service
-            .create_system(create_request("system-a", department_a))
+            .create_system(create_request("system-a"))
             .await
             .expect("system should be created");
 
         let request: UpdateSystemRequest = serde_json::from_value(json!({
             "name": "system-b",
-            "department_id": department_b,
             "status": "active"
         }))
         .expect("update request should deserialize");
@@ -444,7 +382,6 @@ mod tests {
             .await
             .expect("system should update");
         assert_eq!(updated.name, "system-b");
-        assert_eq!(updated.department_id, department_b);
 
         let no_change = service
             .update_system(
@@ -473,10 +410,9 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_delete_when_system_has_stores() {
-        let (departments, _, stores, service) = test_services().await;
-        let department_id = department(&departments, "dept-a").await;
+        let (_, stores, service) = test_services().await;
         let created = service
-            .create_system(create_request("system-a", department_id))
+            .create_system(create_request("system-a"))
             .await
             .expect("system should be created");
         stores
@@ -507,25 +443,19 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_invalid_system_inputs() {
-        let (departments, _, _, service) = test_services().await;
-        let department_id = department(&departments, "dept-a").await;
+        let (_, _, service) = test_services().await;
 
         assert!(matches!(
-            service
-                .create_system(create_request(" ", department_id))
-                .await,
+            service.create_system(create_request(" ")).await,
             Err(SystemError::MissingRequiredField { field: "name" })
         ));
         assert!(matches!(
             service
-                .create_system(create_request(
-                    &"x".repeat(MAX_NAME_LENGTH + 1),
-                    department_id
-                ))
+                .create_system(create_request(&"x".repeat(MAX_NAME_LENGTH + 1)))
                 .await,
             Err(SystemError::FieldTooLong { field: "name", .. })
         ));
-        let mut invalid_status = create_request("system-a", department_id);
+        let mut invalid_status = create_request("system-a");
         invalid_status.status = Some("deleted".to_string());
         assert!(matches!(
             service.create_system(invalid_status).await,
@@ -534,20 +464,19 @@ mod tests {
                 ..
             })
         ));
-        assert!(matches!(
-            service
-                .create_system(create_request("system-a", Uuid::new_v4()))
-                .await,
-            Err(SystemError::DepartmentNotFound)
-        ));
+        assert!(
+            serde_json::from_value::<CreateSystemRequest>(
+                json!({"name": "system-a", "department_id": Uuid::new_v4()})
+            )
+            .is_err()
+        );
     }
 
     #[tokio::test]
     async fn rejects_invalid_list_and_update_parameters() {
-        let (departments, _, _, service) = test_services().await;
-        let department_id = department(&departments, "dept-a").await;
+        let (_, _, service) = test_services().await;
         let created = service
-            .create_system(create_request("system-a", department_id))
+            .create_system(create_request("system-a"))
             .await
             .expect("system should be created");
 
@@ -555,7 +484,6 @@ mod tests {
             service
                 .list_systems(ListSystemsQuery {
                     status_filter: Some("deleted".to_string()),
-                    department_id: None,
                     page_number: None,
                     page_size: None,
                 })
@@ -569,7 +497,6 @@ mod tests {
             service
                 .list_systems(ListSystemsQuery {
                     status_filter: None,
-                    department_id: None,
                     page_number: Some(0),
                     page_size: None,
                 })
@@ -583,7 +510,6 @@ mod tests {
             service
                 .list_systems(ListSystemsQuery {
                     status_filter: None,
-                    department_id: None,
                     page_number: None,
                     page_size: Some(MAX_PAGE_SIZE + 1),
                 })
@@ -600,12 +526,9 @@ mod tests {
             service.update_system(created.id, null_name).await,
             Err(SystemError::MissingRequiredField { field: "name" })
         ));
-        let missing_department: UpdateSystemRequest =
-            serde_json::from_value(json!({"department_id": Uuid::new_v4()}))
-                .expect("update request should deserialize");
-        assert!(matches!(
-            service.update_system(created.id, missing_department).await,
-            Err(SystemError::DepartmentNotFound)
-        ));
+        assert!(
+            serde_json::from_value::<UpdateSystemRequest>(json!({"department_id": Uuid::new_v4()}))
+                .is_err()
+        );
     }
 }

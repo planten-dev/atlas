@@ -353,7 +353,6 @@ fn status_code(error: &SalesRecordError) -> StatusCode {
         | SalesRecordError::OperationCountNotFound
         | SalesRecordError::OperationUsageNotFound
         | SalesRecordError::CustomerNotFound
-        | SalesRecordError::DepartmentNotFound
         | SalesRecordError::SystemNotFound
         | SalesRecordError::StoreNotFound
         | SalesRecordError::ProductCategoryNotFound
@@ -367,7 +366,6 @@ fn status_code(error: &SalesRecordError) -> StatusCode {
         SalesRecordError::CustomerDisabled
         | SalesRecordError::ProductCategoryDisabled
         | SalesRecordError::ReferencedUserDisabled { .. }
-        | SalesRecordError::SystemDepartmentMismatch
         | SalesRecordError::StoreSystemMismatch
         | SalesRecordError::EmptyBatch
         | SalesRecordError::MissingRequiredField { .. }
@@ -431,7 +429,6 @@ mod tests {
         app: Router,
         users: UserRepository,
         authz: AuthzService,
-        departments: DepartmentRepository,
         systems: SystemRepository,
         stores: StoreRepository,
         customers: CustomerRepository,
@@ -478,9 +475,8 @@ mod tests {
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        let (department_id, system_id, store_id) = create_scope(&context, "scope-a").await;
-        let customer_id =
-            create_customer(&context, user_id, department_id, system_id, store_id).await;
+        let (system_id, store_id) = create_scope(&context, "scope-a").await;
+        let customer_id = create_customer(&context, user_id, system_id, store_id).await;
         let category_id = operation_category(&context).await;
 
         let forbidden = context
@@ -518,7 +514,6 @@ mod tests {
                 Some(&cookie),
                 Some(create_batch_body(
                     customer_id,
-                    department_id,
                     system_id,
                     store_id,
                     category_id,
@@ -538,10 +533,31 @@ mod tests {
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
         grant_all_sales_permissions(&context, user_id).await;
-        let (department_id, system_id, store_id) = create_scope(&context, "scope-a").await;
-        let customer_id =
-            create_customer(&context, user_id, department_id, system_id, store_id).await;
+        let (system_id, store_id) = create_scope(&context, "scope-a").await;
+        let customer_id = create_customer(&context, user_id, system_id, store_id).await;
         let category_id = operation_category(&context).await;
+
+        let mut legacy_body = create_batch_body(
+            customer_id,
+            system_id,
+            store_id,
+            category_id,
+            user_id,
+            Some(2),
+        );
+        legacy_body["records"][0]["department_id"] = json!(Uuid::new_v4());
+        let legacy_response = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/api/v1/sales-records/create-batch",
+                Some(&cookie),
+                Some(legacy_body),
+            ))
+            .await
+            .expect("legacy sales create request should be handled");
+        assert_eq!(legacy_response.status(), StatusCode::BAD_REQUEST);
 
         let create_response = context
             .app
@@ -552,7 +568,6 @@ mod tests {
                 Some(&cookie),
                 Some(create_batch_body(
                     customer_id,
-                    department_id,
                     system_id,
                     store_id,
                     category_id,
@@ -564,6 +579,7 @@ mod tests {
             .expect("sales create request should be handled");
         assert_eq!(create_response.status(), StatusCode::CREATED);
         let created = response_json(create_response).await;
+        assert!(created.pointer("/sales_records/0/department_id").is_none());
         let sales_record_id = created
             .pointer("/sales_records/0/id")
             .and_then(Value::as_str)
@@ -766,18 +782,12 @@ mod tests {
             ProductCategoryService::new(product_categories.clone(), products.clone());
         let products_service = ProductService::new(products, product_categories.clone());
         let stores_service = StoreService::new(stores.clone(), systems.clone());
-        let systems_service =
-            SystemService::new(systems.clone(), departments.clone(), stores.clone());
-        let customers_service = CustomerService::new(
-            customers.clone(),
-            departments.clone(),
-            systems.clone(),
-            stores.clone(),
-        );
+        let systems_service = SystemService::new(systems.clone(), stores.clone());
+        let customers_service =
+            CustomerService::new(customers.clone(), systems.clone(), stores.clone());
         let sales_records_service = SalesRecordService::new(
             sales_records,
             customers.clone(),
-            departments.clone(),
             systems.clone(),
             stores.clone(),
             product_categories.clone(),
@@ -789,31 +799,30 @@ mod tests {
             std::sync::Arc::new(ApplierRegistry::new()),
             180,
         );
-        let state = AppState::new(
+        let state = AppState::new(crate::state::AppStateParts {
             auth,
-            authz.clone(),
-            users_service,
-            product_categories_service,
-            products_service,
-            systems_service,
-            stores_service,
-            customers_service,
-            sales_records_service,
-            events_service,
-            departments_service,
-            AuthConfig {
+            authz: authz.clone(),
+            users: users_service,
+            product_categories: product_categories_service,
+            products: products_service,
+            systems: systems_service,
+            stores: stores_service,
+            customers: customers_service,
+            sales_records: sales_records_service,
+            events: events_service,
+            departments: departments_service,
+            auth_config: AuthConfig {
                 frontend_callback_url: "".to_string(),
             },
-            SessionConfig {
+            session_config: SessionConfig {
                 ttl_seconds: 86_400,
                 cookie_secure: false,
             },
-        );
+        });
         TestContext {
             app: app::router(state),
             users,
             authz,
-            departments,
             systems,
             stores,
             customers,
@@ -901,25 +910,12 @@ mod tests {
             .id
     }
 
-    async fn create_scope(context: &TestContext, name: &str) -> (Uuid, Uuid, Uuid) {
-        let department = context
-            .departments
-            .insert_department(
-                Uuid::new_v4(),
-                "manual",
-                name,
-                name,
-                None,
-                chrono::Utc::now(),
-            )
-            .await
-            .expect("department should be created");
+    async fn create_scope(context: &TestContext, name: &str) -> (Uuid, Uuid) {
         let system = context
             .systems
             .create_system(
                 NewSystem {
                     name: name.to_string(),
-                    department_id: department.id,
                     status: "active".to_string(),
                 },
                 chrono::Utc::now(),
@@ -938,13 +934,12 @@ mod tests {
             )
             .await
             .expect("store should be created");
-        (department.id, system.id, store.id)
+        (system.id, store.id)
     }
 
     async fn create_customer(
         context: &TestContext,
         user_id: Uuid,
-        department_id: Uuid,
         system_id: Uuid,
         store_id: Uuid,
     ) -> Uuid {
@@ -954,7 +949,6 @@ mod tests {
                 NewCustomer {
                     name: "Alice".to_string(),
                     creator_user_id: user_id,
-                    department_id,
                     system_id,
                     store_id,
                     remark: None,
@@ -1007,7 +1001,6 @@ mod tests {
 
     fn create_batch_body(
         customer_id: Uuid,
-        department_id: Uuid,
         system_id: Uuid,
         store_id: Uuid,
         category_id: Uuid,
@@ -1017,7 +1010,6 @@ mod tests {
         json!({
             "records": [{
                 "customer_id": customer_id,
-                "department_id": department_id,
                 "sale_date": "2026-07-08",
                 "deal_status": "closed",
                 "customer_type": "new",

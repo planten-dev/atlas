@@ -16,20 +16,18 @@ pub struct SystemRepository {
 #[derive(Debug, Clone)]
 pub struct NewSystem {
     pub name: String,
-    pub department_id: Uuid,
     pub status: String,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct SystemChanges {
     pub name: Option<String>,
-    pub department_id: Option<Uuid>,
     pub status: Option<String>,
 }
 
 impl SystemChanges {
     pub fn is_empty(&self) -> bool {
-        self.name.is_none() && self.department_id.is_none() && self.status.is_none()
+        self.name.is_none() && self.status.is_none()
     }
 }
 
@@ -38,7 +36,7 @@ impl SystemRepository {
         Self { db }
     }
 
-    #[tracing::instrument(level = "info", skip(self, system), fields(name = %system.name, department_id = %system.department_id, status = %system.status))]
+    #[tracing::instrument(level = "info", skip(self, system), fields(name = %system.name, status = %system.status))]
     pub async fn create_system(
         &self,
         system: NewSystem,
@@ -50,7 +48,6 @@ impl SystemRepository {
         let system = systems::ActiveModel {
             id: Set(Uuid::new_v4()),
             name: Set(system.name),
-            department_id: Set(system.department_id),
             status: Set(system.status),
             created_at: Set(now),
             updated_at: Set(now),
@@ -77,7 +74,6 @@ impl SystemRepository {
     pub async fn list_systems(
         &self,
         status_filter: Option<&str>,
-        department_id: Option<Uuid>,
         page_number: u64,
         page_size: u64,
     ) -> Result<(Vec<systems::Model>, u64), RepositoryError> {
@@ -88,9 +84,6 @@ impl SystemRepository {
         if let Some(status_filter) = status_filter {
             validate_required("status_filter", status_filter)?;
             query = query.filter(systems::Column::Status.eq(status_filter.trim()));
-        }
-        if let Some(department_id) = department_id {
-            query = query.filter(systems::Column::DepartmentId.eq(department_id));
         }
 
         let paginator = query.paginate(&self.db, page_size);
@@ -116,9 +109,6 @@ impl SystemRepository {
         if let Some(name) = changes.name {
             validate_required("name", &name)?;
             active.name = Set(name);
-        }
-        if let Some(department_id) = changes.department_id {
-            active.department_id = Set(department_id);
         }
         if let Some(status) = changes.status {
             validate_required("status", &status)?;
@@ -175,7 +165,6 @@ mod tests {
     use crate::{
         config::{DatabaseConfig, DatabaseKind},
         db,
-        repositories::departments::DepartmentRepository,
     };
     use chrono::TimeZone;
     use std::path::PathBuf;
@@ -188,51 +177,30 @@ mod tests {
         }
     }
 
-    async fn test_repositories() -> (DepartmentRepository, SystemRepository) {
+    async fn test_repository() -> SystemRepository {
         let db = db::connect_and_migrate(&sqlite_memory_config())
             .await
             .expect("sqlite memory database should initialize");
-        (
-            DepartmentRepository::new(db.clone()),
-            SystemRepository::new(db),
-        )
+        SystemRepository::new(db)
     }
 
-    async fn department(repository: &DepartmentRepository, name: &str) -> Uuid {
-        repository
-            .insert_department(
-                Uuid::new_v4(),
-                "manual",
-                name,
-                name,
-                None,
-                Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap(),
-            )
-            .await
-            .expect("department should be created")
-            .id
-    }
-
-    fn new_system(name: &str, department_id: Uuid, status: &str) -> NewSystem {
+    fn new_system(name: &str, status: &str) -> NewSystem {
         NewSystem {
             name: name.to_string(),
-            department_id,
             status: status.to_string(),
         }
     }
 
     #[tokio::test]
     async fn creates_finds_and_lists_systems() {
-        let (departments, systems) = test_repositories().await;
-        let department_a = department(&departments, "dept-a").await;
-        let department_b = department(&departments, "dept-b").await;
+        let systems = test_repository().await;
         let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
         let active = systems
-            .create_system(new_system("active system", department_a, "active"), now)
+            .create_system(new_system("active system", "active"), now)
             .await
             .expect("active system should be created");
         systems
-            .create_system(new_system("disabled system", department_b, "disabled"), now)
+            .create_system(new_system("disabled system", "disabled"), now)
             .await
             .expect("disabled system should be created");
 
@@ -242,33 +210,23 @@ mod tests {
             .expect("system lookup should succeed")
             .expect("system should be found");
         assert_eq!(found.name, "active system");
-        assert_eq!(found.department_id, department_a);
 
         let (disabled, total_count) = systems
-            .list_systems(Some("disabled"), None, 1, 50)
+            .list_systems(Some("disabled"), 1, 50)
             .await
             .expect("systems should list");
         assert_eq!(total_count, 1);
         assert_eq!(disabled.len(), 1);
         assert_eq!(disabled[0].name, "disabled system");
-
-        let (department_a_systems, total_count) = systems
-            .list_systems(None, Some(department_a), 1, 50)
-            .await
-            .expect("systems should list by department");
-        assert_eq!(total_count, 1);
-        assert_eq!(department_a_systems[0].id, active.id);
     }
 
     #[tokio::test]
     async fn updates_and_disables_system() {
-        let (departments, systems) = test_repositories().await;
-        let department_a = department(&departments, "dept-a").await;
-        let department_b = department(&departments, "dept-b").await;
+        let systems = test_repository().await;
         let created_at = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
         let updated_at = Utc.with_ymd_and_hms(2026, 7, 7, 1, 0, 0).unwrap();
         let system = systems
-            .create_system(new_system("original", department_a, "active"), created_at)
+            .create_system(new_system("original", "active"), created_at)
             .await
             .expect("system should be created");
 
@@ -277,7 +235,6 @@ mod tests {
                 &system,
                 SystemChanges {
                     name: Some("updated".to_string()),
-                    department_id: Some(department_b),
                     ..SystemChanges::default()
                 },
                 updated_at,
@@ -286,7 +243,6 @@ mod tests {
             .expect("system should update");
 
         assert_eq!(updated.name, "updated");
-        assert_eq!(updated.department_id, department_b);
         assert_eq!(updated.updated_at, updated_at);
 
         let disabled_at = Utc.with_ymd_and_hms(2026, 7, 7, 2, 0, 0).unwrap();
@@ -300,11 +256,10 @@ mod tests {
 
     #[tokio::test]
     async fn deletes_system_by_id() {
-        let (departments, systems) = test_repositories().await;
-        let department_id = department(&departments, "dept-a").await;
+        let systems = test_repository().await;
         let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
         let system = systems
-            .create_system(new_system("delete me", department_id, "active"), now)
+            .create_system(new_system("delete me", "active"), now)
             .await
             .expect("system should be created");
 
@@ -330,26 +285,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_required_fields_and_missing_department_fk() {
-        let (departments, systems) = test_repositories().await;
-        let department_id = department(&departments, "dept-a").await;
+    async fn rejects_required_fields() {
+        let systems = test_repository().await;
         let now = Utc.with_ymd_and_hms(2026, 7, 7, 0, 0, 0).unwrap();
 
         assert!(matches!(
-            systems
-                .create_system(new_system(" ", department_id, "active"), now)
-                .await,
+            systems.create_system(new_system(" ", "active"), now).await,
             Err(RepositoryError::MissingRequiredField { field: "name" })
         ));
-
-        assert!(
-            systems
-                .create_system(
-                    new_system("missing department", Uuid::new_v4(), "active"),
-                    now
-                )
-                .await
-                .is_err()
-        );
     }
 }

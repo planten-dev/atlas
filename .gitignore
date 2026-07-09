@@ -1,6 +1,4 @@
 backend/target
-backend/data
-logs
-backend/logs
-backend/config/
-data
+logs/
+config/
+data/

@@ -12,7 +12,6 @@ pub struct SalesRecordResponse {
     pub id: Uuid,
     pub record_group_id: Option<Uuid>,
     pub customer_id: Uuid,
-    pub department_id: Uuid,
     pub sale_date: NaiveDate,
     pub deal_status: String,
     pub customer_type: String,
@@ -25,9 +24,7 @@ pub struct SalesRecordResponse {
     pub store_id: Uuid,
     pub collaboration_type: String,
     pub expert_user_id: Option<Uuid>,
-    pub expert_department_id: Option<Uuid>,
     pub consultant_user_id: Option<Uuid>,
-    pub consultant_department_id: Option<Uuid>,
     pub doctor_user_id: Option<Uuid>,
     pub status: String,
     pub operation_count: Option<OperationCountResponse>,
@@ -58,7 +55,6 @@ impl SalesRecordResponse {
             id: record.id,
             record_group_id: record.record_group_id,
             customer_id: record.customer_id,
-            department_id: record.department_id,
             sale_date: record.sale_date,
             deal_status: record.deal_status,
             customer_type: record.customer_type,
@@ -71,9 +67,7 @@ impl SalesRecordResponse {
             store_id: record.store_id,
             collaboration_type: record.collaboration_type,
             expert_user_id: record.expert_user_id,
-            expert_department_id: record.expert_department_id,
             consultant_user_id: record.consultant_user_id,
-            consultant_department_id: record.consultant_department_id,
             doctor_user_id: record.doctor_user_id,
             status: record.status,
             operation_count: operation_count.map(OperationCountResponse::from),
@@ -160,7 +154,6 @@ pub struct ListSalesRecordsQuery {
     pub status_filter: Option<String>,
     pub record_group_id: Option<Uuid>,
     pub customer_id: Option<Uuid>,
-    pub department_id: Option<Uuid>,
     pub system_id: Option<Uuid>,
     pub store_id: Option<Uuid>,
     pub handler_user_id: Option<Uuid>,
@@ -181,7 +174,6 @@ pub struct CreateSalesRecordBatchRequest {
 #[serde(deny_unknown_fields)]
 pub struct CreateSalesRecordRequest {
     pub customer_id: Uuid,
-    pub department_id: Uuid,
     pub sale_date: NaiveDate,
     pub deal_status: String,
     pub customer_type: String,
@@ -196,11 +188,7 @@ pub struct CreateSalesRecordRequest {
     #[serde(default)]
     pub expert_user_id: Option<Uuid>,
     #[serde(default)]
-    pub expert_department_id: Option<Uuid>,
-    #[serde(default)]
     pub consultant_user_id: Option<Uuid>,
-    #[serde(default)]
-    pub consultant_department_id: Option<Uuid>,
     #[serde(default)]
     pub doctor_user_id: Option<Uuid>,
     #[serde(default)]
@@ -212,8 +200,6 @@ pub struct CreateSalesRecordRequest {
 pub struct UpdateSalesRecordRequest {
     #[serde(default)]
     pub customer_id: PatchField<Uuid>,
-    #[serde(default)]
-    pub department_id: PatchField<Uuid>,
     #[serde(default)]
     pub sale_date: PatchField<NaiveDate>,
     #[serde(default)]
@@ -239,11 +225,7 @@ pub struct UpdateSalesRecordRequest {
     #[serde(default)]
     pub expert_user_id: PatchField<Uuid>,
     #[serde(default)]
-    pub expert_department_id: PatchField<Uuid>,
-    #[serde(default)]
     pub consultant_user_id: PatchField<Uuid>,
-    #[serde(default)]
-    pub consultant_department_id: PatchField<Uuid>,
     #[serde(default)]
     pub doctor_user_id: PatchField<Uuid>,
 }
@@ -303,17 +285,12 @@ pub struct UpdateOperationUsageRequest {
     pub remark: PatchField<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum PatchField<T> {
+    #[default]
     Unset,
     Null,
     Value(T),
-}
-
-impl<T> Default for PatchField<T> {
-    fn default() -> Self {
-        Self::Unset
-    }
 }
 
 impl<'de, T> Deserialize<'de> for PatchField<T>

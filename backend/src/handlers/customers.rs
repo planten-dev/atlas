@@ -178,11 +178,9 @@ fn status_code(error: &CustomerError) -> StatusCode {
             RepositoryError::DisabledUser => StatusCode::FORBIDDEN,
         },
         CustomerError::CustomerNotFound
-        | CustomerError::DepartmentNotFound
         | CustomerError::SystemNotFound
         | CustomerError::StoreNotFound => StatusCode::NOT_FOUND,
-        CustomerError::CustomerScopeMismatch
-        | CustomerError::StoreSystemMismatch
+        CustomerError::StoreSystemMismatch
         | CustomerError::MissingRequiredField { .. }
         | CustomerError::FieldTooLong { .. }
         | CustomerError::InvalidStatus { .. }
@@ -230,7 +228,6 @@ mod tests {
         app: Router,
         users: UserRepository,
         authz: AuthzService,
-        departments: DepartmentRepository,
         systems: SystemRepository,
         stores: StoreRepository,
     }
@@ -292,7 +289,7 @@ mod tests {
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        let (department_id, system_id, store_id) = create_scope(&context, "scope-a").await;
+        let (_, store_id) = create_scope(&context, "scope-a").await;
         grant(&context, user_id, "customers", "read").await;
 
         let read_response = context
@@ -316,8 +313,6 @@ mod tests {
                 Some(&cookie),
                 Some(json!({
                     "name": "Alice",
-                    "department_id": department_id,
-                    "system_id": system_id,
                     "store_id": store_id
                 })),
             ))
@@ -332,8 +327,8 @@ mod tests {
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        let (department_a, system_a, store_a) = create_scope(&context, "scope-a").await;
-        let (department_b, system_b, store_b) = create_scope(&context, "scope-b").await;
+        let (system_a, store_a) = create_scope(&context, "scope-a").await;
+        let (system_b, store_b) = create_scope(&context, "scope-b").await;
         grant(&context, user_id, "customers", "read").await;
         grant(&context, user_id, "customers", "write").await;
 
@@ -346,16 +341,7 @@ mod tests {
                 Some(&cookie),
                 Some(json!({
                     "name": "Alice",
-                    "department_id": department_a,
-                    "system_id": system_a,
-                    "store_id": store_a,
-                    "remark": "first visit",
-                    "attachments": [{
-                        "file_id": "img-1",
-                        "file_name": "photo.png",
-                        "mime_type": "image/png",
-                        "size_bytes": 1234
-                    }]
+                    "store_id": store_a
                 })),
             ))
             .await
@@ -370,11 +356,17 @@ mod tests {
             created.pointer("/creator_user_id").and_then(Value::as_str),
             Some(user_id.to_string().as_str())
         );
+        assert!(created.pointer("/department_id").is_none());
+        assert_eq!(
+            created.pointer("/system_id").and_then(Value::as_str),
+            Some(system_a.to_string().as_str())
+        );
         assert_eq!(
             created
-                .pointer("/attachments/0/file_id")
-                .and_then(Value::as_str),
-            Some("img-1")
+                .pointer("/attachments")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0)
         );
         let customer_id = created
             .pointer("/id")
@@ -388,7 +380,7 @@ mod tests {
             .oneshot(request(
                 Method::GET,
                 &format!(
-                    "/api/v1/customers/list?status_filter=active&department_id={department_a}&system_id={system_a}&store_id={store_a}&creator_user_id={user_id}&name_keyword=Ali&page_number=1&page_size=20"
+                    "/api/v1/customers/list?status_filter=active&system_id={system_a}&store_id={store_a}&creator_user_id={user_id}&name_keyword=Ali&page_number=1&page_size=20"
                 ),
                 Some(&cookie),
                 None,
@@ -415,7 +407,6 @@ mod tests {
                 Some(&cookie),
                 Some(json!({
                     "name": "Alice Updated",
-                    "department_id": department_b,
                     "system_id": system_b,
                     "store_id": store_b,
                     "remark": null,
@@ -489,14 +480,15 @@ mod tests {
         let context = test_context(&mock_base_url).await;
         let cookie = login_and_cookie(context.app.clone()).await;
         let user_id = logged_in_user_id(&context).await;
-        let (department_id, system_id, store_id) = create_scope(&context, "scope-a").await;
+        let (_, store_id) = create_scope(&context, "scope-a").await;
         grant(&context, user_id, "customers", "read").await;
         grant(&context, user_id, "customers", "write").await;
 
         for body in [
-            json!({"name": "", "department_id": department_id, "system_id": system_id, "store_id": store_id}),
-            json!({"name": "Alice", "department_id": department_id, "system_id": system_id, "store_id": store_id, "status": "deleted"}),
-            json!({"name": "Alice", "department_id": department_id, "system_id": system_id, "store_id": store_id, "attachments": [{"file_id": "file-1", "mime_type": "application/pdf"}]}),
+            json!({"name": "", "store_id": store_id}),
+            json!({"name": "Alice", "store_id": store_id, "status": "deleted"}),
+            json!({"name": "Alice", "store_id": store_id, "attachments": [{"file_id": "file-1", "mime_type": "application/pdf"}]}),
+            json!({"name": "Alice", "store_id": store_id, "department_id": Uuid::new_v4()}),
         ] {
             let response = context
                 .app
@@ -512,7 +504,7 @@ mod tests {
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         }
 
-        let missing_system = context
+        let mismatched_system = context
             .app
             .clone()
             .oneshot(request(
@@ -521,14 +513,29 @@ mod tests {
                 Some(&cookie),
                 Some(json!({
                     "name": "Alice",
-                    "department_id": department_id,
                     "system_id": Uuid::new_v4(),
                     "store_id": store_id
                 })),
             ))
             .await
             .expect("customer create request should be handled");
-        assert_eq!(missing_system.status(), StatusCode::NOT_FOUND);
+        assert_eq!(mismatched_system.status(), StatusCode::BAD_REQUEST);
+
+        let missing_store = context
+            .app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/api/v1/customers/create",
+                Some(&cookie),
+                Some(json!({
+                    "name": "Alice",
+                    "store_id": Uuid::new_v4()
+                })),
+            ))
+            .await
+            .expect("customer create request should be handled");
+        assert_eq!(missing_store.status(), StatusCode::NOT_FOUND);
 
         let invalid_status_query = context
             .app
@@ -633,18 +640,12 @@ mod tests {
             ProductCategoryService::new(product_categories.clone(), products.clone());
         let products_service = ProductService::new(products, product_categories.clone());
         let stores_service = StoreService::new(stores.clone(), systems.clone());
-        let systems_service =
-            SystemService::new(systems.clone(), departments.clone(), stores.clone());
-        let customers_service = CustomerService::new(
-            customers.clone(),
-            departments.clone(),
-            systems.clone(),
-            stores.clone(),
-        );
+        let systems_service = SystemService::new(systems.clone(), stores.clone());
+        let customers_service =
+            CustomerService::new(customers.clone(), systems.clone(), stores.clone());
         let sales_records_service = SalesRecordService::new(
             sales_records,
             customers.clone(),
-            departments.clone(),
             systems.clone(),
             stores.clone(),
             product_categories.clone(),
@@ -656,31 +657,30 @@ mod tests {
             std::sync::Arc::new(ApplierRegistry::new()),
             180,
         );
-        let state = AppState::new(
+        let state = AppState::new(crate::state::AppStateParts {
             auth,
-            authz.clone(),
-            users_service,
-            product_categories_service,
-            products_service,
-            systems_service,
-            stores_service,
-            customers_service,
-            sales_records_service,
-            events_service,
-            departments_service,
-            AuthConfig {
+            authz: authz.clone(),
+            users: users_service,
+            product_categories: product_categories_service,
+            products: products_service,
+            systems: systems_service,
+            stores: stores_service,
+            customers: customers_service,
+            sales_records: sales_records_service,
+            events: events_service,
+            departments: departments_service,
+            auth_config: AuthConfig {
                 frontend_callback_url: "".to_string(),
             },
-            SessionConfig {
+            session_config: SessionConfig {
                 ttl_seconds: 86_400,
                 cookie_secure: false,
             },
-        );
+        });
         TestContext {
             app: app::router(state),
             users,
             authz,
-            departments,
             systems,
             stores,
         }
@@ -766,25 +766,12 @@ mod tests {
             .id
     }
 
-    async fn create_scope(context: &TestContext, name: &str) -> (Uuid, Uuid, Uuid) {
-        let department = context
-            .departments
-            .insert_department(
-                Uuid::new_v4(),
-                "manual",
-                name,
-                name,
-                None,
-                chrono::Utc::now(),
-            )
-            .await
-            .expect("department should be created");
+    async fn create_scope(context: &TestContext, name: &str) -> (Uuid, Uuid) {
         let system = context
             .systems
             .create_system(
                 crate::repositories::systems::NewSystem {
                     name: name.to_string(),
-                    department_id: department.id,
                     status: "active".to_string(),
                 },
                 chrono::Utc::now(),
@@ -803,7 +790,7 @@ mod tests {
             )
             .await
             .expect("store should be created");
-        (department.id, system.id, store.id)
+        (system.id, store.id)
     }
 
     async fn grant(context: &TestContext, user_id: Uuid, object: &str, action: &str) {

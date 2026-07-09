@@ -15,7 +15,7 @@ use backend::{
         review::ApplierRegistry, sales_records::SalesRecordService, stores::StoreService,
         systems::SystemService, users::UserService,
     },
-    state::AppState,
+    state::{AppState, AppStateParts},
 };
 use chrono::Utc;
 use std::{future::Future, net::SocketAddr, path::Path, sync::Arc, time::Duration};
@@ -78,18 +78,13 @@ async fn main() -> Result<()> {
         ProductCategoryService::new(product_categories.clone(), products.clone());
     let products = ProductService::new(products, product_categories.clone());
     let stores_service = StoreService::new(stores.clone(), systems.clone());
-    let systems_service = SystemService::new(systems.clone(), departments.clone(), stores.clone());
-    let departments_service = DepartmentService::new(config.dingtalk.clone(), departments.clone());
-    let customers_service = CustomerService::new(
-        customers.clone(),
-        departments.clone(),
-        systems.clone(),
-        stores.clone(),
-    );
+    let systems_service = SystemService::new(systems.clone(), stores.clone());
+    let departments_service = DepartmentService::new(config.dingtalk.clone(), departments);
+    let customers_service =
+        CustomerService::new(customers.clone(), systems.clone(), stores.clone());
     let sales_records_service = SalesRecordService::new(
         sales_records,
         customers,
-        departments,
         systems,
         stores,
         product_categories,
@@ -103,21 +98,21 @@ async fn main() -> Result<()> {
     );
     spawn_event_retention_sweeper(events.clone(), config.events.sweep_interval_seconds);
 
-    let app = app::router(AppState::new(
+    let app = app::router(AppState::new(AppStateParts {
         auth,
         authz,
-        users_service,
-        product_categories_service,
+        users: users_service,
+        product_categories: product_categories_service,
         products,
-        systems_service,
-        stores_service,
-        customers_service,
-        sales_records_service,
+        systems: systems_service,
+        stores: stores_service,
+        customers: customers_service,
+        sales_records: sales_records_service,
         events,
-        departments_service,
-        config.auth.clone(),
-        config.session.clone(),
-    ));
+        departments: departments_service,
+        auth_config: config.auth.clone(),
+        session_config: config.session.clone(),
+    }));
     let addr: SocketAddr = config
         .server
         .bind_addr

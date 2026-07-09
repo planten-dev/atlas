@@ -216,15 +216,15 @@ impl ProductCategoryService {
         current_category_id: Option<Uuid>,
         category_name: &str,
     ) -> Result<(), ProductCategoryError> {
-        if let Some(existing) = self.categories.find_by_category_name(category_name).await? {
-            if Some(existing.id) != current_category_id {
-                warn!(
-                    category_name,
-                    existing_category_id = %existing.id,
-                    "rejected duplicate product category name"
-                );
-                return Err(ProductCategoryError::CategoryNameAlreadyExists);
-            }
+        if let Some(existing) = self.categories.find_by_category_name(category_name).await?
+            && Some(existing.id) != current_category_id
+        {
+            warn!(
+                category_name,
+                existing_category_id = %existing.id,
+                "rejected duplicate product category name"
+            );
+            return Err(ProductCategoryError::CategoryNameAlreadyExists);
         }
 
         Ok(())

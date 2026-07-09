@@ -12,7 +12,6 @@ use crate::{
     repositories::{
         RepositoryError,
         customers::{CustomerChanges, CustomerFilters, CustomerRepository, NewCustomer},
-        departments::DepartmentRepository,
         stores::StoreRepository,
         systems::SystemRepository,
     },
@@ -30,7 +29,6 @@ const MAX_MIME_TYPE_LENGTH: usize = 128;
 #[derive(Clone)]
 pub struct CustomerService {
     customers: CustomerRepository,
-    departments: DepartmentRepository,
     systems: SystemRepository,
     stores: StoreRepository,
 }
@@ -38,13 +36,11 @@ pub struct CustomerService {
 impl CustomerService {
     pub fn new(
         customers: CustomerRepository,
-        departments: DepartmentRepository,
         systems: SystemRepository,
         stores: StoreRepository,
     ) -> Self {
         Self {
             customers,
-            departments,
             systems,
             stores,
         }
@@ -63,15 +59,15 @@ impl CustomerService {
         let name = required_text("name", request.name, MAX_NAME_LENGTH)?;
         let remark = nullable_text(request.remark)?;
         let attachments = attachments_json("attachments", request.attachments)?;
-        self.ensure_customer_scope(request.department_id, request.system_id, request.store_id)
+        let (system_id, store_id) = self
+            .resolve_customer_scope(request.store_id, request.system_id)
             .await?;
 
         let customer = NewCustomer {
             name,
             creator_user_id: actor_user_id,
-            department_id: request.department_id,
-            system_id: request.system_id,
-            store_id: request.store_id,
+            system_id,
+            store_id,
             remark,
             status: status.as_str().to_string(),
             attachments,
@@ -104,7 +100,6 @@ impl CustomerService {
             .list_customers(
                 CustomerFilters {
                     status_filter: status_filter.map(CustomerStatus::as_str),
-                    department_id: query.department_id,
                     system_id: query.system_id,
                     store_id: query.store_id,
                     creator_user_id: query.creator_user_id,
@@ -154,12 +149,10 @@ impl CustomerService {
             .await?
             .ok_or(CustomerError::CustomerNotFound)?;
 
-        let department_id = required_uuid_change("department_id", request.department_id)?;
         let system_id = required_uuid_change("system_id", request.system_id)?;
         let store_id = required_uuid_change("store_id", request.store_id)?;
-        if department_id.is_some() || system_id.is_some() || store_id.is_some() {
+        if system_id.is_some() || store_id.is_some() {
             self.ensure_customer_scope(
-                department_id.unwrap_or(customer.department_id),
                 system_id.unwrap_or(customer.system_id),
                 store_id.unwrap_or(customer.store_id),
             )
@@ -168,7 +161,6 @@ impl CustomerService {
 
         let changes = CustomerChanges {
             name: required_text_change("name", request.name, MAX_NAME_LENGTH)?,
-            department_id,
             system_id,
             store_id,
             remark: nullable_text_change("remark", request.remark)?,
@@ -224,17 +216,44 @@ impl CustomerService {
         Ok(())
     }
 
+    async fn resolve_customer_scope(
+        &self,
+        store_id: Uuid,
+        requested_system_id: Option<Uuid>,
+    ) -> Result<(Uuid, Uuid), CustomerError> {
+        let store = self
+            .stores
+            .find_by_id(store_id)
+            .await?
+            .ok_or(CustomerError::StoreNotFound)?;
+        let system_id = store.system_id;
+
+        if let Some(requested_system_id) = requested_system_id
+            && requested_system_id != system_id
+        {
+            warn!(
+                %store_id,
+                %requested_system_id,
+                store_system_id = %system_id,
+                "rejected customer create because requested system does not match store"
+            );
+            return Err(CustomerError::StoreSystemMismatch);
+        }
+
+        self.systems
+            .find_by_id(system_id)
+            .await?
+            .ok_or(CustomerError::SystemNotFound)?;
+
+        Ok((system_id, store_id))
+    }
+
     async fn ensure_customer_scope(
         &self,
-        department_id: Uuid,
         system_id: Uuid,
         store_id: Uuid,
     ) -> Result<(), CustomerError> {
-        if self.departments.find_by_id(department_id).await?.is_none() {
-            return Err(CustomerError::DepartmentNotFound);
-        }
-        let system = self
-            .systems
+        self.systems
             .find_by_id(system_id)
             .await?
             .ok_or(CustomerError::SystemNotFound)?;
@@ -244,15 +263,6 @@ impl CustomerService {
             .await?
             .ok_or(CustomerError::StoreNotFound)?;
 
-        if system.department_id != department_id {
-            warn!(
-                %department_id,
-                %system_id,
-                system_department_id = %system.department_id,
-                "rejected customer scope because system does not belong to department"
-            );
-            return Err(CustomerError::CustomerScopeMismatch);
-        }
         if store.system_id != system_id {
             warn!(
                 %store_id,
@@ -273,14 +283,10 @@ pub enum CustomerError {
     Repository(#[from] RepositoryError),
     #[error("customer was not found")]
     CustomerNotFound,
-    #[error("department was not found")]
-    DepartmentNotFound,
     #[error("system was not found")]
     SystemNotFound,
     #[error("store was not found")]
     StoreNotFound,
-    #[error("system does not belong to the customer department")]
-    CustomerScopeMismatch,
     #[error("store does not belong to the customer system")]
     StoreSystemMismatch,
     #[error("{field} is required")]
@@ -306,10 +312,8 @@ impl CustomerError {
                 RepositoryError::Database(_) => "database_error",
             },
             Self::CustomerNotFound => "customer_not_found",
-            Self::DepartmentNotFound => "department_not_found",
             Self::SystemNotFound => "system_not_found",
             Self::StoreNotFound => "store_not_found",
-            Self::CustomerScopeMismatch => "customer_scope_mismatch",
             Self::StoreSystemMismatch => "store_system_mismatch",
             Self::MissingRequiredField { .. }
             | Self::FieldTooLong { .. }
@@ -569,7 +573,6 @@ mod tests {
 
     async fn test_services() -> (
         UserRepository,
-        DepartmentRepository,
         SystemRepository,
         StoreRepository,
         CustomerService,
@@ -578,17 +581,11 @@ mod tests {
             .await
             .expect("sqlite memory database should initialize");
         let users = UserRepository::new(db.clone());
-        let departments = DepartmentRepository::new(db.clone());
         let systems = SystemRepository::new(db.clone());
         let stores = StoreRepository::new(db.clone());
         let customers = CustomerRepository::new(db);
-        let service = CustomerService::new(
-            customers,
-            departments.clone(),
-            systems.clone(),
-            stores.clone(),
-        );
-        (users, departments, systems, stores, service)
+        let service = CustomerService::new(customers, systems.clone(), stores.clone());
+        (users, systems, stores, service)
     }
 
     async fn user(repository: &UserRepository, dingtalk_id: &str) -> Uuid {
@@ -600,20 +597,14 @@ mod tests {
     }
 
     async fn scope(
-        departments: &DepartmentRepository,
         systems: &SystemRepository,
         stores: &StoreRepository,
         name: &str,
-    ) -> (Uuid, Uuid, Uuid) {
-        let department = departments
-            .insert_department(Uuid::new_v4(), "manual", name, name, None, Utc::now())
-            .await
-            .expect("department should be created");
+    ) -> (Uuid, Uuid) {
         let system = systems
             .create_system(
                 NewSystem {
                     name: name.to_string(),
-                    department_id: department.id,
                     status: "active".to_string(),
                 },
                 Utc::now(),
@@ -632,58 +623,50 @@ mod tests {
             .await
             .expect("store should be created");
 
-        (department.id, system.id, store.id)
+        (system.id, store.id)
     }
 
-    fn create_request(
-        name: &str,
-        department_id: Uuid,
-        system_id: Uuid,
-        store_id: Uuid,
-    ) -> CreateCustomerRequest {
+    fn create_request(name: &str, store_id: Uuid) -> CreateCustomerRequest {
         CreateCustomerRequest {
             name: name.to_string(),
-            department_id,
-            system_id,
+            system_id: None,
             store_id,
             remark: Some("  remark  ".to_string()),
-            attachments: Some(vec![CustomerAttachment {
-                file_id: " img-1 ".to_string(),
-                file_name: Some(" photo.png ".to_string()),
-                mime_type: Some("image/png".to_string()),
-                size_bytes: Some(1024),
-            }]),
+            attachments: None,
             status: None,
+        }
+    }
+
+    fn image_attachment() -> CustomerAttachment {
+        CustomerAttachment {
+            file_id: " img-1 ".to_string(),
+            file_name: Some(" photo.png ".to_string()),
+            mime_type: Some("image/png".to_string()),
+            size_bytes: Some(1024),
         }
     }
 
     #[tokio::test]
     async fn creates_lists_and_reads_customer_detail() {
-        let (users, departments, systems, stores, service) = test_services().await;
+        let (users, systems, stores, service) = test_services().await;
         let actor = user(&users, "ding-user-1").await;
-        let (department_id, system_id, store_id) =
-            scope(&departments, &systems, &stores, "scope-a").await;
+        let (system_id, store_id) = scope(&systems, &stores, "scope-a").await;
         let created = service
-            .create_customer(
-                actor,
-                create_request("Alice", department_id, system_id, store_id),
-            )
+            .create_customer(actor, create_request("Alice", store_id))
             .await
             .expect("customer should be created");
 
         assert_eq!(created.name, "Alice");
         assert_eq!(created.creator_user_id, actor);
-        assert_eq!(created.department_id, department_id);
         assert_eq!(created.system_id, system_id);
         assert_eq!(created.store_id, store_id);
         assert_eq!(created.status, "active");
         assert_eq!(created.remark.as_deref(), Some("remark"));
-        assert_eq!(created.attachments[0].file_id, "img-1");
+        assert!(created.attachments.is_empty());
 
         let list = service
             .list_customers(ListCustomersQuery {
                 status_filter: Some("active".to_string()),
-                department_id: Some(department_id),
                 system_id: Some(system_id),
                 store_id: Some(store_id),
                 creator_user_id: Some(actor),
@@ -707,23 +690,17 @@ mod tests {
 
     #[tokio::test]
     async fn updates_clears_disables_and_deletes_customer() {
-        let (users, departments, systems, stores, service) = test_services().await;
+        let (users, systems, stores, service) = test_services().await;
         let actor = user(&users, "ding-user-1").await;
-        let (department_a, system_a, store_a) =
-            scope(&departments, &systems, &stores, "scope-a").await;
-        let (department_b, system_b, store_b) =
-            scope(&departments, &systems, &stores, "scope-b").await;
+        let (_, store_a) = scope(&systems, &stores, "scope-a").await;
+        let (system_b, store_b) = scope(&systems, &stores, "scope-b").await;
         let created = service
-            .create_customer(
-                actor,
-                create_request("Alice", department_a, system_a, store_a),
-            )
+            .create_customer(actor, create_request("Alice", store_a))
             .await
             .expect("customer should be created");
 
         let request: UpdateCustomerRequest = serde_json::from_value(json!({
             "name": "Alice Updated",
-            "department_id": department_b,
             "system_id": system_b,
             "store_id": store_b,
             "remark": null,
@@ -738,7 +715,6 @@ mod tests {
 
         assert_eq!(updated.name, "Alice Updated");
         assert_eq!(updated.creator_user_id, actor);
-        assert_eq!(updated.department_id, department_b);
         assert_eq!(updated.system_id, system_b);
         assert_eq!(updated.store_id, store_b);
         assert_eq!(updated.remark, None);
@@ -761,22 +737,56 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_invalid_customer_inputs() {
-        let (users, departments, systems, stores, service) = test_services().await;
+    async fn creates_customer_with_optional_scope_fields_and_attachments() {
+        let (users, systems, stores, service) = test_services().await;
         let actor = user(&users, "ding-user-1").await;
-        let (department_id, system_id, store_id) =
-            scope(&departments, &systems, &stores, "scope-a").await;
+        let (system_id, store_id) = scope(&systems, &stores, "scope-a").await;
+
+        let mut empty_attachments = create_request("Alice Empty", store_id);
+        empty_attachments.attachments = Some(vec![]);
+        let created_empty = service
+            .create_customer(actor, empty_attachments)
+            .await
+            .expect("customer with empty attachments should be created");
+        assert_eq!(created_empty.system_id, system_id);
+        assert!(created_empty.attachments.is_empty());
+
+        let mut with_attachment = create_request("Alice Attached", store_id);
+        with_attachment.system_id = Some(system_id);
+        with_attachment.attachments = Some(vec![image_attachment()]);
+        let created_attached = service
+            .create_customer(actor, with_attachment)
+            .await
+            .expect("customer with image attachment should be created");
+        assert_eq!(created_attached.system_id, system_id);
+        assert_eq!(created_attached.attachments[0].file_id, "img-1");
+        assert_eq!(
+            created_attached.attachments[0].file_name.as_deref(),
+            Some("photo.png")
+        );
+        assert!(
+            serde_json::from_value::<CreateCustomerRequest>(json!({
+                "name": "Bob",
+                "store_id": store_id,
+                "department_id": Uuid::new_v4()
+            }))
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_customer_inputs() {
+        let (users, systems, stores, service) = test_services().await;
+        let actor = user(&users, "ding-user-1").await;
+        let (_, store_id) = scope(&systems, &stores, "scope-a").await;
 
         assert!(matches!(
             service
-                .create_customer(
-                    actor,
-                    create_request(" ", department_id, system_id, store_id)
-                )
+                .create_customer(actor, create_request(" ", store_id))
                 .await,
             Err(CustomerError::MissingRequiredField { field: "name" })
         ));
-        let mut invalid_status = create_request("Alice", department_id, system_id, store_id);
+        let mut invalid_status = create_request("Alice", store_id);
         invalid_status.status = Some("deleted".to_string());
         assert!(matches!(
             service.create_customer(actor, invalid_status).await,
@@ -785,7 +795,7 @@ mod tests {
                 ..
             })
         ));
-        let mut invalid_attachment = create_request("Alice", department_id, system_id, store_id);
+        let mut invalid_attachment = create_request("Alice", store_id);
         invalid_attachment.attachments = Some(vec![CustomerAttachment {
             file_id: "file-1".to_string(),
             file_name: None,
@@ -800,54 +810,27 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_invalid_scope_and_pagination() {
-        let (users, departments, systems, stores, service) = test_services().await;
+        let (users, systems, stores, service) = test_services().await;
         let actor = user(&users, "ding-user-1").await;
-        let (department_a, system_a, store_a) =
-            scope(&departments, &systems, &stores, "scope-a").await;
-        let (department_b, system_b, _) = scope(&departments, &systems, &stores, "scope-b").await;
+        let (_, store_a) = scope(&systems, &stores, "scope-a").await;
+        let (system_b, _) = scope(&systems, &stores, "scope-b").await;
         let created = service
-            .create_customer(
-                actor,
-                create_request("Alice", department_a, system_a, store_a),
-            )
+            .create_customer(actor, create_request("Alice", store_a))
             .await
             .expect("customer should be created");
 
+        let mut mismatched_system = create_request("Bob", store_a);
+        mismatched_system.system_id = Some(system_b);
         assert!(matches!(
-            service
-                .create_customer(
-                    actor,
-                    create_request("Bob", Uuid::new_v4(), system_a, store_a)
-                )
-                .await,
-            Err(CustomerError::DepartmentNotFound)
+            service.create_customer(actor, mismatched_system).await,
+            Err(CustomerError::StoreSystemMismatch)
         ));
+
         assert!(matches!(
             service
-                .create_customer(
-                    actor,
-                    create_request("Bob", department_a, Uuid::new_v4(), store_a)
-                )
-                .await,
-            Err(CustomerError::SystemNotFound)
-        ));
-        assert!(matches!(
-            service
-                .create_customer(
-                    actor,
-                    create_request("Bob", department_a, system_a, Uuid::new_v4())
-                )
+                .create_customer(actor, create_request("Bob", Uuid::new_v4()))
                 .await,
             Err(CustomerError::StoreNotFound)
-        ));
-        assert!(matches!(
-            service
-                .create_customer(
-                    actor,
-                    create_request("Bob", department_b, system_a, store_a)
-                )
-                .await,
-            Err(CustomerError::CustomerScopeMismatch)
         ));
         assert!(matches!(
             service
@@ -857,8 +840,14 @@ mod tests {
                         .expect("update request should deserialize")
                 )
                 .await,
-            Err(CustomerError::CustomerScopeMismatch) | Err(CustomerError::StoreSystemMismatch)
+            Err(CustomerError::StoreSystemMismatch)
         ));
+        assert!(
+            serde_json::from_value::<UpdateCustomerRequest>(
+                json!({"department_id": Uuid::new_v4()})
+            )
+            .is_err()
+        );
         assert!(matches!(
             service
                 .list_customers(ListCustomersQuery {

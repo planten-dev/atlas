@@ -229,12 +229,14 @@ impl AuthService {
             .await?;
         self.record_profile_sync_event(
             &tx,
-            actor_user_id,
-            user_id,
-            existing.as_ref(),
-            &profile,
-            trigger,
-            now,
+            ProfileSyncEventContext {
+                actor_user_id,
+                user_id,
+                existing: existing.as_ref(),
+                profile: &profile,
+                trigger,
+                now,
+            },
         )
         .await?;
         tx.commit().await.map_err(RepositoryError::from)?;
@@ -246,47 +248,42 @@ impl AuthService {
     async fn record_profile_sync_event<C>(
         &self,
         conn: &C,
-        actor_user_id: Uuid,
-        user_id: Uuid,
-        existing: Option<&user_profiles::Model>,
-        profile: &user_profiles::Model,
-        trigger: ProfileSyncTrigger,
-        now: DateTime<Utc>,
+        context: ProfileSyncEventContext<'_>,
     ) -> Result<(), RepositoryError>
     where
         C: ConnectionTrait,
     {
-        let updated_fields = changed_profile_fields(existing, profile);
+        let updated_fields = changed_profile_fields(context.existing, context.profile);
         self.events
             .insert_event(
                 conn,
                 NewEvent {
                     resource_type: "user_profiles".to_string(),
-                    resource_id: Some(user_id),
-                    actor_user_id: Some(actor_user_id),
+                    resource_id: Some(context.user_id),
+                    actor_user_id: Some(context.actor_user_id),
                     event_type: EventType::Update,
                     approval_status: ApprovalStatus::None,
                     required_approval_count: None,
                     custom_type: None,
                     target_event_id: None,
                     old_value: Some(profile_audit_value(
-                        user_id,
-                        trigger,
-                        existing.is_some(),
+                        context.user_id,
+                        context.trigger,
+                        context.existing.is_some(),
                         None,
                     )),
                     new_value: Some(profile_audit_value(
-                        user_id,
-                        trigger,
+                        context.user_id,
+                        context.trigger,
                         true,
                         Some(updated_fields),
                     )),
                     remark: Some("dingtalk_profile_sync".to_string()),
                     // Audit-only events are final from creation; setting
                     // updated_at makes the retention sweeper clean them up.
-                    updated_at: Some(now),
+                    updated_at: Some(context.now),
                 },
-                now,
+                context.now,
             )
             .await?;
         Ok(())
@@ -380,6 +377,15 @@ impl From<ProfileSyncError> for AuthError {
 enum ProfileSyncTrigger {
     Login,
     Manual,
+}
+
+struct ProfileSyncEventContext<'a> {
+    actor_user_id: Uuid,
+    user_id: Uuid,
+    existing: Option<&'a user_profiles::Model>,
+    profile: &'a user_profiles::Model,
+    trigger: ProfileSyncTrigger,
+    now: DateTime<Utc>,
 }
 
 impl ProfileSyncTrigger {

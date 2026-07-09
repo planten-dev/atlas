@@ -323,10 +323,7 @@ mod tests {
     use crate::{
         config::{DatabaseConfig, DatabaseKind},
         db,
-        repositories::{
-            departments::DepartmentRepository,
-            systems::{NewSystem, SystemRepository},
-        },
+        repositories::systems::{NewSystem, SystemRepository},
     };
     use serde_json::json;
     use std::path::PathBuf;
@@ -339,31 +336,21 @@ mod tests {
         }
     }
 
-    async fn test_services() -> (DepartmentRepository, SystemRepository, StoreService) {
+    async fn test_services() -> (SystemRepository, StoreService) {
         let db = db::connect_and_migrate(&sqlite_memory_config())
             .await
             .expect("sqlite memory database should initialize");
-        let departments = DepartmentRepository::new(db.clone());
         let systems = SystemRepository::new(db.clone());
         let stores = StoreRepository::new(db);
         let service = StoreService::new(stores, systems.clone());
-        (departments, systems, service)
+        (systems, service)
     }
 
-    async fn system(
-        departments: &DepartmentRepository,
-        systems: &SystemRepository,
-        name: &str,
-    ) -> Uuid {
-        let department = departments
-            .insert_department(Uuid::new_v4(), "manual", name, name, None, Utc::now())
-            .await
-            .expect("department should be created");
+    async fn system(systems: &SystemRepository, name: &str) -> Uuid {
         systems
             .create_system(
                 NewSystem {
                     name: name.to_string(),
-                    department_id: department.id,
                     status: "active".to_string(),
                 },
                 Utc::now(),
@@ -383,8 +370,8 @@ mod tests {
 
     #[tokio::test]
     async fn creates_lists_and_reads_store_detail() {
-        let (departments, systems, service) = test_services().await;
-        let system_id = system(&departments, &systems, "system-a").await;
+        let (systems, service) = test_services().await;
+        let system_id = system(&systems, "system-a").await;
         let created = service
             .create_store(create_request("store-a", system_id))
             .await
@@ -417,9 +404,9 @@ mod tests {
 
     #[tokio::test]
     async fn updates_disables_and_deletes_store() {
-        let (departments, systems, service) = test_services().await;
-        let system_a = system(&departments, &systems, "system-a").await;
-        let system_b = system(&departments, &systems, "system-b").await;
+        let (systems, service) = test_services().await;
+        let system_a = system(&systems, "system-a").await;
+        let system_b = system(&systems, "system-b").await;
         let created = service
             .create_store(create_request("store-a", system_a))
             .await
@@ -465,8 +452,8 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_invalid_store_inputs() {
-        let (departments, systems, service) = test_services().await;
-        let system_id = system(&departments, &systems, "system-a").await;
+        let (systems, service) = test_services().await;
+        let system_id = system(&systems, "system-a").await;
 
         assert!(matches!(
             service.create_store(create_request(" ", system_id)).await,
@@ -497,8 +484,8 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_invalid_list_and_update_parameters() {
-        let (departments, systems, service) = test_services().await;
-        let system_id = system(&departments, &systems, "system-a").await;
+        let (systems, service) = test_services().await;
+        let system_id = system(&systems, "system-a").await;
         let created = service
             .create_store(create_request("store-a", system_id))
             .await
