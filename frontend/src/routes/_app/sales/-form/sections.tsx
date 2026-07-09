@@ -2,7 +2,7 @@ import { Controller, useFieldArray, type UseFormReturn } from 'react-hook-form'
 import { useQuery } from '@tanstack/react-query'
 import { Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { FormDate, FormMoney, FormSelect } from '@/components/form/fields'
@@ -128,19 +128,22 @@ export function LinesSection({ form, single = false }: { form: SalesForm; single
         const categoryId = lines[index]?.content_category_id
         const requiresCount = categoryId ? (requiresMap.get(categoryId) ?? false) : false
         return (
-          <Card key={item.id}>
-            <CardHeader className="flex-row items-center justify-between py-3">
-              <CardTitle className="text-sm">明细 {index + 1}</CardTitle>
+          <Card key={item.id} className="gap-3 py-4">
+            <CardHeader>
+              <CardTitle className="text-sm text-muted-foreground">明细 {index + 1}</CardTitle>
               {!single && fields.length > 1 && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => remove(index)}
-                  aria-label={`删除明细 ${index + 1}`}
-                >
-                  <Trash2 />
-                </Button>
+                <CardAction>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="-my-1.5 text-muted-foreground hover:text-destructive"
+                    onClick={() => remove(index)}
+                    aria-label={`删除明细 ${index + 1}`}
+                  >
+                    <Trash2 />
+                  </Button>
+                </CardAction>
               )}
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-3">

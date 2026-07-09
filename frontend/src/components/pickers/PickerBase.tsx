@@ -74,18 +74,24 @@ export function PickerBase({
         </span>
         <span className="flex items-center gap-1">
           {clearable && selected && (
-            <X
-              className="size-4 shrink-0 opacity-50 hover:opacity-100"
+            // Button 对内部 svg 统一 pointer-events-none,清除区必须是可点击元素
+            <span
+              role="button"
+              aria-label="清除选择"
+              tabIndex={-1}
+              className="pointer-events-auto rounded-sm p-0.5 opacity-50 hover:bg-muted hover:opacity-100"
               onClick={(e) => {
                 e.stopPropagation()
                 onChange(undefined)
               }}
-            />
+            >
+              <X className="pointer-events-none size-3.5 shrink-0" />
+            </span>
           )}
           <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
         </span>
       </PopoverTrigger>
-      <PopoverContent className="w-[--anchor-width] min-w-64 p-0" align="start">
+      <PopoverContent className="w-(--anchor-width) p-0" align="start">
         <Command shouldFilter={!onSearchChange}>
           <CommandInput
             placeholder={searchPlaceholder}
@@ -105,14 +111,14 @@ export function PickerBase({
                     setOpen(false)
                   }}
                 >
-                  <span style={{ paddingLeft: `${(item.depth ?? 0) * 0.75}rem` }}>
+                  <span
+                    className="flex-1 truncate"
+                    style={{ paddingLeft: `${(item.depth ?? 0) * 0.75}rem` }}
+                  >
                     {item.label}
                   </span>
                   <Check
-                    className={cn(
-                      'ml-auto size-4',
-                      value === item.value ? 'opacity-100' : 'opacity-0',
-                    )}
+                    className={cn('size-4', value === item.value ? 'opacity-100' : 'opacity-0')}
                   />
                 </CommandItem>
               ))}

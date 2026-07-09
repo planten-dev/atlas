@@ -43,7 +43,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { title: '销售记录', to: '/sales', icon: ShoppingCart, perm: 'sales:records:read' },
       { title: '耗用记录', to: '/usages', icon: Syringe, perm: 'sales:operation-usages:read' },
       { title: '剩余查询', to: '/counts', icon: Gauge, perm: 'sales:operation-counts:read' },
-      { title: '客户', to: '/customers', icon: Users, perm: 'customers:read' },
     ],
   },
   {
@@ -56,6 +55,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { title: '部门', to: '/admin/departments', icon: FolderTree, perm: 'departments:read' },
       { title: '角色与策略', to: '/admin/permissions', icon: ShieldCheck, perm: 'system:permissions:read' },
       { title: '审计日志', to: '/admin/audit', icon: ScrollText, perm: 'events:read' },
+      { title: '客户', to: '/customers', icon: Users, perm: 'customers:read' },
     ],
   },
 ]

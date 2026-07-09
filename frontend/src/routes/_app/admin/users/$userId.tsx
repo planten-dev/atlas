@@ -5,7 +5,7 @@ import { ArrowLeft, RefreshCw } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { PolicyEditor } from '@/components/admin/PolicyEditor'
 import { Guard } from '@/auth/PermissionProvider'
@@ -114,10 +114,10 @@ function RolesCard({ userId }: { userId: string }) {
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between">
+      <CardHeader>
         <CardTitle className="text-base">角色分配</CardTitle>
         {dirty && (
-          <div className="flex gap-2">
+          <CardAction className="flex gap-2">
             <Button
               size="sm"
               disabled={setRolesMutation.isPending}
@@ -139,7 +139,7 @@ function RolesCard({ userId }: { userId: string }) {
             <Button variant="ghost" size="sm" onClick={() => setDraft(null)}>
               放弃
             </Button>
-          </div>
+          </CardAction>
         )}
       </CardHeader>
       <CardContent>

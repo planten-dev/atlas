@@ -16,7 +16,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -221,13 +221,15 @@ function CountsCard({
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between">
+      <CardHeader>
         <CardTitle className="text-base">次数账户</CardTitle>
         {!voided && (
           <Guard perm="sales:operation-counts:write">
-            <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-              调整总次数
-            </Button>
+            <CardAction>
+              <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+                调整总次数
+              </Button>
+            </CardAction>
           </Guard>
         )}
       </CardHeader>
@@ -296,14 +298,16 @@ function UsagesCard({ salesRecordId, hasCounts }: { salesRecordId: string; hasCo
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between">
+      <CardHeader>
         <CardTitle className="text-base">耗用记录</CardTitle>
         {hasCounts && (
           <Guard perm="sales:operation-usages:write">
-            <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>
-              <Plus />
-              登记耗用
-            </Button>
+            <CardAction>
+              <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>
+                <Plus />
+                登记耗用
+              </Button>
+            </CardAction>
           </Guard>
         )}
       </CardHeader>

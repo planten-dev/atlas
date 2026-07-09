@@ -9,6 +9,7 @@ import { Plus } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { DataTable } from '@/components/data-table/data-table'
 import { DataTableToolbar } from '@/components/data-table/toolbar'
 import { FormText } from '@/components/form/fields'
@@ -175,18 +176,18 @@ function StoreDialog({ store, onClose }: { store: StoreResponse | null; onClose:
         </DialogHeader>
         <form className="flex flex-col gap-4" onSubmit={submit}>
           <FormText control={form.control} name="name" label="门店名称" required />
-          <div className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">
+          <Field data-invalid={form.formState.errors.system_id ? true : undefined}>
+            <FieldLabel>
               体系<span className="text-destructive">*</span>
-            </span>
+            </FieldLabel>
             <SystemPicker
               value={form.watch('system_id') || undefined}
               onChange={(v) => form.setValue('system_id', v ?? '', { shouldValidate: true })}
             />
             {form.formState.errors.system_id && (
-              <p className="text-sm text-destructive">{form.formState.errors.system_id.message}</p>
+              <FieldError>{form.formState.errors.system_id.message}</FieldError>
             )}
-          </div>
+          </Field>
           <Button type="submit" disabled={isPending}>
             {isPending ? '保存中…' : '保存'}
           </Button>
