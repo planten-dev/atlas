@@ -2,3 +2,4 @@ backend/target
 logs/
 config/
 data/
+node_modules/

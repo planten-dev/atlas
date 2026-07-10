@@ -71,6 +71,8 @@ const columns: ColumnDef<SalesRecordResponse>[] = [
   {
     accessorKey: 'customer_id',
     header: '客户',
+    // 移动卡片以客户名为标题
+    meta: { card: 'title' },
     cell: ({ row }) => customerNameCell(row.original.customer_id),
   },
   {
