@@ -13,6 +13,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppMeRouteImport } from './routes/_app/me'
+import { Route as AppManageRouteImport } from './routes/_app/manage'
 import { Route as App403RouteImport } from './routes/_app/403'
 import { Route as AppUsagesIndexRouteImport } from './routes/_app/usages/index'
 import { Route as AppSalesIndexRouteImport } from './routes/_app/sales/index'
@@ -55,6 +56,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppMeRoute = AppMeRouteImport.update({
   id: '/me',
   path: '/me',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppManageRoute = AppManageRouteImport.update({
+  id: '/manage',
+  path: '/manage',
   getParentRoute: () => AppRoute,
 } as any)
 const App403Route = App403RouteImport.update({
@@ -186,6 +192,7 @@ export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
   '/403': typeof App403Route
+  '/manage': typeof AppManageRoute
   '/me': typeof AppMeRoute
   '/admin/audit': typeof AppAdminAuditRoute
   '/admin/departments': typeof AppAdminDepartmentsRoute
@@ -214,6 +221,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/403': typeof App403Route
+  '/manage': typeof AppManageRoute
   '/me': typeof AppMeRoute
   '/': typeof AppIndexRoute
   '/admin/audit': typeof AppAdminAuditRoute
@@ -245,6 +253,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/_app/403': typeof App403Route
+  '/_app/manage': typeof AppManageRoute
   '/_app/me': typeof AppMeRoute
   '/_app/': typeof AppIndexRoute
   '/_app/admin/audit': typeof AppAdminAuditRoute
@@ -277,6 +286,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/403'
+    | '/manage'
     | '/me'
     | '/admin/audit'
     | '/admin/departments'
@@ -305,6 +315,7 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/403'
+    | '/manage'
     | '/me'
     | '/'
     | '/admin/audit'
@@ -335,6 +346,7 @@ export interface FileRouteTypes {
     | '/_app'
     | '/login'
     | '/_app/403'
+    | '/_app/manage'
     | '/_app/me'
     | '/_app/'
     | '/_app/admin/audit'
@@ -395,6 +407,13 @@ declare module '@tanstack/react-router' {
       path: '/me'
       fullPath: '/me'
       preLoaderRoute: typeof AppMeRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/manage': {
+      id: '/_app/manage'
+      path: '/manage'
+      fullPath: '/manage'
+      preLoaderRoute: typeof AppManageRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/403': {
@@ -570,6 +589,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   App403Route: typeof App403Route
+  AppManageRoute: typeof AppManageRoute
   AppMeRoute: typeof AppMeRoute
   AppIndexRoute: typeof AppIndexRoute
   AppAdminAuditRoute: typeof AppAdminAuditRoute
@@ -599,6 +619,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   App403Route: App403Route,
+  AppManageRoute: AppManageRoute,
   AppMeRoute: AppMeRoute,
   AppIndexRoute: AppIndexRoute,
   AppAdminAuditRoute: AppAdminAuditRoute,

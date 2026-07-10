@@ -32,7 +32,7 @@ type CustomersSearch = z.infer<typeof searchSchema>
 export const Route = createFileRoute('/_app/customers/')({
   validateSearch: searchSchema,
   beforeLoad: ({ context }) => requirePerm(context.queryClient, 'customers:read'),
-  staticData: { tab: 'home' },
+  staticData: { tab: 'admin' },
   component: CustomersListPage,
 })
 

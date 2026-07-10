@@ -8,7 +8,7 @@ export interface RouterContext {
 declare module '@tanstack/react-router' {
   interface StaticDataRouteOption {
     /** 移动底部 TabBar 的归属 tab;仅标记了 tab 的路由显示 TabBar。 */
-    tab?: 'home' | 'sales' | 'approvals' | 'me'
+    tab?: 'home' | 'sales' | 'approvals' | 'admin' | 'me'
     /** 桌面专属页面:移动端显示"请到电脑端操作"提示。 */
     desktopOnly?: boolean
   }

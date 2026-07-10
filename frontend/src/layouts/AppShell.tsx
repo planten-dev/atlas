@@ -4,6 +4,7 @@ import {
   Home,
   ShoppingCart,
   ClipboardCheck,
+  LayoutGrid,
   User,
   Search,
   Construction,
@@ -34,6 +35,7 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { usePermissions } from '@/auth/PermissionProvider'
 import { useApprovalBadgeCount } from '@/hooks/useApprovalBadge'
 import { NAV_GROUPS } from '@/layouts/nav'
+import { MANAGE_PERMS } from '@/layouts/manage-menu'
 import { CommandPalette } from '@/components/CommandPalette'
 import { UserMenu } from '@/components/UserMenu'
 import { CATALOG_GROUPS, visibleCatalog } from '@/reports/registry'
@@ -228,11 +230,21 @@ function BusinessCatalogGroups() {
   )
 }
 
-const MOBILE_TABS = [
-  { title: '首页', to: '/', icon: Home, tab: 'home' as const },
-  { title: '销售', to: '/sales', icon: ShoppingCart, tab: 'sales' as const },
-  { title: '审批', to: '/approvals', icon: ClipboardCheck, tab: 'approvals' as const },
-  { title: '我的', to: '/me', icon: User, tab: 'me' as const },
+interface MobileTab {
+  title: string
+  to: string
+  icon: typeof Home
+  tab: 'home' | 'sales' | 'approvals' | 'admin' | 'me'
+  /** 持有任一权限才显示该 tab;缺省恒显示 */
+  anyPerm?: readonly string[]
+}
+
+const MOBILE_TABS: MobileTab[] = [
+  { title: '首页', to: '/', icon: Home, tab: 'home' },
+  { title: '销售', to: '/sales', icon: ShoppingCart, tab: 'sales' },
+  { title: '审批', to: '/approvals', icon: ClipboardCheck, tab: 'approvals' },
+  { title: '管理', to: '/manage', icon: LayoutGrid, tab: 'admin', anyPerm: MANAGE_PERMS },
+  { title: '我的', to: '/me', icon: User, tab: 'me' },
 ]
 
 function MobileShell({ children }: { children: ReactNode }) {
@@ -244,6 +256,10 @@ function MobileShell({ children }: { children: ReactNode }) {
   )
   const desktopOnly = matches.some((m) => m.staticData.desktopOnly)
   const badgeCount = useApprovalBadgeCount()
+  const permissions = usePermissions()
+  const tabs = MOBILE_TABS.filter(
+    (tab) => !tab.anyPerm || tab.anyPerm.some((perm) => permissions.has(perm)),
+  )
 
   return (
     <div className="min-h-app flex flex-col">
@@ -252,7 +268,7 @@ function MobileShell({ children }: { children: ReactNode }) {
       </div>
       {activeTab && (
         <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t bg-background pb-[env(safe-area-inset-bottom)]">
-          {MOBILE_TABS.map((tab) => (
+          {tabs.map((tab) => (
             <Link
               key={tab.to}
               to={tab.to}
@@ -284,7 +300,9 @@ export function DesktopOnlyNotice() {
   return (
     <div className="flex flex-col items-center gap-2 py-16 text-center">
       <p className="font-medium">该功能请在电脑端使用</p>
-      <p className="text-sm text-muted-foreground">手机端仅提供审批、销售、耗用与查询功能</p>
+      <p className="text-sm text-muted-foreground">
+        手机端提供审批、销售、查询与基础管理功能,其余请到电脑端操作
+      </p>
     </div>
   )
 }
