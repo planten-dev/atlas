@@ -81,7 +81,7 @@ export const CATALOG: CatalogItem[] = [
   { id: 'aux-private-device-remaining', title: '私定仪器剩余', group: '辅助类', status: 'reserved', note: '等待 operation-counts/list 支持按类别筛选(缺口 #2),届时接 /counts 预设' },
   { id: 'aux-customer-payable', title: '客户应付金额', group: '辅助类', status: 'reserved', note: '等待 sales-records/list 支持未收金额筛选(缺口 #4),届时接 /sales 预设' },
   { id: 'aux-customer-archive', title: '客户档案查询', group: '辅助类', status: 'available', route: '/customers', perm: 'customers:read' },
-  { id: 'aux-remaining-query', title: '剩余次数查询', group: '辅助类', status: 'available', route: '/counts', perm: 'sales:operation-counts:read' },
+  { id: 'aux-remaining-query', title: '剩余次数查询', group: '辅助类', status: 'available', route: '/counts', perm: 'sales:records:read' },
   { id: 'aux-sales-summary', title: '销售汇总', group: '辅助类', status: 'reserved', note: '等待统计域建设' },
   { id: 'aux-staff-performance', title: '人员业绩统计', group: '辅助类', status: 'reserved', note: '等待统计域建设' },
   { id: 'aux-allocation-ratio', title: '分配比例', group: '辅助类', status: 'reserved', note: '等待统计域建设' },

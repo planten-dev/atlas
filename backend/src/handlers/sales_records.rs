@@ -71,12 +71,25 @@ pub async fn create_sale_record(
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
+    let expert = request.expert_user_id;
     match state
         .sales_records
-        .create_sale_record(current_session.user.id, request)
+        .prepare_sale_review(current_session.user.id, request)
         .await
     {
-        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+        Ok(doc) => match state
+            .events
+            .submit_create(
+                current_session.user.id,
+                &doc,
+                approval_count(expert),
+                approvers(expert),
+            )
+            .await
+        {
+            Ok(event) => (StatusCode::ACCEPTED, Json(event)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => sales_record_error_response(error),
     }
 }
@@ -91,18 +104,32 @@ pub async fn create_service_record(
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
+    let expert = request.expert_user_id;
     match state
         .sales_records
-        .create_service_record(current_session.user.id, request)
+        .prepare_service_review(current_session.user.id, request)
         .await
     {
-        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+        Ok(doc) => match state
+            .events
+            .submit_create(
+                current_session.user.id,
+                &doc,
+                approval_count(expert),
+                approvers(expert),
+            )
+            .await
+        {
+            Ok(event) => (StatusCode::ACCEPTED, Json(event)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => sales_record_error_response(error),
     }
 }
 
 pub async fn void_sales_record(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let sales_record_id = match path {
@@ -112,8 +139,26 @@ pub async fn void_sales_record(
         }
     };
 
-    match state.sales_records.void_sales_record(sales_record_id).await {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+    match state
+        .sales_records
+        .prepare_void_record_review(sales_record_id)
+        .await
+    {
+        Ok((old, new, expert)) => match state
+            .events
+            .submit_update(
+                current_session.user.id,
+                sales_record_id,
+                &old,
+                &new,
+                approval_count(expert),
+                approvers(expert),
+            )
+            .await
+        {
+            Ok(event) => (StatusCode::ACCEPTED, Json(event)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => sales_record_error_response(error),
     }
 }
@@ -160,16 +205,29 @@ pub async fn create_collection_payment(
 
     match state
         .sales_records
-        .create_collection_payment(current_session.user.id, request)
+        .prepare_collection_review(current_session.user.id, request)
         .await
     {
-        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+        Ok((doc, expert)) => match state
+            .events
+            .submit_create(
+                current_session.user.id,
+                &doc,
+                approval_count(expert),
+                approvers(expert),
+            )
+            .await
+        {
+            Ok(event) => (StatusCode::ACCEPTED, Json(event)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => sales_record_error_response(error),
     }
 }
 
 pub async fn void_sales_payment(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let payment_id = match path {
@@ -177,8 +235,26 @@ pub async fn void_sales_payment(
         Err(error) => return validation_error_response("invalid payment_id path parameter", error),
     };
 
-    match state.sales_records.void_sales_payment(payment_id).await {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+    match state
+        .sales_records
+        .prepare_void_payment_review(payment_id)
+        .await
+    {
+        Ok((old, new, expert)) => match state
+            .events
+            .submit_update(
+                current_session.user.id,
+                payment_id,
+                &old,
+                &new,
+                approval_count(expert),
+                approvers(expert),
+            )
+            .await
+        {
+            Ok(event) => (StatusCode::ACCEPTED, Json(event)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => sales_record_error_response(error),
     }
 }
@@ -221,6 +297,7 @@ pub async fn operation_count_detail(
 
 pub async fn update_operation_count(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
     request: Result<Json<UpdateOperationCountRequest>, JsonRejection>,
 ) -> Response {
@@ -237,10 +314,24 @@ pub async fn update_operation_count(
 
     match state
         .sales_records
-        .update_operation_count(sales_record_line_id, request)
+        .prepare_count_review(sales_record_line_id, request)
         .await
     {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Ok((record_id, old, new, expert)) => match state
+            .events
+            .submit_update(
+                current_session.user.id,
+                record_id,
+                &old,
+                &new,
+                approval_count(expert),
+                approvers(expert),
+            )
+            .await
+        {
+            Ok(event) => (StatusCode::ACCEPTED, Json(event)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => sales_record_error_response(error),
     }
 }
@@ -277,6 +368,7 @@ pub async fn operation_usage_detail(
 
 pub async fn create_operation_usage(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     request: Result<Json<CreateOperationUsageRequest>, JsonRejection>,
 ) -> Response {
     let request = match request {
@@ -284,14 +376,31 @@ pub async fn create_operation_usage(
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
-    match state.sales_records.create_operation_usage(request).await {
-        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+    match state
+        .sales_records
+        .prepare_create_usage_review(request)
+        .await
+    {
+        Ok((doc, expert)) => match state
+            .events
+            .submit_create(
+                current_session.user.id,
+                &doc,
+                approval_count(expert),
+                approvers(expert),
+            )
+            .await
+        {
+            Ok(event) => (StatusCode::ACCEPTED, Json(event)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => sales_record_error_response(error),
     }
 }
 
 pub async fn update_operation_usage(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
     request: Result<Json<UpdateOperationUsageRequest>, JsonRejection>,
 ) -> Response {
@@ -306,16 +415,31 @@ pub async fn update_operation_usage(
 
     match state
         .sales_records
-        .update_operation_usage(usage_id, request)
+        .prepare_update_usage_review(usage_id, request)
         .await
     {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Ok((old, new, expert)) => match state
+            .events
+            .submit_update(
+                current_session.user.id,
+                usage_id,
+                &old,
+                &new,
+                approval_count(expert),
+                approvers(expert),
+            )
+            .await
+        {
+            Ok(event) => (StatusCode::ACCEPTED, Json(event)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => sales_record_error_response(error),
     }
 }
 
 pub async fn void_operation_usage(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let usage_id = match path {
@@ -323,14 +447,33 @@ pub async fn void_operation_usage(
         Err(error) => return validation_error_response("invalid usage_id path parameter", error),
     };
 
-    match state.sales_records.void_operation_usage(usage_id).await {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+    match state
+        .sales_records
+        .prepare_void_usage_review(usage_id)
+        .await
+    {
+        Ok((old, new, expert)) => match state
+            .events
+            .submit_update(
+                current_session.user.id,
+                usage_id,
+                &old,
+                &new,
+                approval_count(expert),
+                approvers(expert),
+            )
+            .await
+        {
+            Ok(event) => (StatusCode::ACCEPTED, Json(event)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => sales_record_error_response(error),
     }
 }
 
 pub async fn delete_operation_usage(
     State(state): State<AppState>,
+    Extension(current_session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let usage_id = match path {
@@ -338,10 +481,34 @@ pub async fn delete_operation_usage(
         Err(error) => return validation_error_response("invalid usage_id path parameter", error),
     };
 
-    match state.sales_records.delete_operation_usage(usage_id).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+    match state
+        .sales_records
+        .prepare_delete_usage_review(usage_id)
+        .await
+    {
+        Ok((old, expert)) => match state
+            .events
+            .submit_delete(
+                current_session.user.id,
+                usage_id,
+                &old,
+                approval_count(expert),
+                approvers(expert),
+            )
+            .await
+        {
+            Ok(event) => (StatusCode::ACCEPTED, Json(event)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => sales_record_error_response(error),
     }
+}
+
+fn approval_count(expert: Option<Uuid>) -> i16 {
+    if expert.is_some() { 2 } else { 1 }
+}
+fn approvers(expert: Option<Uuid>) -> Vec<Uuid> {
+    expert.into_iter().collect()
 }
 
 fn sales_record_error_response(error: SalesRecordError) -> Response {
@@ -469,11 +636,21 @@ mod tests {
             users::UserRepository,
         },
         services::{
-            auth::AuthService, authz::AuthzService, customers::CustomerService,
-            departments::DepartmentService, events::EventService,
-            product_categories::ProductCategoryService, products::ProductService,
-            review::ApplierRegistry, sales_records::SalesRecordService, stores::StoreService,
-            systems::SystemService, users::UserService,
+            auth::AuthService,
+            authz::AuthzService,
+            customers::CustomerService,
+            departments::DepartmentService,
+            events::EventService,
+            product_categories::ProductCategoryService,
+            products::ProductService,
+            review::ApplierRegistry,
+            sales_records::{
+                SalesOperationUsageReviewDoc, SalesPaymentReviewDoc, SalesRecordReviewDoc,
+                SalesRecordService,
+            },
+            stores::StoreService,
+            systems::SystemService,
+            users::UserService,
         },
     };
     use axum::{
@@ -621,97 +798,16 @@ mod tests {
             .expect("sales create request should be handled");
         let create_status = create_response.status();
         let created = response_json(create_response).await;
-        assert_eq!(create_status, StatusCode::CREATED, "{created}");
-        let sales_record_id = created
-            .pointer("/id")
-            .and_then(Value::as_str)
-            .expect("sales record id should exist")
-            .to_string();
-        let sales_record_line_id = created
-            .pointer("/lines/0/id")
-            .and_then(Value::as_str)
-            .expect("line id should exist")
-            .to_string();
+        assert_eq!(create_status, StatusCode::ACCEPTED, "{created}");
         assert_eq!(
-            created
-                .pointer("/outstanding_amount")
-                .and_then(Value::as_str),
-            Some("200.00")
+            created.pointer("/resource_type").and_then(Value::as_str),
+            Some("sales:records")
         );
-
-        let collect_response = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::POST,
-                "/api/v1/sales-payments/collect",
-                Some(&cookie),
-                Some(json!({
-                    "sales_record_id": sales_record_id,
-                    "paid_amount": "200.00",
-                    "paid_at": "2026-07-09T10:00:00Z",
-                    "allocations": [{
-                        "guide_user_id": user_id,
-                        "allocation_ratio": "100.00"
-                    }]
-                })),
-            ))
-            .await
-            .expect("collection request should be handled");
-        assert_eq!(collect_response.status(), StatusCode::CREATED);
-        let collection = response_json(collect_response).await;
-        let payment_id = collection
-            .pointer("/id")
-            .and_then(Value::as_str)
-            .expect("payment id should exist")
-            .to_string();
         assert_eq!(
-            collection.pointer("/payment_type").and_then(Value::as_str),
-            Some("collection")
+            created.pointer("/approval_status").and_then(Value::as_i64),
+            Some(1)
         );
-
-        let count_detail = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::GET,
-                &format!("/api/v1/sales-record-operation-counts/detail/{sales_record_line_id}"),
-                Some(&cookie),
-                None,
-            ))
-            .await
-            .expect("operation count detail should be handled");
-        assert_eq!(count_detail.status(), StatusCode::OK);
-
-        let usage_response = context
-            .app
-            .clone()
-            .oneshot(request(
-                Method::POST,
-                "/api/v1/sales-record-operation-usages/create",
-                Some(&cookie),
-                Some(json!({
-                    "sales_record_line_id": sales_record_line_id,
-                    "operated_at": "2026-07-09T09:00:00Z",
-                    "operator_user_id": user_id,
-                    "operation_count": 1
-                })),
-            ))
-            .await
-            .expect("operation usage create should be handled");
-        assert_eq!(usage_response.status(), StatusCode::CREATED);
-
-        let void_payment = context
-            .app
-            .oneshot(request(
-                Method::POST,
-                &format!("/api/v1/sales-payments/void/{payment_id}"),
-                Some(&cookie),
-                None,
-            ))
-            .await
-            .expect("payment void should be handled");
-        assert_eq!(void_payment.status(), StatusCode::OK);
+        assert!(created.pointer("/resource_id").is_some_and(Value::is_null));
     }
 
     async fn test_context(mock_base_url: &str) -> TestContext {
@@ -777,10 +873,14 @@ mod tests {
             product_categories.clone(),
             users.clone(),
         );
+        let mut registry = ApplierRegistry::new();
+        registry.register::<SalesRecordReviewDoc>();
+        registry.register::<SalesPaymentReviewDoc>();
+        registry.register::<SalesOperationUsageReviewDoc>();
         let events_service = EventService::new(
             EventRepository::new(db),
             authz.clone(),
-            std::sync::Arc::new(ApplierRegistry::new()),
+            std::sync::Arc::new(registry),
             180,
         );
         let state = AppState::new(crate::state::AppStateParts {
@@ -994,8 +1094,6 @@ mod tests {
         for (object, action) in [
             ("sales:records", "read"),
             ("sales:records", "write"),
-            ("sales:operation-counts", "read"),
-            ("sales:operation-counts", "write"),
             ("sales:operation-usages", "read"),
             ("sales:operation-usages", "write"),
         ] {

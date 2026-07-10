@@ -302,7 +302,7 @@ pub struct ListSalesPaymentsQuery {
     pub page_size: Option<u64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateSaleRecordRequest {
     pub customer_id: Uuid,
@@ -322,7 +322,7 @@ pub struct CreateSaleRecordRequest {
     pub payment: SalesPaymentInput,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateServiceRecordRequest {
     pub customer_id: Uuid,
@@ -343,7 +343,7 @@ pub struct CreateServiceRecordRequest {
     pub lines: Vec<SalesRecordLineInput>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SalesRecordLineInput {
     pub product_id: Uuid,
@@ -355,7 +355,7 @@ pub struct SalesRecordLineInput {
     pub remark: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SalesPaymentInput {
     pub paid_amount: String,
@@ -365,14 +365,14 @@ pub struct SalesPaymentInput {
     pub remark: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SalesPaymentAllocationInput {
     pub guide_user_id: Uuid,
     pub allocation_ratio: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateCollectionPaymentRequest {
     pub sales_record_id: Uuid,
@@ -392,7 +392,7 @@ pub struct ListOperationCountsQuery {
     pub page_size: Option<u64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateOperationCountRequest {
     pub total_count: i32,
@@ -411,7 +411,7 @@ pub struct ListOperationUsagesQuery {
     pub page_size: Option<u64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateOperationUsageRequest {
     pub sales_record_line_id: Uuid,

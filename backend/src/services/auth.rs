@@ -222,6 +222,30 @@ impl AuthService {
         let should_sync_profile = login_user.created;
         let user = login_user.user;
 
+        if should_sync_profile {
+            self.events
+                .insert_event(
+                    &self.events.db,
+                    NewEvent {
+                        resource_type: "users".to_string(),
+                        resource_id: Some(user.id),
+                        actor_user_id: Some(user.id),
+                        event_type: EventType::Create,
+                        approval_status: ApprovalStatus::None,
+                        required_approval_count: None,
+                        required_approver_ids: Vec::new(),
+                        custom_type: None,
+                        target_event_id: None,
+                        old_value: None,
+                        new_value: Some(serde_json::json!({"id": user.id, "status": user.status})),
+                        remark: None,
+                        updated_at: Some(now),
+                    },
+                    now,
+                )
+                .await?;
+        }
+
         if should_sync_profile && sync_personal_profile {
             if let Err(error) = self
                 .sync_dingtalk_personal_profile(identity, user.id, now)

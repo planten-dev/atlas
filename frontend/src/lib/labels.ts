@@ -153,8 +153,8 @@ export const FIELD_LABELS: Record<string, string> = {
 export const PERMISSION_OBJECT_META: Record<string, { group: string; label: string }> = {
   customers: { group: '销售', label: '客户' },
   'sales:records': { group: '销售', label: '销售记录' },
-  'sales:operation-counts': { group: '销售', label: '次数账户' },
   'sales:operation-usages': { group: '销售', label: '耗用记录' },
+  'sales:payments': { group: '审核', label: '销售付款' },
   products: { group: '商品', label: '产品' },
   'products:categories': { group: '商品', label: '产品类别' },
   systems: { group: '门店', label: '门店体系' },

@@ -30,8 +30,11 @@ import {
 } from '@/hooks/usePermissionsAdmin'
 import { POLICY_EFFECT_LABELS } from '@/lib/labels'
 import { notify } from '@/lib/notify'
-
-const ACTIONS: ReplacePolicyItem['action'][] = ['read', 'write', 'approve', '*']
+import {
+  normalizePolicyAction,
+  POLICY_ACTIONS,
+  policyActionsForObject,
+} from './policy-actions'
 
 /**
  * 主体(用户/角色)策略编辑器:行按 catalog 构建 object/action/effect;
@@ -86,7 +89,13 @@ export function PolicyEditor({
               <Select
                 items={objectOptions}
                 value={row.object || null}
-                onValueChange={(value) => value && update(index, { object: value })}
+                onValueChange={(value) => {
+                  if (!value) return
+                  update(index, {
+                    object: value,
+                    action: normalizePolicyAction(catalog, value, row.action),
+                  })
+                }}
               >
                 <SelectTrigger size="sm" className="min-w-56 flex-1">
                   <SelectValue placeholder="选择资源" />
@@ -100,7 +109,10 @@ export function PolicyEditor({
                 </SelectContent>
               </Select>
               <Select
-                items={ACTIONS.map((a) => ({ value: a, label: a }))}
+                items={policyActionsForObject(catalog, row.object).map((a) => ({
+                  value: a,
+                  label: a,
+                }))}
                 value={row.action}
                 onValueChange={(value) =>
                   value && update(index, { action: value as ReplacePolicyItem['action'] })
@@ -110,7 +122,7 @@ export function PolicyEditor({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {ACTIONS.map((action) => (
+                  {policyActionsForObject(catalog, row.object).map((action) => (
                     <SelectItem key={action} value={action}>
                       {action}
                     </SelectItem>
@@ -152,7 +164,9 @@ export function PolicyEditor({
         <Button
           variant="outline"
           size="sm"
-          onClick={() => setDraft([...rows, { object: '', action: 'read', effect: 'allow' }])}
+          onClick={() =>
+            setDraft([...rows, { object: '', action: POLICY_ACTIONS[0]!, effect: 'allow' }])
+          }
         >
           <Plus />
           添加策略

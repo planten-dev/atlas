@@ -1,5 +1,5 @@
 use axum::{
-    Json,
+    Extension, Json,
     extract::{
         Path, Query, State,
         rejection::{JsonRejection, PathRejection, QueryRejection},
@@ -18,7 +18,7 @@ use crate::{
         },
     },
     repositories::RepositoryError,
-    services::product_categories::ProductCategoryError,
+    services::{auth::CurrentSession, product_categories::ProductCategoryError},
     state::AppState,
 };
 
@@ -56,6 +56,7 @@ pub async fn category_detail(
 
 pub async fn create_category(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     request: Result<Json<CreateProductCategoryRequest>, JsonRejection>,
 ) -> Response {
     let request = match request {
@@ -64,13 +65,26 @@ pub async fn create_category(
     };
 
     match state.product_categories.create_category(request).await {
-        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+        Ok(response) => match state
+            .events
+            .record_create(
+                "product_categories",
+                session.user.id,
+                Some(response.id),
+                &response,
+            )
+            .await
+        {
+            Ok(_) => (StatusCode::CREATED, Json(response)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => product_category_error_response(error),
     }
 }
 
 pub async fn update_category(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
     request: Result<Json<UpdateProductCategoryRequest>, JsonRejection>,
 ) -> Response {
@@ -85,18 +99,36 @@ pub async fn update_category(
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
+    let old = match state.product_categories.category_detail(category_id).await {
+        Ok(v) => v,
+        Err(e) => return product_category_error_response(e),
+    };
     match state
         .product_categories
         .update_category(category_id, request)
         .await
     {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Ok(response) => match state
+            .events
+            .record_update(
+                "product_categories",
+                session.user.id,
+                category_id,
+                &old,
+                &response,
+            )
+            .await
+        {
+            Ok(_) => (StatusCode::OK, Json(response)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => product_category_error_response(error),
     }
 }
 
 pub async fn disable_category(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let category_id = match path {
@@ -106,14 +138,32 @@ pub async fn disable_category(
         }
     };
 
+    let old = match state.product_categories.category_detail(category_id).await {
+        Ok(v) => v,
+        Err(e) => return product_category_error_response(e),
+    };
     match state.product_categories.disable_category(category_id).await {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Ok(response) => match state
+            .events
+            .record_update(
+                "product_categories",
+                session.user.id,
+                category_id,
+                &old,
+                &response,
+            )
+            .await
+        {
+            Ok(_) => (StatusCode::OK, Json(response)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => product_category_error_response(error),
     }
 }
 
 pub async fn delete_category(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let category_id = match path {
@@ -123,8 +173,19 @@ pub async fn delete_category(
         }
     };
 
+    let old = match state.product_categories.category_detail(category_id).await {
+        Ok(v) => v,
+        Err(e) => return product_category_error_response(e),
+    };
     match state.product_categories.delete_category(category_id).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => match state
+            .events
+            .record_delete("product_categories", session.user.id, category_id, &old)
+            .await
+        {
+            Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => product_category_error_response(error),
     }
 }

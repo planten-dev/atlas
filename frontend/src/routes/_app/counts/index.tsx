@@ -29,7 +29,7 @@ const searchSchema = z.object({
 
 export const Route = createFileRoute('/_app/counts/')({
   validateSearch: searchSchema,
-  beforeLoad: ({ context }) => requirePerm(context.queryClient, 'sales:operation-counts:read'),
+  beforeLoad: ({ context }) => requirePerm(context.queryClient, 'sales:records:read'),
   staticData: { tab: 'home' },
   component: CountsListPage,
 })

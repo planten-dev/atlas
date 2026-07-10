@@ -321,18 +321,18 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/sales-record-operation-counts/list",
             get(handlers::sales_records::list_operation_counts
-                .layer(require_permission(&state, "sales:operation-counts:read"))),
+                .layer(require_permission(&state, "sales:records:read"))),
         )
         .route(
             "/api/v1/sales-record-operation-counts/detail/{sales_record_line_id}",
             get(handlers::sales_records::operation_count_detail
-                .layer(require_permission(&state, "sales:operation-counts:read"))),
+                .layer(require_permission(&state, "sales:records:read"))),
         )
         .route(
             "/api/v1/sales-record-operation-counts/update/{sales_record_line_id}",
             post(
                 handlers::sales_records::update_operation_count
-                    .layer(require_permission(&state, "sales:operation-counts:write")),
+                    .layer(require_permission(&state, "sales:records:write")),
             ),
         )
         .route(

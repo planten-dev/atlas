@@ -160,6 +160,15 @@ impl SalesRecordRepository {
         Self { db }
     }
 
+    /// Repository facade for review appliers that are given an existing
+    /// transaction by the event system. Only methods accepting an explicit
+    /// connection/transaction may be used on this value.
+    pub(crate) fn for_review_transaction() -> Self {
+        Self {
+            db: DatabaseConnection::Disconnected,
+        }
+    }
+
     pub async fn begin(&self) -> Result<DatabaseTransaction, RepositoryError> {
         Ok(self.db.begin().await?)
     }

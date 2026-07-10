@@ -17,7 +17,7 @@ export const Route = createFileRoute('/_app/')({
 const QUICK_LINKS = [
   { title: '销售录入', to: '/sales/new', icon: PlusSquare, perm: 'sales:records:write' },
   { title: '登记耗用', to: '/usages/new', icon: Syringe, perm: 'sales:operation-usages:write' },
-  { title: '剩余查询', to: '/counts', icon: Gauge, perm: 'sales:operation-counts:read' },
+  { title: '剩余查询', to: '/counts', icon: Gauge, perm: 'sales:records:read' },
   { title: '审批中心', to: '/approvals', icon: ClipboardCheck, perm: 'events:read' },
 ]
 

@@ -60,6 +60,7 @@ pub async fn permission_catalog(State(state): State<AppState>) -> Response {
 /// with one enforcer reload — the bulk save behind the permission panel.
 pub async fn replace_subject_policies(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     Path((subject_kind, subject_id)): Path<(String, Uuid)>,
     Json(request): Json<ReplaceSubjectPoliciesRequest>,
 ) -> Response {
@@ -78,18 +79,33 @@ pub async fn replace_subject_policies(
         .replace_subject_policies(subject_kind.clone(), subject_id, policies)
         .await
     {
-        Ok(created) => (
-            StatusCode::OK,
-            Json(SubjectPoliciesResponse {
+        Ok(created) => {
+            let response = SubjectPoliciesResponse {
                 subject_kind,
                 subject_id,
                 policies: created
                     .into_iter()
                     .map(PolicyResponse::from_model)
                     .collect(),
-            }),
-        )
-            .into_response(),
+            };
+            let old_audit = serde_json::json!({"replaced": true});
+            let new_audit =
+                serde_json::to_value(&response).expect("permission response serializes");
+            match state
+                .events
+                .record_update(
+                    "permission_policies",
+                    session.user.id,
+                    subject_id,
+                    &old_audit,
+                    &new_audit,
+                )
+                .await
+            {
+                Ok(_) => (StatusCode::OK, Json(response)).into_response(),
+                Err(error) => crate::handlers::events::event_error_response(error),
+            }
+        }
         Err(error) => authz_error_response(error),
     }
 }
@@ -107,6 +123,7 @@ pub async fn list_roles(State(state): State<AppState>) -> Response {
 
 pub async fn create_role(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     Json(request): Json<CreateRoleRequest>,
 ) -> Response {
     match state
@@ -114,7 +131,17 @@ pub async fn create_role(
         .create_role(request.code, request.name, request.kind, request.priority)
         .await
     {
-        Ok(role) => (StatusCode::CREATED, Json(RoleResponse::from_model(role))).into_response(),
+        Ok(role) => {
+            let response = RoleResponse::from_model(role);
+            match state
+                .events
+                .record_create("roles", session.user.id, Some(response.id), &response)
+                .await
+            {
+                Ok(_) => (StatusCode::CREATED, Json(response)).into_response(),
+                Err(error) => crate::handlers::events::event_error_response(error),
+            }
+        }
         Err(error) => authz_error_response(error),
     }
 }
@@ -135,37 +162,86 @@ pub async fn get_role(State(state): State<AppState>, Path(role_id): Path<Uuid>) 
 
 pub async fn update_role(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     Path(role_id): Path<Uuid>,
     Json(request): Json<UpdateRoleRequest>,
 ) -> Response {
+    let old = match state.authz.get_role(role_id).await {
+        Ok((role, _)) => RoleResponse::from_model(role),
+        Err(e) => return authz_error_response(e),
+    };
     match state
         .authz
         .update_role(role_id, request.name, request.priority)
         .await
     {
-        Ok(role) => (StatusCode::OK, Json(RoleResponse::from_model(role))).into_response(),
+        Ok(role) => {
+            let response = RoleResponse::from_model(role);
+            match state
+                .events
+                .record_update("roles", session.user.id, role_id, &old, &response)
+                .await
+            {
+                Ok(_) => (StatusCode::OK, Json(response)).into_response(),
+                Err(error) => crate::handlers::events::event_error_response(error),
+            }
+        }
         Err(error) => authz_error_response(error),
     }
 }
 
-pub async fn delete_role(State(state): State<AppState>, Path(role_id): Path<Uuid>) -> Response {
+pub async fn delete_role(
+    State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
+    Path(role_id): Path<Uuid>,
+) -> Response {
+    let old = match state.authz.get_role(role_id).await {
+        Ok((role, _)) => RoleResponse::from_model(role),
+        Err(e) => return authz_error_response(e),
+    };
     match state.authz.delete_role(role_id).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => match state
+            .events
+            .record_delete("roles", session.user.id, role_id, &old)
+            .await
+        {
+            Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => authz_error_response(error),
     }
 }
 
 pub async fn set_role_parents(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     Path(role_id): Path<Uuid>,
     Json(request): Json<SetRoleParentsRequest>,
 ) -> Response {
+    let old = match state.authz.get_role(role_id).await {
+        Ok((_, ids)) => ids,
+        Err(e) => return authz_error_response(e),
+    };
+    let new_ids = request.parent_role_ids.clone();
     match state
         .authz
         .set_role_parents(role_id, request.parent_role_ids)
         .await
     {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => match state
+            .events
+            .record_update(
+                "role_inheritances",
+                session.user.id,
+                role_id,
+                &old,
+                &new_ids,
+            )
+            .await
+        {
+            Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => authz_error_response(error),
     }
 }
@@ -186,20 +262,42 @@ pub async fn list_role_users(State(state): State<AppState>, Path(role_id): Path<
 
 pub async fn add_role_member(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     Path((role_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Response {
     match state.authz.add_role_member(role_id, user_id).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            let value = serde_json::json!({"role_id": role_id, "user_id": user_id});
+            match state
+                .events
+                .record_create("user_roles", session.user.id, Some(role_id), &value)
+                .await
+            {
+                Ok(_) => StatusCode::NO_CONTENT.into_response(),
+                Err(error) => crate::handlers::events::event_error_response(error),
+            }
+        }
         Err(error) => authz_error_response(error),
     }
 }
 
 pub async fn remove_role_member(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     Path((role_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Response {
     match state.authz.remove_role_member(role_id, user_id).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            let value = serde_json::json!({"role_id": role_id, "user_id": user_id});
+            match state
+                .events
+                .record_delete("user_roles", session.user.id, role_id, &value)
+                .await
+            {
+                Ok(_) => StatusCode::NO_CONTENT.into_response(),
+                Err(error) => crate::handlers::events::event_error_response(error),
+            }
+        }
         Err(error) => authz_error_response(error),
     }
 }
@@ -220,18 +318,34 @@ pub async fn list_user_roles(State(state): State<AppState>, Path(user_id): Path<
 
 pub async fn set_user_roles(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     Path(user_id): Path<Uuid>,
     Json(request): Json<SetUserRolesRequest>,
 ) -> Response {
+    let old = match state.authz.list_user_roles(user_id).await {
+        Ok(roles) => roles.into_iter().map(|r| r.id).collect::<Vec<_>>(),
+        Err(e) => return authz_error_response(e),
+    };
     match state.authz.set_user_roles(user_id, request.role_ids).await {
-        Ok(roles) => (
-            StatusCode::OK,
-            Json(UserRolesResponse {
+        Ok(roles) => {
+            let response = UserRolesResponse {
                 user_id,
                 roles: roles.into_iter().map(RoleResponse::from_model).collect(),
-            }),
-        )
-            .into_response(),
+            };
+            let new_ids = response
+                .roles
+                .iter()
+                .map(|role| role.id)
+                .collect::<Vec<_>>();
+            match state
+                .events
+                .record_update("user_roles", session.user.id, user_id, &old, &new_ids)
+                .await
+            {
+                Ok(_) => (StatusCode::OK, Json(response)).into_response(),
+                Err(error) => crate::handlers::events::event_error_response(error),
+            }
+        }
         Err(error) => authz_error_response(error),
     }
 }
@@ -258,6 +372,7 @@ pub async fn list_policies(
 
 pub async fn create_policy(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     Json(request): Json<CreatePolicyRequest>,
 ) -> Response {
     match state
@@ -271,18 +386,47 @@ pub async fn create_policy(
         )
         .await
     {
-        Ok(policy) => (
-            StatusCode::CREATED,
-            Json(PolicyResponse::from_model(policy)),
-        )
-            .into_response(),
+        Ok(policy) => {
+            let response = PolicyResponse::from_model(policy);
+            match state
+                .events
+                .record_create(
+                    "permission_policies",
+                    session.user.id,
+                    Some(response.id),
+                    &response,
+                )
+                .await
+            {
+                Ok(_) => (StatusCode::CREATED, Json(response)).into_response(),
+                Err(error) => crate::handlers::events::event_error_response(error),
+            }
+        }
         Err(error) => authz_error_response(error),
     }
 }
 
-pub async fn delete_policy(State(state): State<AppState>, Path(policy_id): Path<Uuid>) -> Response {
+pub async fn delete_policy(
+    State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
+    Path(policy_id): Path<Uuid>,
+) -> Response {
+    let old = match state.authz.list_policies(None, None).await {
+        Ok(items) => items
+            .into_iter()
+            .find(|p| p.id == policy_id)
+            .map(PolicyResponse::from_model),
+        Err(e) => return authz_error_response(e),
+    };
     match state.authz.delete_policy(policy_id).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => match state
+            .events
+            .record_delete("permission_policies", session.user.id, policy_id, &old)
+            .await
+        {
+            Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => authz_error_response(error),
     }
 }

@@ -67,13 +67,26 @@ pub async fn create_customer(
         .create_customer(current_session.user.id, request)
         .await
     {
-        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+        Ok(response) => match state
+            .events
+            .record_create(
+                "customers",
+                current_session.user.id,
+                Some(response.id),
+                &response,
+            )
+            .await
+        {
+            Ok(_) => (StatusCode::CREATED, Json(response)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => customer_error_response(error),
     }
 }
 
 pub async fn update_customer(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
     request: Result<Json<UpdateCustomerRequest>, JsonRejection>,
 ) -> Response {
@@ -88,14 +101,26 @@ pub async fn update_customer(
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
+    let old = match state.customers.customer_detail(customer_id).await {
+        Ok(v) => v,
+        Err(e) => return customer_error_response(e),
+    };
     match state.customers.update_customer(customer_id, request).await {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Ok(response) => match state
+            .events
+            .record_update("customers", session.user.id, customer_id, &old, &response)
+            .await
+        {
+            Ok(_) => (StatusCode::OK, Json(response)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => customer_error_response(error),
     }
 }
 
 pub async fn disable_customer(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let customer_id = match path {
@@ -105,14 +130,26 @@ pub async fn disable_customer(
         }
     };
 
+    let old = match state.customers.customer_detail(customer_id).await {
+        Ok(v) => v,
+        Err(e) => return customer_error_response(e),
+    };
     match state.customers.disable_customer(customer_id).await {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Ok(response) => match state
+            .events
+            .record_update("customers", session.user.id, customer_id, &old, &response)
+            .await
+        {
+            Ok(_) => (StatusCode::OK, Json(response)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => customer_error_response(error),
     }
 }
 
 pub async fn delete_customer(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let customer_id = match path {
@@ -122,8 +159,19 @@ pub async fn delete_customer(
         }
     };
 
+    let old = match state.customers.customer_detail(customer_id).await {
+        Ok(v) => v,
+        Err(e) => return customer_error_response(e),
+    };
     match state.customers.delete_customer(customer_id).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => match state
+            .events
+            .record_delete("customers", session.user.id, customer_id, &old)
+            .await
+        {
+            Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => customer_error_response(error),
     }
 }

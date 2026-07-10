@@ -1,5 +1,5 @@
 use axum::{
-    Json,
+    Extension, Json,
     extract::{
         Path, Query, State,
         rejection::{PathRejection, QueryRejection},
@@ -14,7 +14,7 @@ use crate::{
     dto::{auth::ErrorResponse, departments::ListDepartmentsQuery},
     integrations::dingtalk::DingTalkError,
     repositories::RepositoryError,
-    services::departments::DepartmentError,
+    services::{auth::CurrentSession, departments::DepartmentError},
     state::AppState,
 };
 
@@ -50,15 +50,51 @@ pub async fn department_detail(
     }
 }
 
-pub async fn sync_dingtalk_departments(State(state): State<AppState>) -> Response {
+pub async fn sync_dingtalk_departments(
+    State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
+) -> Response {
     match state.departments.sync_from_dingtalk().await {
-        Ok(summary) => (
-            StatusCode::OK,
-            Json(crate::dto::departments::DepartmentSyncResponse::from(
-                summary,
-            )),
-        )
-            .into_response(),
+        Ok(summary) => {
+            for change in &summary.audit_changes {
+                let new = match state.departments.department_detail(change.id).await {
+                    Ok(value) => value,
+                    Err(error) => return department_error_response(error),
+                };
+                let audit = match &change.old {
+                    Some(old) => {
+                        state
+                            .events
+                            .record_update("departments", session.user.id, change.id, old, &new)
+                            .await
+                    }
+                    None => {
+                        state
+                            .events
+                            .record_create("departments", session.user.id, Some(change.id), &new)
+                            .await
+                    }
+                };
+                if let Err(error) = audit {
+                    return crate::handlers::events::event_error_response(error);
+                }
+            }
+            let response = crate::dto::departments::DepartmentSyncResponse::from(summary);
+            match state
+                .events
+                .record_custom(
+                    "departments",
+                    "dingtalk_sync",
+                    session.user.id,
+                    None,
+                    Some(&response),
+                )
+                .await
+            {
+                Ok(_) => (StatusCode::OK, Json(response)).into_response(),
+                Err(error) => crate::handlers::events::event_error_response(error),
+            }
+        }
         Err(error) => department_error_response(error),
     }
 }

@@ -9,11 +9,22 @@ use backend::{
         user_profiles::UserProfileRepository, users::UserRepository,
     },
     services::{
-        auth::AuthService, authz::AuthzService, authz_catalog::PermissionCatalog,
-        customers::CustomerService, departments::DepartmentService, events::EventService,
-        product_categories::ProductCategoryService, products::ProductService,
-        review::ApplierRegistry, sales_records::SalesRecordService, stores::StoreService,
-        systems::SystemService, users::UserService,
+        auth::AuthService,
+        authz::AuthzService,
+        authz_catalog::PermissionCatalog,
+        customers::CustomerService,
+        departments::DepartmentService,
+        events::EventService,
+        product_categories::ProductCategoryService,
+        products::ProductService,
+        review::ApplierRegistry,
+        sales_records::{
+            SalesOperationUsageReviewDoc, SalesPaymentReviewDoc, SalesRecordReviewDoc,
+            SalesRecordService,
+        },
+        stores::StoreService,
+        systems::SystemService,
+        users::UserService,
     },
     state::{AppState, AppStateParts},
 };
@@ -53,14 +64,23 @@ async fn main() -> Result<()> {
     // Each type declares its reviewer permission via
     // ReviewableResource::APPROVAL_PERMISSION; malformed declarations
     // panic here at startup.
-    let registry = ApplierRegistry::new();
+    let mut registry = ApplierRegistry::new();
+    registry.register::<SalesRecordReviewDoc>();
+    registry.register::<SalesPaymentReviewDoc>();
+    registry.register::<SalesOperationUsageReviewDoc>();
 
     // The catalog is the single enumeration of every enforceable
     // permission: builtin route permissions plus the approval permissions
     // of registered review resource types.
     let mut catalog = PermissionCatalog::builtin();
     for (resource_type, object, action) in registry.approval_permissions() {
-        catalog.add_permission(object, action, "审核", resource_type);
+        let label = match resource_type {
+            "sales:records" => "销售记录及可操作次数",
+            "sales:payments" => "销售付款",
+            "sales:operation-usages" => "耗用记录",
+            _ => resource_type,
+        };
+        catalog.add_permission(object, action, "审核", label);
     }
     let authz = AuthzService::with_catalog(AuthzRepository::new(db.clone()), catalog)
         .await

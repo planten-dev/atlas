@@ -50,7 +50,7 @@ impl PermissionCatalog {
         let mut catalog = Self {
             entries: Vec::new(),
         };
-        let builtin: [(&str, &[&str], &str, &str); 12] = [
+        let builtin: [(&str, &[&str], &str, &str); 11] = [
             ("users", &["read", "write"], "系统", "用户管理"),
             ("departments", &["read", "write"], "系统", "部门"),
             (
@@ -64,18 +64,17 @@ impl PermissionCatalog {
             ("systems", &["read", "write"], "门店", "门店体系"),
             ("stores", &["read", "write"], "门店", "门店"),
             ("customers", &["read", "write"], "销售", "客户"),
-            ("sales:records", &["read", "write"], "销售", "销售记录"),
             (
-                "sales:operation-counts",
+                "sales:records",
                 &["read", "write"],
                 "销售",
-                "操作次数",
+                "销售记录及可操作次数",
             ),
             (
                 "sales:operation-usages",
                 &["read", "write"],
                 "销售",
-                "操作用量",
+                "耗用记录",
             ),
             ("system:permissions", &["read", "write"], "系统", "权限管理"),
         ];
@@ -129,6 +128,9 @@ mod tests {
         assert!(catalog.contains("products:categories", "write"));
         assert!(catalog.contains("system:permissions", "write"));
         assert!(catalog.contains("events", "read"));
+        assert!(catalog.contains("sales:records", "read"));
+        assert!(catalog.contains("sales:records", "write"));
+        assert!(!catalog.contains("sales:operation-counts", "read"));
         assert!(!catalog.contains("events", "write"));
         assert!(!catalog.contains("nonexistent", "read"));
     }
@@ -174,5 +176,27 @@ mod tests {
         assert_eq!(entry.actions(), ["approve".to_string()]);
         assert_eq!(entry.group(), "审核");
         assert_eq!(entry.label(), "财务文档");
+    }
+
+    #[test]
+    fn sales_approval_permissions_are_addable_with_chinese_labels() {
+        let mut catalog = PermissionCatalog::builtin();
+        catalog.add_permission("sales:payments", "approve", "审核", "销售付款");
+        catalog.add_permission("sales:operation-usages", "approve", "审核", "耗用记录");
+
+        assert!(catalog.contains("sales:payments", "approve"));
+        assert!(catalog.contains("sales:operation-usages", "approve"));
+        let payments = catalog
+            .entries()
+            .iter()
+            .find(|entry| entry.object() == "sales:payments")
+            .expect("sales payments approval entry should exist");
+        assert_eq!(payments.label(), "销售付款");
+        let usages = catalog
+            .entries()
+            .iter()
+            .find(|entry| entry.object() == "sales:operation-usages")
+            .expect("sales operation usages entry should exist");
+        assert_eq!(usages.label(), "耗用记录");
     }
 }
