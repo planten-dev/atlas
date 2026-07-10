@@ -32,7 +32,7 @@ const searchSchema = z.object({
 export const Route = createFileRoute('/_app/org/systems')({
   validateSearch: searchSchema,
   beforeLoad: ({ context }) => requirePerm(context.queryClient, 'systems:read'),
-  staticData: { desktopOnly: true },
+  staticData: { tab: 'admin' },
   component: SystemsPage,
 })
 

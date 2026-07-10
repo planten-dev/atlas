@@ -35,7 +35,7 @@ const searchSchema = z.object({
 export const Route = createFileRoute('/_app/org/stores')({
   validateSearch: searchSchema,
   beforeLoad: ({ context }) => requirePerm(context.queryClient, 'stores:read'),
-  staticData: { desktopOnly: true },
+  staticData: { tab: 'admin' },
   component: StoresPage,
 })
 
@@ -107,7 +107,7 @@ function StoresPage() {
             void navigate({ search: (prev) => ({ ...prev, system_id: v, page_number: 1 }) })
           }}
           placeholder="按体系筛选"
-          className="w-56"
+          className="w-full sm:w-56"
         />
       </DataTableToolbar>
       <DataTable
