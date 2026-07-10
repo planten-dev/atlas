@@ -2935,7 +2935,8 @@ mod tests {
         config::{DatabaseConfig, DatabaseKind},
         db,
         dto::sales_performance::{
-            CreatePerformanceBatchRequest, PerformanceEntriesQuery, PerformanceSummaryQuery,
+            CreatePerformanceBatchRequest, PerformanceEntriesQuery, PerformanceExportQuery,
+            PerformanceSummaryQuery,
         },
         dto::sales_records::{
             CreateCollectionPaymentRequest, CreateOperationUsageRequest, CreateSaleRecordRequest,
@@ -2952,7 +2953,7 @@ mod tests {
             users::UserRepository,
         },
     };
-    use chrono::{Datelike, TimeZone, Utc};
+    use chrono::{FixedOffset, TimeZone, Utc};
     use std::path::PathBuf;
 
     struct Harness {
@@ -3443,8 +3444,13 @@ mod tests {
 
         let entries = performance
             .entries(PerformanceEntriesQuery {
-                period_month: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+                performance_date_from: Some(NaiveDate::from_ymd_opt(2026, 7, 1).unwrap()),
+                performance_date_to: Some(NaiveDate::from_ymd_opt(2026, 7, 31).unwrap()),
                 user_id: Some(guide),
+                performance_role: None,
+                system_id: None,
+                store_id: None,
+                entry_type: None,
                 payment_id: None,
                 page_number: None,
                 page_size: None,
@@ -3500,6 +3506,103 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn filters_performance_by_business_date_and_role_and_exports_xlsx() {
+        let h = Harness::new().await;
+        let (actor, mut request) = sale_request(&h, "100.00", "100.00").await;
+        let expert = h.user("expert-filter").await;
+        request.expert_user_id = Some(expert);
+        let created = h
+            .service
+            .create_sale_record(actor, request)
+            .await
+            .expect("sale should create");
+        let performance = h.service.performance_service();
+        performance
+            .post_batch(
+                actor,
+                CreatePerformanceBatchRequest {
+                    period_month: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+                    payment_ids: vec![created.payments[0].id],
+                },
+            )
+            .await
+            .expect("batch should post");
+
+        let summary = performance
+            .summary(PerformanceSummaryQuery {
+                performance_date_from: Some(NaiveDate::from_ymd_opt(2026, 7, 8).unwrap()),
+                performance_date_to: Some(NaiveDate::from_ymd_opt(2026, 7, 8).unwrap()),
+                user_id: Some(expert),
+                performance_role: Some("expert".to_string()),
+                system_id: Some(created.system_id),
+                store_id: Some(created.store_id),
+                entry_type: Some("earning".to_string()),
+                page_number: None,
+                page_size: None,
+            })
+            .await
+            .expect("filtered summary should list");
+        assert_eq!(summary.total_count, 1);
+        assert_eq!(summary.summaries[0].expert_amount, "100.00");
+        assert_eq!(summary.summaries[0].guide_amount, "0.00");
+        assert_eq!(summary.summaries[0].net_amount, "100.00");
+
+        let entries = performance
+            .entries(PerformanceEntriesQuery {
+                performance_date_from: Some(NaiveDate::from_ymd_opt(2026, 7, 8).unwrap()),
+                performance_date_to: Some(NaiveDate::from_ymd_opt(2026, 7, 8).unwrap()),
+                user_id: Some(expert),
+                performance_role: Some("expert".to_string()),
+                system_id: Some(created.system_id),
+                store_id: Some(created.store_id),
+                entry_type: Some("earning".to_string()),
+                payment_id: None,
+                page_number: None,
+                page_size: None,
+            })
+            .await
+            .expect("filtered entries should list");
+        assert_eq!(entries.total_count, 1);
+        assert_eq!(
+            entries.entries[0].performance_date.to_string(),
+            "2026-07-08"
+        );
+
+        let (xlsx, filename) = performance
+            .export(PerformanceExportQuery {
+                performance_date_from: Some(NaiveDate::from_ymd_opt(2026, 7, 8).unwrap()),
+                performance_date_to: Some(NaiveDate::from_ymd_opt(2026, 7, 8).unwrap()),
+                user_id: Some(expert),
+                performance_role: Some("expert".to_string()),
+                system_id: Some(created.system_id),
+                store_id: Some(created.store_id),
+                entry_type: Some("earning".to_string()),
+            })
+            .await
+            .expect("xlsx should export");
+        assert!(xlsx.starts_with(b"PK"));
+        assert!(xlsx.len() > 1_000);
+        assert_eq!(filename, "sales-performance-2026-07-08-to-2026-07-08.xlsx");
+
+        assert!(matches!(
+            performance
+                .summary(PerformanceSummaryQuery {
+                    performance_date_from: Some(NaiveDate::from_ymd_opt(2026, 7, 9).unwrap()),
+                    performance_date_to: Some(NaiveDate::from_ymd_opt(2026, 7, 8).unwrap()),
+                    user_id: None,
+                    performance_role: None,
+                    system_id: None,
+                    store_id: None,
+                    entry_type: None,
+                    page_number: None,
+                    page_size: None,
+                })
+                .await,
+            Err(crate::services::sales_performance::SalesPerformanceError::DateRangeInvalid)
+        ));
+    }
+
+    #[tokio::test]
     async fn voiding_posted_payment_creates_full_reversal_in_current_month() {
         let h = Harness::new().await;
         let (actor, mut request) = sale_request(&h, "100.00", "100.00").await;
@@ -3528,11 +3631,18 @@ mod tests {
             .expect("payment should void");
         assert_eq!(voided.performance_status, "reversed");
         let now = Utc::now();
-        let current_month = NaiveDate::from_ymd_opt(now.year(), now.month(), 1).unwrap();
+        let current_date = now
+            .with_timezone(&FixedOffset::east_opt(8 * 60 * 60).unwrap())
+            .date_naive();
         let summary = performance
             .summary(PerformanceSummaryQuery {
-                period_month: current_month,
+                performance_date_from: Some(current_date),
+                performance_date_to: Some(current_date),
                 user_id: None,
+                performance_role: None,
+                system_id: None,
+                store_id: None,
+                entry_type: None,
                 page_number: None,
                 page_size: None,
             })
@@ -3566,8 +3676,13 @@ mod tests {
         assert_eq!(voided.performance_status, "cancelled");
         let entries = performance
             .entries(PerformanceEntriesQuery {
-                period_month: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+                performance_date_from: Some(NaiveDate::from_ymd_opt(2026, 7, 1).unwrap()),
+                performance_date_to: Some(NaiveDate::from_ymd_opt(2026, 7, 31).unwrap()),
                 user_id: None,
+                performance_role: None,
+                system_id: None,
+                store_id: None,
+                entry_type: None,
                 payment_id: Some(voided.id),
                 page_number: None,
                 page_size: None,

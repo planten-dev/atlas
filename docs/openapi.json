@@ -4533,8 +4533,13 @@
         "description": "Requires sales:performance:read. Returns personnel expert earnings, guide earnings, reversal amount and net performance.",
         "security": [{"AtlasSessionCookie": []}],
         "parameters": [
-          {"name": "period_month", "in": "query", "required": true, "schema": {"type": "string", "format": "date"}},
+          {"name": "performance_date_from", "in": "query", "required": false, "schema": {"type": "string", "format": "date"}},
+          {"name": "performance_date_to", "in": "query", "required": false, "schema": {"type": "string", "format": "date"}},
           {"name": "user_id", "in": "query", "required": false, "schema": {"type": "string", "format": "uuid"}},
+          {"name": "performance_role", "in": "query", "required": false, "schema": {"type": "string", "enum": ["expert", "guide"]}},
+          {"name": "system_id", "in": "query", "required": false, "schema": {"type": "string", "format": "uuid"}},
+          {"name": "store_id", "in": "query", "required": false, "schema": {"type": "string", "format": "uuid"}},
+          {"name": "entry_type", "in": "query", "required": false, "schema": {"type": "string", "enum": ["earning", "reversal"]}},
           {"name": "page_number", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "default": 1}},
           {"name": "page_size", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}}
         ],
@@ -4555,14 +4560,44 @@
         "description": "Requires sales:performance:read. Lists immutable earning and reversal entries.",
         "security": [{"AtlasSessionCookie": []}],
         "parameters": [
-          {"name": "period_month", "in": "query", "required": true, "schema": {"type": "string", "format": "date"}},
+          {"name": "performance_date_from", "in": "query", "required": false, "schema": {"type": "string", "format": "date"}},
+          {"name": "performance_date_to", "in": "query", "required": false, "schema": {"type": "string", "format": "date"}},
           {"name": "user_id", "in": "query", "required": false, "schema": {"type": "string", "format": "uuid"}},
+          {"name": "performance_role", "in": "query", "required": false, "schema": {"type": "string", "enum": ["expert", "guide"]}},
+          {"name": "system_id", "in": "query", "required": false, "schema": {"type": "string", "format": "uuid"}},
+          {"name": "store_id", "in": "query", "required": false, "schema": {"type": "string", "format": "uuid"}},
+          {"name": "entry_type", "in": "query", "required": false, "schema": {"type": "string", "enum": ["earning", "reversal"]}},
           {"name": "payment_id", "in": "query", "required": false, "schema": {"type": "string", "format": "uuid"}},
           {"name": "page_number", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "default": 1}},
           {"name": "page_size", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}}
         ],
         "responses": {
           "200": {"description": "Performance entries page.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ListPerformanceEntriesResponse"}}}},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/PermissionDenied"},
+          "422": {"$ref": "#/components/responses/UnprocessableEntity"},
+          "500": {"$ref": "#/components/responses/InternalError"}
+        }
+      }
+    },
+    "/api/v1/sales-performance/export": {
+      "get": {
+        "tags": ["Sales Performance"],
+        "summary": "Export filtered sales performance",
+        "operationId": "exportSalesPerformance",
+        "description": "Requires sales:performance:read. Exports all rows matching the report filters as an XLSX workbook with summary and detail sheets.",
+        "security": [{"AtlasSessionCookie": []}],
+        "parameters": [
+          {"name": "performance_date_from", "in": "query", "required": false, "schema": {"type": "string", "format": "date"}},
+          {"name": "performance_date_to", "in": "query", "required": false, "schema": {"type": "string", "format": "date"}},
+          {"name": "user_id", "in": "query", "required": false, "schema": {"type": "string", "format": "uuid"}},
+          {"name": "performance_role", "in": "query", "required": false, "schema": {"type": "string", "enum": ["expert", "guide"]}},
+          {"name": "system_id", "in": "query", "required": false, "schema": {"type": "string", "format": "uuid"}},
+          {"name": "store_id", "in": "query", "required": false, "schema": {"type": "string", "format": "uuid"}},
+          {"name": "entry_type", "in": "query", "required": false, "schema": {"type": "string", "enum": ["earning", "reversal"]}}
+        ],
+        "responses": {
+          "200": {"description": "XLSX workbook.", "content": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {"schema": {"type": "string", "format": "binary"}}}},
           "401": {"$ref": "#/components/responses/Unauthorized"},
           "403": {"$ref": "#/components/responses/PermissionDenied"},
           "422": {"$ref": "#/components/responses/UnprocessableEntity"},
@@ -8158,7 +8193,7 @@
       },
       "PerformanceEntryResponse": {
         "type": "object",
-        "required": ["id", "batch_id", "payment_id", "allocation_id", "allocation_ratio", "sales_record_id", "user_id", "performance_role", "entry_type", "amount", "period_month", "system_id", "store_id", "source_entry_id", "created_at"],
+        "required": ["id", "batch_id", "payment_id", "allocation_id", "allocation_ratio", "sales_record_id", "user_id", "user_name", "job_number", "performance_role", "entry_type", "amount", "period_month", "performance_date", "system_id", "system_name", "store_id", "store_name", "paid_at", "source_entry_id", "created_at"],
         "properties": {
           "id": {"type": "string", "format": "uuid"},
           "batch_id": {"type": "string", "format": "uuid"},
@@ -8167,12 +8202,18 @@
           "allocation_ratio": {"type": ["string", "null"], "pattern": "^\\d{1,3}(\\.\\d{2})$"},
           "sales_record_id": {"type": "string", "format": "uuid"},
           "user_id": {"type": "string", "format": "uuid"},
+          "user_name": {"type": "string"},
+          "job_number": {"type": "string"},
           "performance_role": {"type": "string", "enum": ["expert", "guide"]},
           "entry_type": {"type": "string", "enum": ["earning", "reversal"]},
           "amount": {"type": "string", "pattern": "^-?\\d{1,10}(\\.\\d{2})$"},
           "period_month": {"type": "string", "format": "date"},
+          "performance_date": {"type": "string", "format": "date"},
           "system_id": {"type": "string", "format": "uuid"},
+          "system_name": {"type": "string"},
           "store_id": {"type": "string", "format": "uuid"},
+          "store_name": {"type": "string"},
+          "paid_at": {"type": "string", "format": "date-time"},
           "source_entry_id": {"type": ["string", "null"], "format": "uuid"},
           "created_at": {"type": "string", "format": "date-time"}
         }
@@ -8189,9 +8230,11 @@
       },
       "PerformanceSummaryResponse": {
         "type": "object",
-        "required": ["user_id", "expert_amount", "guide_amount", "reversal_amount", "net_amount"],
+        "required": ["user_id", "user_name", "job_number", "expert_amount", "guide_amount", "reversal_amount", "net_amount"],
         "properties": {
           "user_id": {"type": "string", "format": "uuid"},
+          "user_name": {"type": "string"},
+          "job_number": {"type": "string"},
           "expert_amount": {"type": "string", "pattern": "^-?\\d{1,10}(\\.\\d{2})$"},
           "guide_amount": {"type": "string", "pattern": "^-?\\d{1,10}(\\.\\d{2})$"},
           "reversal_amount": {"type": "string", "pattern": "^-?\\d{1,10}(\\.\\d{2})$"},

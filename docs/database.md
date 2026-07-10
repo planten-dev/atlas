@@ -641,11 +641,12 @@ CREATE TABLE sales_payment_allocations (
 | `entry_type` | `VARCHAR(32)` | `earning` 正向业绩或 `reversal` 冲销。 |
 | `amount` | `DECIMAL(12,2)` | 正向分录为正数，冲销分录为等额负数。 |
 | `period_month` | `DATE` | 分录所属核算月份。 |
+| `performance_date` | `DATE` | 业绩业务日期：正向分录取收款时间的上海日期，冲销分录取作废发生时的上海日期。报表日期区间按此字段筛选。 |
 | `system_id` / `store_id` | `UUID` | 销售发生时的体系、门店快照。 |
 | `source_entry_id` | `UUID NULL` | 冲销分录引用的原正向分录。 |
 | `created_at` | `TIMESTAMPTZ` | 分录创建时间。 |
 
-设计约束：同一收款、角色、人员只能生成一条正向分录和一条冲销分录；已入账收款作废时不回改历史分录，而是在作废发生月份生成完整负数冲销。
+设计约束：同一收款、角色、人员只能生成一条正向分录和一条冲销分录；已入账收款作废时不回改历史分录，而是在作废发生月份生成完整负数冲销。体系和门店筛选使用分录快照，人员、角色、类型和日期筛选均直接在分录表上执行。
 
 ## sales_record_operation_counts 表
 

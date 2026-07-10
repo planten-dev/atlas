@@ -13,6 +13,7 @@ clap = { version = "4", features = ["derive"] }
 config = "0.15"
 hex = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rust_xlsxwriter = { version = "0.90", features = ["chrono"] }
 sea-orm = { version = "1.1", default-features = false, features = ["macros", "runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite", "with-chrono", "with-json", "with-rust_decimal", "with-uuid"] }
 sea-orm-migration = { version = "1.1", default-features = false, features = ["runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite", "with-chrono", "with-rust_decimal", "with-uuid"] }
 serde = { version = "1", features = ["derive"] }

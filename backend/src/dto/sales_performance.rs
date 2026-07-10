@@ -11,19 +11,40 @@ pub struct PerformanceMonthQuery {
 
 #[derive(Debug, Deserialize)]
 pub struct PerformanceSummaryQuery {
-    pub period_month: NaiveDate,
+    pub performance_date_from: Option<NaiveDate>,
+    pub performance_date_to: Option<NaiveDate>,
     pub user_id: Option<Uuid>,
+    pub performance_role: Option<String>,
+    pub system_id: Option<Uuid>,
+    pub store_id: Option<Uuid>,
+    pub entry_type: Option<String>,
     pub page_number: Option<u64>,
     pub page_size: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct PerformanceEntriesQuery {
-    pub period_month: NaiveDate,
+    pub performance_date_from: Option<NaiveDate>,
+    pub performance_date_to: Option<NaiveDate>,
     pub user_id: Option<Uuid>,
+    pub performance_role: Option<String>,
+    pub system_id: Option<Uuid>,
+    pub store_id: Option<Uuid>,
+    pub entry_type: Option<String>,
     pub payment_id: Option<Uuid>,
     pub page_number: Option<u64>,
     pub page_size: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PerformanceExportQuery {
+    pub performance_date_from: Option<NaiveDate>,
+    pub performance_date_to: Option<NaiveDate>,
+    pub user_id: Option<Uuid>,
+    pub performance_role: Option<String>,
+    pub system_id: Option<Uuid>,
+    pub store_id: Option<Uuid>,
+    pub entry_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,8 +118,14 @@ pub struct PerformanceEntryResponse {
     pub entry_type: String,
     pub amount: String,
     pub period_month: NaiveDate,
+    pub performance_date: NaiveDate,
     pub system_id: Uuid,
+    pub system_name: String,
     pub store_id: Uuid,
+    pub store_name: String,
+    pub user_name: String,
+    pub job_number: String,
+    pub paid_at: DateTime<Utc>,
     pub source_entry_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
 }
@@ -114,6 +141,8 @@ pub struct ListPerformanceEntriesResponse {
 #[derive(Debug, Clone, Serialize)]
 pub struct PerformanceSummaryResponse {
     pub user_id: Uuid,
+    pub user_name: String,
+    pub job_number: String,
     pub expert_amount: String,
     pub guide_amount: String,
     pub reversal_amount: String,

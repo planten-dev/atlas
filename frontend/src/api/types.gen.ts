@@ -1505,6 +1505,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sales-performance/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export filtered sales performance
+         * @description Requires sales:performance:read. Exports all rows matching the report filters as an XLSX workbook with summary and detail sheets.
+         */
+        get: operations["exportSalesPerformance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sales-record-operation-counts/list": {
         parameters: {
             query?: never;
@@ -2600,6 +2620,8 @@ export interface components {
             sales_record_id: string;
             /** Format: uuid */
             user_id: string;
+            user_name: string;
+            job_number: string;
             /** @enum {string} */
             performance_role: "expert" | "guide";
             /** @enum {string} */
@@ -2607,10 +2629,16 @@ export interface components {
             amount: string;
             /** Format: date */
             period_month: string;
+            /** Format: date */
+            performance_date: string;
             /** Format: uuid */
             system_id: string;
+            system_name: string;
             /** Format: uuid */
             store_id: string;
+            store_name: string;
+            /** Format: date-time */
+            paid_at: string;
             /** Format: uuid */
             source_entry_id: string | null;
             /** Format: date-time */
@@ -2625,6 +2653,8 @@ export interface components {
         PerformanceSummaryResponse: {
             /** Format: uuid */
             user_id: string;
+            user_name: string;
+            job_number: string;
             expert_amount: string;
             guide_amount: string;
             reversal_amount: string;
@@ -5020,9 +5050,14 @@ export interface operations {
     };
     listSalesPerformanceSummary: {
         parameters: {
-            query: {
-                period_month: string;
+            query?: {
+                performance_date_from?: string;
+                performance_date_to?: string;
                 user_id?: string;
+                performance_role?: "expert" | "guide";
+                system_id?: string;
+                store_id?: string;
+                entry_type?: "earning" | "reversal";
                 page_number?: number;
                 page_size?: number;
             };
@@ -5049,9 +5084,14 @@ export interface operations {
     };
     listSalesPerformanceEntries: {
         parameters: {
-            query: {
-                period_month: string;
+            query?: {
+                performance_date_from?: string;
+                performance_date_to?: string;
                 user_id?: string;
+                performance_role?: "expert" | "guide";
+                system_id?: string;
+                store_id?: string;
+                entry_type?: "earning" | "reversal";
                 payment_id?: string;
                 page_number?: number;
                 page_size?: number;
@@ -5069,6 +5109,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListPerformanceEntriesResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            422: components["responses"]["UnprocessableEntity"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    exportSalesPerformance: {
+        parameters: {
+            query?: {
+                performance_date_from?: string;
+                performance_date_to?: string;
+                user_id?: string;
+                performance_role?: "expert" | "guide";
+                system_id?: string;
+                store_id?: string;
+                entry_type?: "earning" | "reversal";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description XLSX workbook. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
                 };
             };
             401: components["responses"]["Unauthorized"];

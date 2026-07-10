@@ -1,8 +1,9 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use sea_orm::entity::prelude::Decimal;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
-    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, DatabaseConnection,
+    DatabaseTransaction, EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set, Statement, TransactionTrait, Value,
 };
 use uuid::Uuid;
 
@@ -40,9 +41,63 @@ pub struct NewPerformanceEntry {
     pub entry_type: String,
     pub amount: Decimal,
     pub period_month: NaiveDate,
+    pub performance_date: NaiveDate,
     pub system_id: Uuid,
     pub store_id: Uuid,
     pub source_entry_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PerformanceReportFilters {
+    pub performance_date_from: NaiveDate,
+    pub performance_date_to: NaiveDate,
+    pub user_id: Option<Uuid>,
+    pub performance_role: Option<String>,
+    pub system_id: Option<Uuid>,
+    pub store_id: Option<Uuid>,
+    pub entry_type: Option<String>,
+    pub payment_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, FromQueryResult)]
+pub struct PerformanceSummaryRow {
+    pub user_id: Uuid,
+    pub user_name: String,
+    pub job_number: String,
+    pub expert_amount: Decimal,
+    pub guide_amount: Decimal,
+    pub reversal_amount: Decimal,
+    pub net_amount: Decimal,
+}
+
+#[derive(Debug, Clone, FromQueryResult)]
+pub struct PerformanceEntryRow {
+    pub id: Uuid,
+    pub batch_id: Uuid,
+    pub payment_id: Uuid,
+    pub allocation_id: Option<Uuid>,
+    pub allocation_ratio: Option<Decimal>,
+    pub sales_record_id: Uuid,
+    pub user_id: Uuid,
+    pub user_name: String,
+    pub job_number: String,
+    pub performance_role: String,
+    pub entry_type: String,
+    pub amount: Decimal,
+    pub period_month: NaiveDate,
+    pub performance_date: NaiveDate,
+    pub system_id: Uuid,
+    pub system_name: String,
+    pub store_id: Uuid,
+    pub store_name: String,
+    pub paid_at: DateTime<Utc>,
+    pub source_entry_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct CountRow {
+    count: i64,
 }
 
 impl SalesPerformanceRepository {
@@ -176,6 +231,7 @@ impl SalesPerformanceRepository {
             entry_type: Set(entry.entry_type),
             amount: Set(entry.amount),
             period_month: Set(entry.period_month),
+            performance_date: Set(entry.performance_date),
             system_id: Set(entry.system_id),
             store_id: Set(entry.store_id),
             source_entry_id: Set(entry.source_entry_id),
@@ -229,22 +285,148 @@ impl SalesPerformanceRepository {
         ))
     }
 
-    pub async fn list_entries(
+    pub async fn list_report_entries(
         &self,
-        month: NaiveDate,
-        user_id: Option<Uuid>,
-        payment_id: Option<Uuid>,
-    ) -> Result<Vec<sales_performance_entries::Model>, RepositoryError> {
-        let mut query = sales_performance_entries::Entity::find()
-            .filter(sales_performance_entries::Column::PeriodMonth.eq(month))
-            .order_by_desc(sales_performance_entries::Column::CreatedAt)
-            .order_by_asc(sales_performance_entries::Column::Id);
-        if let Some(user_id) = user_id {
-            query = query.filter(sales_performance_entries::Column::UserId.eq(user_id));
-        }
-        if let Some(payment_id) = payment_id {
-            query = query.filter(sales_performance_entries::Column::PaymentId.eq(payment_id));
-        }
-        Ok(query.all(&self.db).await?)
+        filters: &PerformanceReportFilters,
+        page_number: u64,
+        page_size: u64,
+    ) -> Result<(Vec<PerformanceEntryRow>, u64), RepositoryError> {
+        let (where_sql, values) = report_where(self.db.get_database_backend(), filters);
+        let from_sql = " FROM sales_performance_entries e LEFT JOIN user_profiles p ON p.user_id = e.user_id LEFT JOIN systems sys ON sys.id = e.system_id LEFT JOIN stores st ON st.id = e.store_id JOIN sales_payments pay ON pay.id = e.payment_id";
+        let select = "SELECT e.id, e.batch_id, e.payment_id, e.allocation_id, e.allocation_ratio, e.sales_record_id, e.user_id, COALESCE(p.name, '') AS user_name, COALESCE(p.job_number, '') AS job_number, e.performance_role, e.entry_type, e.amount, e.period_month, e.performance_date, e.system_id, COALESCE(sys.name, '') AS system_name, e.store_id, COALESCE(st.name, '') AS store_name, pay.paid_at, e.source_entry_id, e.created_at";
+        let mut paged_values = values.clone();
+        let limit = placeholder(self.db.get_database_backend(), paged_values.len() + 1);
+        paged_values.push(Value::BigInt(Some(page_size as i64)));
+        let offset = placeholder(self.db.get_database_backend(), paged_values.len() + 1);
+        paged_values.push(Value::BigInt(Some(
+            page_number
+                .saturating_sub(1)
+                .saturating_mul(page_size)
+                .min(i64::MAX as u64) as i64,
+        )));
+        let sql = format!(
+            "{select}{from_sql}{where_sql} ORDER BY e.performance_date DESC, e.created_at DESC, e.id ASC LIMIT {limit} OFFSET {offset}"
+        );
+        let rows = PerformanceEntryRow::find_by_statement(Statement::from_sql_and_values(
+            self.db.get_database_backend(),
+            sql,
+            paged_values,
+        ))
+        .all(&self.db)
+        .await?;
+        let count_sql = format!("SELECT COUNT(*) AS count{from_sql}{where_sql}");
+        let count = CountRow::find_by_statement(Statement::from_sql_and_values(
+            self.db.get_database_backend(),
+            count_sql,
+            values,
+        ))
+        .one(&self.db)
+        .await?
+        .map(|row| row.count.max(0) as u64)
+        .unwrap_or(0);
+        Ok((rows, count))
     }
+
+    pub async fn list_all_report_entries(
+        &self,
+        filters: &PerformanceReportFilters,
+        limit: u64,
+    ) -> Result<Vec<PerformanceEntryRow>, RepositoryError> {
+        Ok(self.list_report_entries(filters, 1, limit).await?.0)
+    }
+
+    pub async fn list_report_summary(
+        &self,
+        filters: &PerformanceReportFilters,
+        page_number: u64,
+        page_size: u64,
+    ) -> Result<(Vec<PerformanceSummaryRow>, u64), RepositoryError> {
+        let backend = self.db.get_database_backend();
+        let (where_sql, values) = report_where(backend, filters);
+        let from_sql =
+            " FROM sales_performance_entries e LEFT JOIN user_profiles p ON p.user_id = e.user_id";
+        let amounts = "e.user_id, COALESCE(p.name, '') AS user_name, COALESCE(p.job_number, '') AS job_number, SUM(CASE WHEN e.entry_type = 'earning' AND e.performance_role = 'expert' THEN e.amount ELSE e.amount * 0 END) AS expert_amount, SUM(CASE WHEN e.entry_type = 'earning' AND e.performance_role = 'guide' THEN e.amount ELSE e.amount * 0 END) AS guide_amount, SUM(CASE WHEN e.entry_type = 'reversal' THEN -e.amount ELSE e.amount * 0 END) AS reversal_amount, SUM(e.amount) AS net_amount";
+        let group = " GROUP BY e.user_id, p.name, p.job_number";
+        let mut paged_values = values.clone();
+        let limit = placeholder(backend, paged_values.len() + 1);
+        paged_values.push(Value::BigInt(Some(page_size as i64)));
+        let offset = placeholder(backend, paged_values.len() + 1);
+        paged_values.push(Value::BigInt(Some(
+            page_number
+                .saturating_sub(1)
+                .saturating_mul(page_size)
+                .min(i64::MAX as u64) as i64,
+        )));
+        let sql = format!(
+            "SELECT {amounts}{from_sql}{where_sql}{group} ORDER BY net_amount DESC, e.user_id ASC LIMIT {limit} OFFSET {offset}"
+        );
+        let rows = PerformanceSummaryRow::find_by_statement(Statement::from_sql_and_values(
+            backend,
+            sql,
+            paged_values,
+        ))
+        .all(&self.db)
+        .await?;
+        let count_sql = format!(
+            "SELECT COUNT(*) AS count FROM (SELECT e.user_id{from_sql}{where_sql}{group}) grouped"
+        );
+        let count =
+            CountRow::find_by_statement(Statement::from_sql_and_values(backend, count_sql, values))
+                .one(&self.db)
+                .await?
+                .map(|row| row.count.max(0) as u64)
+                .unwrap_or(0);
+        Ok((rows, count))
+    }
+}
+
+fn placeholder(backend: DatabaseBackend, index: usize) -> String {
+    match backend {
+        DatabaseBackend::Postgres => format!("${index}"),
+        _ => "?".to_string(),
+    }
+}
+
+fn report_where(
+    backend: DatabaseBackend,
+    filters: &PerformanceReportFilters,
+) -> (String, Vec<Value>) {
+    let mut clauses = Vec::new();
+    let mut values = Vec::new();
+    let mut push = |column: &str, value: Value, operator: &str| {
+        values.push(value);
+        clauses.push(format!(
+            "{column} {operator} {}",
+            placeholder(backend, values.len())
+        ));
+    };
+    push(
+        "e.performance_date",
+        filters.performance_date_from.into(),
+        ">=",
+    );
+    push(
+        "e.performance_date",
+        filters.performance_date_to.into(),
+        "<=",
+    );
+    if let Some(value) = filters.user_id {
+        push("e.user_id", value.into(), "=");
+    }
+    if let Some(value) = &filters.performance_role {
+        push("e.performance_role", value.clone().into(), "=");
+    }
+    if let Some(value) = filters.system_id {
+        push("e.system_id", value.into(), "=");
+    }
+    if let Some(value) = filters.store_id {
+        push("e.store_id", value.into(), "=");
+    }
+    if let Some(value) = &filters.entry_type {
+        push("e.entry_type", value.clone().into(), "=");
+    }
+    if let Some(value) = filters.payment_id {
+        push("e.payment_id", value.into(), "=");
+    }
+    (format!(" WHERE {}", clauses.join(" AND ")), values)
 }

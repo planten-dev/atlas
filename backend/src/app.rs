@@ -343,6 +343,11 @@ pub fn router(state: AppState) -> Router {
                 .layer(require_permission(&state, "sales:performance:read"))),
         )
         .route(
+            "/api/v1/sales-performance/export",
+            get(handlers::sales_performance::export
+                .layer(require_permission(&state, "sales:performance:read"))),
+        )
+        .route(
             "/api/v1/sales-record-operation-counts/list",
             get(handlers::sales_records::list_operation_counts
                 .layer(require_permission(&state, "sales:records:read"))),

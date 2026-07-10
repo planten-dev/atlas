@@ -4,7 +4,7 @@ use axum::{
         Query, State,
         rejection::{JsonRejection, QueryRejection},
     },
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 
@@ -13,7 +13,7 @@ use crate::{
         auth::ErrorResponse,
         sales_performance::{
             CreatePerformanceBatchRequest, PerformanceBatchesQuery, PerformanceEntriesQuery,
-            PerformanceMonthQuery, PerformanceSummaryQuery,
+            PerformanceExportQuery, PerformanceMonthQuery, PerformanceSummaryQuery,
         },
     },
     repositories::RepositoryError,
@@ -96,11 +96,40 @@ pub async fn entries(
     }
 }
 
+pub async fn export(
+    State(state): State<AppState>,
+    query: Result<Query<PerformanceExportQuery>, QueryRejection>,
+) -> Response {
+    let Query(query) = match query {
+        Ok(query) => query,
+        Err(error) => return rejection("invalid query parameters", error),
+    };
+    match state.sales_performance.export(query).await {
+        Ok((bytes, filename)) => {
+            let mut response = bytes.into_response();
+            response.headers_mut().insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static(
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ),
+            );
+            if let Ok(value) =
+                HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
+            {
+                response
+                    .headers_mut()
+                    .insert(header::CONTENT_DISPOSITION, value);
+            }
+            response
+        }
+        Err(error) => error_response(error),
+    }
+}
+
 fn error_response(error: SalesPerformanceError) -> Response {
     let status = match &error {
-        SalesPerformanceError::Repository(RepositoryError::Database(_)) => {
-            StatusCode::INTERNAL_SERVER_ERROR
-        }
+        SalesPerformanceError::Repository(RepositoryError::Database(_))
+        | SalesPerformanceError::ExportFailed(_) => StatusCode::INTERNAL_SERVER_ERROR,
         SalesPerformanceError::PaymentNotFound | SalesPerformanceError::SalesRecordNotFound => {
             StatusCode::NOT_FOUND
         }

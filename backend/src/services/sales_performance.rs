@@ -1,4 +1,5 @@
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, TimeZone, Utc};
+use rust_xlsxwriter::{Color, Format, Workbook, XlsxError};
 use sea_orm::DatabaseTransaction;
 use sea_orm::entity::prelude::Decimal;
 use std::collections::{HashMap, HashSet};
@@ -13,21 +14,25 @@ use crate::{
             ListPerformanceBatchesResponse, ListPerformanceEntriesResponse,
             ListPerformanceSummaryResponse, PendingPerformancePaymentResponse,
             PerformanceBatchResponse, PerformanceBatchesQuery, PerformanceEntriesQuery,
-            PerformanceEntryResponse, PerformanceMonthQuery, PerformanceSummaryQuery,
-            PerformanceSummaryResponse,
+            PerformanceEntryResponse, PerformanceExportQuery, PerformanceMonthQuery,
+            PerformanceSummaryQuery, PerformanceSummaryResponse,
         },
         sales_records::format_money,
     },
-    entities::{sales_payments, sales_performance_batches, sales_performance_entries},
+    entities::{sales_payments, sales_performance_batches},
     repositories::{
         RepositoryError,
-        sales_performance::{NewPerformanceBatch, NewPerformanceEntry, SalesPerformanceRepository},
+        sales_performance::{
+            NewPerformanceBatch, NewPerformanceEntry, PerformanceEntryRow,
+            PerformanceReportFilters, PerformanceSummaryRow, SalesPerformanceRepository,
+        },
     },
 };
 
 const DEFAULT_PAGE_NUMBER: u64 = 1;
 const DEFAULT_PAGE_SIZE: u64 = 50;
 const MAX_PAGE_SIZE: u64 = 200;
+const MAX_EXPORT_ROWS: u64 = 1_000_000;
 const SHANGHAI_OFFSET_SECONDS: i32 = 8 * 60 * 60;
 
 #[derive(Clone)]
@@ -211,6 +216,7 @@ impl SalesPerformanceService {
                             entry_type: "earning".to_string(),
                             amount: draft.payment.paid_amount,
                             period_month: request.period_month,
+                            performance_date: shanghai_date(draft.payment.paid_at),
                             system_id: draft.record.system_id,
                             store_id: draft.record.store_id,
                             source_entry_id: None,
@@ -234,6 +240,7 @@ impl SalesPerformanceService {
                             entry_type: "earning".to_string(),
                             amount: allocation.allocated_amount,
                             period_month: request.period_month,
+                            performance_date: shanghai_date(draft.payment.paid_at),
                             system_id: draft.record.system_id,
                             store_id: draft.record.store_id,
                             source_entry_id: None,
@@ -275,22 +282,23 @@ impl SalesPerformanceService {
         &self,
         query: PerformanceEntriesQuery,
     ) -> Result<ListPerformanceEntriesResponse, SalesPerformanceError> {
-        validate_month(query.period_month)?;
         let (page_number, page_size) = pagination(query.page_number, query.page_size)?;
-        let entries = self
+        let filters = report_filters(
+            query.performance_date_from,
+            query.performance_date_to,
+            query.user_id,
+            query.performance_role,
+            query.system_id,
+            query.store_id,
+            query.entry_type,
+            query.payment_id,
+        )?;
+        let (entries, total_count) = self
             .repository
-            .list_entries(query.period_month, query.user_id, query.payment_id)
+            .list_report_entries(&filters, page_number, page_size)
             .await?;
-        let total_count = entries.len() as u64;
-        let start = page_number.saturating_sub(1).saturating_mul(page_size) as usize;
-        let page = entries
-            .into_iter()
-            .skip(start)
-            .take(page_size as usize)
-            .map(entry_response)
-            .collect();
         Ok(ListPerformanceEntriesResponse {
-            entries: page,
+            entries: entries.into_iter().map(entry_response).collect(),
             page_number,
             page_size,
             total_count,
@@ -301,55 +309,62 @@ impl SalesPerformanceService {
         &self,
         query: PerformanceSummaryQuery,
     ) -> Result<ListPerformanceSummaryResponse, SalesPerformanceError> {
-        validate_month(query.period_month)?;
         let (page_number, page_size) = pagination(query.page_number, query.page_size)?;
-        let entries = self
+        let filters = report_filters(
+            query.performance_date_from,
+            query.performance_date_to,
+            query.user_id,
+            query.performance_role,
+            query.system_id,
+            query.store_id,
+            query.entry_type,
+            None,
+        )?;
+        let (summaries, total_count) = self
             .repository
-            .list_entries(query.period_month, query.user_id, None)
+            .list_report_summary(&filters, page_number, page_size)
             .await?;
-        let mut grouped: HashMap<Uuid, (Decimal, Decimal, Decimal, Decimal)> = HashMap::new();
-        for entry in entries {
-            let amounts = grouped.entry(entry.user_id).or_insert((
-                Decimal::ZERO,
-                Decimal::ZERO,
-                Decimal::ZERO,
-                Decimal::ZERO,
-            ));
-            if entry.entry_type == "earning" && entry.performance_role == "expert" {
-                amounts.0 += entry.amount;
-            }
-            if entry.entry_type == "earning" && entry.performance_role == "guide" {
-                amounts.1 += entry.amount;
-            }
-            if entry.entry_type == "reversal" {
-                amounts.2 += -entry.amount;
-            }
-            amounts.3 += entry.amount;
-        }
-        let mut summary_values = grouped.into_iter().collect::<Vec<_>>();
-        summary_values.sort_by(|(user_a, amounts_a), (user_b, amounts_b)| {
-            amounts_b.3.cmp(&amounts_a.3).then(user_a.cmp(user_b))
-        });
-        let total_count = summary_values.len() as u64;
-        let start = page_number.saturating_sub(1).saturating_mul(page_size) as usize;
-        let page = summary_values
-            .into_iter()
-            .skip(start)
-            .take(page_size as usize)
-            .map(|(user_id, amounts)| PerformanceSummaryResponse {
-                user_id,
-                expert_amount: format_money(amounts.0),
-                guide_amount: format_money(amounts.1),
-                reversal_amount: format_money(amounts.2),
-                net_amount: format_money(amounts.3),
-            })
-            .collect();
         Ok(ListPerformanceSummaryResponse {
-            summaries: page,
+            summaries: summaries.into_iter().map(summary_response).collect(),
             page_number,
             page_size,
             total_count,
         })
+    }
+
+    pub async fn export(
+        &self,
+        query: PerformanceExportQuery,
+    ) -> Result<(Vec<u8>, String), SalesPerformanceError> {
+        let filters = report_filters(
+            query.performance_date_from,
+            query.performance_date_to,
+            query.user_id,
+            query.performance_role,
+            query.system_id,
+            query.store_id,
+            query.entry_type,
+            None,
+        )?;
+        let (summaries, _) = self
+            .repository
+            .list_report_summary(&filters, 1, MAX_EXPORT_ROWS)
+            .await?;
+        let entries = self
+            .repository
+            .list_all_report_entries(&filters, MAX_EXPORT_ROWS + 1)
+            .await?;
+        if entries.len() as u64 > MAX_EXPORT_ROWS {
+            return Err(SalesPerformanceError::ExportTooLarge);
+        }
+        let filename = format!(
+            "sales-performance-{}-to-{}.xlsx",
+            filters.performance_date_from, filters.performance_date_to
+        );
+        let bytes = tokio::task::spawn_blocking(move || build_workbook(&summaries, &entries))
+            .await
+            .map_err(|error| SalesPerformanceError::ExportFailed(error.to_string()))??;
+        Ok((bytes, filename))
     }
 }
 
@@ -410,6 +425,7 @@ pub async fn reverse_payment_in_transaction(
                         entry_type: "reversal".to_string(),
                         amount: -original.amount,
                         period_month: month,
+                        performance_date: shanghai_date(now),
                         system_id: record.system_id,
                         store_id: record.store_id,
                         source_entry_id: Some(original.id),
@@ -443,7 +459,7 @@ fn batch_response(batch: sales_performance_batches::Model) -> PerformanceBatchRe
     }
 }
 
-fn entry_response(entry: sales_performance_entries::Model) -> PerformanceEntryResponse {
+fn entry_response(entry: PerformanceEntryRow) -> PerformanceEntryResponse {
     PerformanceEntryResponse {
         id: entry.id,
         batch_id: entry.batch_id,
@@ -458,11 +474,199 @@ fn entry_response(entry: sales_performance_entries::Model) -> PerformanceEntryRe
         entry_type: entry.entry_type,
         amount: format_money(entry.amount),
         period_month: entry.period_month,
+        performance_date: entry.performance_date,
         system_id: entry.system_id,
+        system_name: entry.system_name,
         store_id: entry.store_id,
+        store_name: entry.store_name,
+        user_name: entry.user_name,
+        job_number: entry.job_number,
+        paid_at: entry.paid_at,
         source_entry_id: entry.source_entry_id,
         created_at: entry.created_at,
     }
+}
+
+fn summary_response(row: PerformanceSummaryRow) -> PerformanceSummaryResponse {
+    PerformanceSummaryResponse {
+        user_id: row.user_id,
+        user_name: row.user_name,
+        job_number: row.job_number,
+        expert_amount: format_money(row.expert_amount),
+        guide_amount: format_money(row.guide_amount),
+        reversal_amount: format_money(row.reversal_amount),
+        net_amount: format_money(row.net_amount),
+    }
+}
+
+fn report_filters(
+    from: Option<NaiveDate>,
+    to: Option<NaiveDate>,
+    user_id: Option<Uuid>,
+    performance_role: Option<String>,
+    system_id: Option<Uuid>,
+    store_id: Option<Uuid>,
+    entry_type: Option<String>,
+    payment_id: Option<Uuid>,
+) -> Result<PerformanceReportFilters, SalesPerformanceError> {
+    let (from, to) = match (from, to) {
+        (Some(from), Some(to)) => (from, to),
+        (None, None) => current_month_dates(),
+        _ => return Err(SalesPerformanceError::DateRangeInvalid),
+    };
+    if from > to {
+        return Err(SalesPerformanceError::DateRangeInvalid);
+    }
+    if performance_role
+        .as_deref()
+        .is_some_and(|v| !matches!(v, "expert" | "guide"))
+    {
+        return Err(SalesPerformanceError::PerformanceRoleInvalid);
+    }
+    if entry_type
+        .as_deref()
+        .is_some_and(|v| !matches!(v, "earning" | "reversal"))
+    {
+        return Err(SalesPerformanceError::EntryTypeInvalid);
+    }
+    Ok(PerformanceReportFilters {
+        performance_date_from: from,
+        performance_date_to: to,
+        user_id,
+        performance_role,
+        system_id,
+        store_id,
+        entry_type,
+        payment_id,
+    })
+}
+
+fn current_month_dates() -> (NaiveDate, NaiveDate) {
+    let today = shanghai_date(Utc::now());
+    let first = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).expect("valid month");
+    let next = if today.month() == 12 {
+        NaiveDate::from_ymd_opt(today.year() + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(today.year(), today.month() + 1, 1)
+    }
+    .expect("valid next month");
+    (first, next.pred_opt().expect("valid month end"))
+}
+
+fn build_workbook(
+    summaries: &[PerformanceSummaryRow],
+    entries: &[PerformanceEntryRow],
+) -> Result<Vec<u8>, SalesPerformanceError> {
+    let mut workbook = Workbook::new();
+    let header = Format::new()
+        .set_bold()
+        .set_background_color(Color::RGB(0xD9EAF7));
+    let money = Format::new().set_num_format("0.00");
+    let date = Format::new().set_num_format("yyyy-mm-dd");
+    let datetime = Format::new().set_num_format("yyyy-mm-dd hh:mm:ss");
+    {
+        let sheet = workbook.add_worksheet();
+        sheet.set_name("人员汇总")?;
+        let headers = ["人员", "工号", "专家业绩", "美导业绩", "冲销金额", "净业绩"];
+        for (column, value) in headers.iter().enumerate() {
+            sheet.write_string_with_format(0, column as u16, *value, &header)?;
+        }
+        for (index, row) in summaries.iter().enumerate() {
+            let r = index as u32 + 1;
+            sheet.write_string(r, 0, &row.user_name)?;
+            sheet.write_string(r, 1, &row.job_number)?;
+            sheet.write_number_with_format(r, 2, decimal_f64(row.expert_amount), &money)?;
+            sheet.write_number_with_format(r, 3, decimal_f64(row.guide_amount), &money)?;
+            sheet.write_number_with_format(r, 4, decimal_f64(row.reversal_amount), &money)?;
+            sheet.write_number_with_format(r, 5, decimal_f64(row.net_amount), &money)?;
+        }
+        sheet.set_freeze_panes(1, 0)?;
+        sheet.autofilter(0, 0, summaries.len() as u32, 5)?;
+        sheet.set_column_width(0, 18)?;
+        sheet.set_column_width(1, 14)?;
+        sheet.set_column_width(2, 14)?;
+        sheet.set_column_width(3, 14)?;
+        sheet.set_column_width(4, 14)?;
+        sheet.set_column_width(5, 14)?;
+    }
+    {
+        let sheet = workbook.add_worksheet();
+        sheet.set_name("业绩明细")?;
+        let headers = [
+            "业绩日期",
+            "人员",
+            "工号",
+            "角色",
+            "类型",
+            "金额",
+            "分配比例",
+            "收款时间",
+            "销售记录",
+            "收款",
+            "体系",
+            "门店",
+            "批次",
+        ];
+        for (column, value) in headers.iter().enumerate() {
+            sheet.write_string_with_format(0, column as u16, *value, &header)?;
+        }
+        for (index, row) in entries.iter().enumerate() {
+            let r = index as u32 + 1;
+            sheet.write_datetime_with_format(r, 0, row.performance_date, &date)?;
+            sheet.write_string(r, 1, &row.user_name)?;
+            sheet.write_string(r, 2, &row.job_number)?;
+            sheet.write_string(
+                r,
+                3,
+                if row.performance_role == "expert" {
+                    "专家"
+                } else {
+                    "美导"
+                },
+            )?;
+            sheet.write_string(
+                r,
+                4,
+                if row.entry_type == "earning" {
+                    "正向业绩"
+                } else {
+                    "冲销"
+                },
+            )?;
+            sheet.write_number_with_format(r, 5, decimal_f64(row.amount), &money)?;
+            if let Some(ratio) = row.allocation_ratio {
+                sheet.write_number_with_format(r, 6, decimal_f64(ratio), &money)?;
+            }
+            sheet.write_datetime_with_format(r, 7, shanghai_datetime(row.paid_at), &datetime)?;
+            sheet.write_string(r, 8, row.sales_record_id.to_string())?;
+            sheet.write_string(r, 9, row.payment_id.to_string())?;
+            sheet.write_string(r, 10, &row.system_name)?;
+            sheet.write_string(r, 11, &row.store_name)?;
+            sheet.write_string(r, 12, row.batch_id.to_string())?;
+        }
+        sheet.set_freeze_panes(1, 0)?;
+        sheet.autofilter(0, 0, entries.len() as u32, 12)?;
+        for column in 0..=12 {
+            sheet.set_column_width(column, if matches!(column, 8 | 9 | 12) { 38 } else { 16 })?;
+        }
+    }
+    workbook
+        .save_to_buffer()
+        .map_err(SalesPerformanceError::from)
+}
+
+fn decimal_f64(value: Decimal) -> f64 {
+    value.to_string().parse().unwrap_or(0.0)
+}
+
+fn shanghai_date(now: DateTime<Utc>) -> NaiveDate {
+    let offset = FixedOffset::east_opt(SHANGHAI_OFFSET_SECONDS).expect("valid Shanghai offset");
+    now.with_timezone(&offset).date_naive()
+}
+
+fn shanghai_datetime(now: DateTime<Utc>) -> chrono::NaiveDateTime {
+    let offset = FixedOffset::east_opt(SHANGHAI_OFFSET_SECONDS).expect("valid Shanghai offset");
+    now.with_timezone(&offset).naive_local()
 }
 
 fn validate_month(month: NaiveDate) -> Result<(), SalesPerformanceError> {
@@ -538,6 +742,22 @@ pub enum SalesPerformanceError {
     PostedEntriesMissing,
     #[error("payment performance status is invalid")]
     PaymentStatusInvalid,
+    #[error("performance date range is invalid")]
+    DateRangeInvalid,
+    #[error("performance role is invalid")]
+    PerformanceRoleInvalid,
+    #[error("performance entry type is invalid")]
+    EntryTypeInvalid,
+    #[error("performance export exceeds 1000000 detail rows")]
+    ExportTooLarge,
+    #[error("performance export failed: {0}")]
+    ExportFailed(String),
+}
+
+impl From<XlsxError> for SalesPerformanceError {
+    fn from(value: XlsxError) -> Self {
+        Self::ExportFailed(value.to_string())
+    }
 }
 
 impl SalesPerformanceError {
@@ -557,6 +777,11 @@ impl SalesPerformanceError {
             Self::AllocationTotalInvalid => "performance_allocation_total_invalid",
             Self::PostedEntriesMissing => "performance_entries_missing",
             Self::PaymentStatusInvalid => "performance_status_invalid",
+            Self::DateRangeInvalid => "performance_date_range_invalid",
+            Self::PerformanceRoleInvalid => "performance_role_invalid",
+            Self::EntryTypeInvalid => "performance_entry_type_invalid",
+            Self::ExportTooLarge => "performance_export_too_large",
+            Self::ExportFailed(_) => "performance_export_failed",
         }
     }
 }

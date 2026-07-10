@@ -15,6 +15,7 @@ pub struct Model {
     pub entry_type: String,
     pub amount: Decimal,
     pub period_month: Date,
+    pub performance_date: Date,
     pub system_id: Uuid,
     pub store_id: Uuid,
     pub source_entry_id: Option<Uuid>,
