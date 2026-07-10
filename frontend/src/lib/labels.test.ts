@@ -22,9 +22,9 @@ describe('groupPermissions', () => {
   })
 
   it('多段对象取最后一段为动作', () => {
-    const groups = groupPermissions(['sales:operation-counts:write', 'system:permissions:read'])
+    const groups = groupPermissions(['sales:payments:approve', 'system:permissions:read'])
     const objects = groups.flatMap((g) => g.items.map((i) => i.object))
-    expect(objects).toContain('sales:operation-counts')
+    expect(objects).toContain('sales:payments')
     expect(objects).toContain('system:permissions')
   })
 
@@ -55,7 +55,9 @@ describe('groupPermissions', () => {
     expect(groupPermissions([])).toEqual([])
   })
 
-  it('目录字典覆盖后端 builtin 的全部 12 个对象', () => {
+  it('目录字典覆盖后端运行时的全部 12 个对象', () => {
     expect(Object.keys(PERMISSION_OBJECT_META)).toHaveLength(12)
+    expect(PERMISSION_OBJECT_META['sales:payments']).toEqual({ group: '审核', label: '销售付款' })
+    expect(PERMISSION_OBJECT_META).not.toHaveProperty('sales:operation-counts')
   })
 })

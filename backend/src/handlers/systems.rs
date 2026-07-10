@@ -1,5 +1,5 @@
 use axum::{
-    Json,
+    Extension, Json,
     extract::{
         Path, Query, State,
         rejection::{JsonRejection, PathRejection, QueryRejection},
@@ -16,7 +16,7 @@ use crate::{
         systems::{CreateSystemRequest, ListSystemsQuery, UpdateSystemRequest},
     },
     repositories::RepositoryError,
-    services::systems::SystemError,
+    services::{auth::CurrentSession, systems::SystemError},
     state::AppState,
 };
 
@@ -52,6 +52,7 @@ pub async fn system_detail(
 
 pub async fn create_system(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     request: Result<Json<CreateSystemRequest>, JsonRejection>,
 ) -> Response {
     let request = match request {
@@ -60,13 +61,21 @@ pub async fn create_system(
     };
 
     match state.systems.create_system(request).await {
-        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+        Ok(response) => match state
+            .events
+            .record_create("systems", session.user.id, Some(response.id), &response)
+            .await
+        {
+            Ok(_) => (StatusCode::CREATED, Json(response)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => system_error_response(error),
     }
 }
 
 pub async fn update_system(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
     request: Result<Json<UpdateSystemRequest>, JsonRejection>,
 ) -> Response {
@@ -79,14 +88,26 @@ pub async fn update_system(
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
+    let old = match state.systems.system_detail(system_id).await {
+        Ok(v) => v,
+        Err(e) => return system_error_response(e),
+    };
     match state.systems.update_system(system_id, request).await {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Ok(response) => match state
+            .events
+            .record_update("systems", session.user.id, system_id, &old, &response)
+            .await
+        {
+            Ok(_) => (StatusCode::OK, Json(response)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => system_error_response(error),
     }
 }
 
 pub async fn disable_system(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let system_id = match path {
@@ -94,14 +115,26 @@ pub async fn disable_system(
         Err(error) => return validation_error_response("invalid system_id path parameter", error),
     };
 
+    let old = match state.systems.system_detail(system_id).await {
+        Ok(v) => v,
+        Err(e) => return system_error_response(e),
+    };
     match state.systems.disable_system(system_id).await {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Ok(response) => match state
+            .events
+            .record_update("systems", session.user.id, system_id, &old, &response)
+            .await
+        {
+            Ok(_) => (StatusCode::OK, Json(response)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => system_error_response(error),
     }
 }
 
 pub async fn delete_system(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let system_id = match path {
@@ -109,8 +142,19 @@ pub async fn delete_system(
         Err(error) => return validation_error_response("invalid system_id path parameter", error),
     };
 
+    let old = match state.systems.system_detail(system_id).await {
+        Ok(v) => v,
+        Err(e) => return system_error_response(e),
+    };
     match state.systems.delete_system(system_id).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => match state
+            .events
+            .record_delete("systems", session.user.id, system_id, &old)
+            .await
+        {
+            Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => system_error_response(error),
     }
 }

@@ -105,6 +105,11 @@ impl DepartmentService {
         let fetched = client.fetch_all_departments().await?;
         let existing = self.departments.list_by_source(SOURCE_DINGTALK).await?;
         let plan = plan_department_sync(&fetched, &existing);
+        let existing_by_id = existing
+            .iter()
+            .cloned()
+            .map(|row| (row.id, row))
+            .collect::<HashMap<_, _>>();
         let now = Utc::now();
 
         // Inserts follow the BFS order of `fetched`, so every parent row is
@@ -135,6 +140,23 @@ impl DepartmentService {
             created: plan.inserts.len(),
             updated: plan.updates.len(),
             unchanged: plan.unchanged,
+            audit_changes: plan
+                .inserts
+                .iter()
+                .map(|insert| DepartmentSyncAuditChange {
+                    id: insert.id,
+                    old: None,
+                })
+                .chain(plan.updates.iter().map(|update| {
+                    DepartmentSyncAuditChange {
+                        id: update.id,
+                        old: existing_by_id
+                            .get(&update.id)
+                            .cloned()
+                            .map(DepartmentResponse::from),
+                    }
+                }))
+                .collect(),
         };
         info!(
             total = summary.total,
@@ -153,6 +175,13 @@ pub struct DepartmentSyncSummary {
     pub created: usize,
     pub updated: usize,
     pub unchanged: usize,
+    pub audit_changes: Vec<DepartmentSyncAuditChange>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DepartmentSyncAuditChange {
+    pub id: Uuid,
+    pub old: Option<DepartmentResponse>,
 }
 
 impl From<DepartmentSyncSummary> for DepartmentSyncResponse {
@@ -726,7 +755,8 @@ mod tests {
                 total: 3,
                 created: 3,
                 updated: 0,
-                unchanged: 0
+                unchanged: 0,
+                audit_changes: first.audit_changes.clone()
             }
         );
 
@@ -754,7 +784,8 @@ mod tests {
                 total: 3,
                 created: 0,
                 updated: 0,
-                unchanged: 3
+                unchanged: 3,
+                audit_changes: second.audit_changes.clone()
             }
         );
     }
@@ -819,7 +850,8 @@ mod tests {
                 total: 3,
                 created: 0,
                 updated: 1,
-                unchanged: 2
+                unchanged: 2,
+                audit_changes: summary.audit_changes.clone()
             }
         );
 

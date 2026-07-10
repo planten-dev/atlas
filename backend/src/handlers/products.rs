@@ -1,5 +1,5 @@
 use axum::{
-    Json,
+    Extension, Json,
     extract::{
         Path, Query, State,
         rejection::{JsonRejection, PathRejection, QueryRejection},
@@ -18,7 +18,7 @@ use crate::{
         },
     },
     repositories::RepositoryError,
-    services::products::ProductError,
+    services::{auth::CurrentSession, products::ProductError},
     state::AppState,
 };
 
@@ -69,6 +69,7 @@ pub async fn product_suggestions(
 
 pub async fn create_product(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     request: Result<Json<CreateProductRequest>, JsonRejection>,
 ) -> Response {
     let request = match request {
@@ -77,13 +78,21 @@ pub async fn create_product(
     };
 
     match state.products.create_product(request).await {
-        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+        Ok(response) => match state
+            .events
+            .record_create("products", session.user.id, Some(response.id), &response)
+            .await
+        {
+            Ok(_) => (StatusCode::CREATED, Json(response)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => product_error_response(error),
     }
 }
 
 pub async fn update_product(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
     request: Result<Json<UpdateProductRequest>, JsonRejection>,
 ) -> Response {
@@ -96,14 +105,26 @@ pub async fn update_product(
         Err(error) => return validation_error_response("invalid request body", error),
     };
 
+    let old = match state.products.product_detail(product_id).await {
+        Ok(value) => value,
+        Err(error) => return product_error_response(error),
+    };
     match state.products.update_product(product_id, request).await {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Ok(response) => match state
+            .events
+            .record_update("products", session.user.id, product_id, &old, &response)
+            .await
+        {
+            Ok(_) => (StatusCode::OK, Json(response)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => product_error_response(error),
     }
 }
 
 pub async fn disable_product(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let product_id = match path {
@@ -111,14 +132,26 @@ pub async fn disable_product(
         Err(error) => return validation_error_response("invalid product_id path parameter", error),
     };
 
+    let old = match state.products.product_detail(product_id).await {
+        Ok(value) => value,
+        Err(error) => return product_error_response(error),
+    };
     match state.products.disable_product(product_id).await {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Ok(response) => match state
+            .events
+            .record_update("products", session.user.id, product_id, &old, &response)
+            .await
+        {
+            Ok(_) => (StatusCode::OK, Json(response)).into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => product_error_response(error),
     }
 }
 
 pub async fn delete_product(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let product_id = match path {
@@ -126,8 +159,19 @@ pub async fn delete_product(
         Err(error) => return validation_error_response("invalid product_id path parameter", error),
     };
 
+    let old = match state.products.product_detail(product_id).await {
+        Ok(value) => value,
+        Err(error) => return product_error_response(error),
+    };
     match state.products.delete_product(product_id).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => match state
+            .events
+            .record_delete("products", session.user.id, product_id, &old)
+            .await
+        {
+            Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => product_error_response(error),
     }
 }

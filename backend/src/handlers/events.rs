@@ -111,7 +111,7 @@ async fn review_event(
     }
 }
 
-fn event_error_response(error: EventError) -> Response {
+pub(crate) fn event_error_response(error: EventError) -> Response {
     let status = status_code(&error);
     let code = error.code();
 

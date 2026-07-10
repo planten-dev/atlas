@@ -226,7 +226,7 @@ function LineRow({ record, line }: { record: SalesRecordResponse; line: SalesRec
             </span>
             {canOperate && (
               <span className="flex gap-1">
-                <Guard perm="sales:operation-counts:write">
+                <Guard perm="sales:records:write">
                   <AdjustCountDialog line={line} />
                 </Guard>
                 <Guard perm="sales:operation-usages:write">

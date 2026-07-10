@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::{
     dto::{
         auth::ErrorResponse,
-        users::{ListUsersQuery, UpdateUserStatusRequest},
+        users::{ListUsersQuery, UpdateUserStatusRequest, UserStatus},
     },
     handlers::error::{auth_error_response, authz_error_response, permission_denied_response},
     repositories::RepositoryError,
@@ -125,19 +125,46 @@ pub async fn update_user_status(
         Ok(Json(request)) => request,
         Err(error) => return validation_error_response("invalid request body", error),
     };
+    if let Err(error) = UserStatus::parse("target_status", &request.target_status) {
+        return user_error_response(UserError::InvalidStatus {
+            field: error.field,
+            value: error.value,
+        });
+    }
+    let old_user = match state.users.user_detail(user_id).await {
+        Ok(value) => serde_json::json!({"id": value.id, "status": value.status}),
+        Err(error) => return user_error_response(error),
+    };
 
     match state
         .users
         .update_status(current_session.user.id, user_id, request)
         .await
     {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Ok(response) => {
+            let new_user = serde_json::json!({"id": response.id, "status": response.status});
+            match state
+                .events
+                .record_update(
+                    "users",
+                    current_session.user.id,
+                    user_id,
+                    &old_user,
+                    &new_user,
+                )
+                .await
+            {
+                Ok(_) => (StatusCode::OK, Json(response)).into_response(),
+                Err(error) => crate::handlers::events::event_error_response(error),
+            }
+        }
         Err(error) => user_error_response(error),
     }
 }
 
 pub async fn delete_user(
     State(state): State<AppState>,
+    Extension(session): Extension<CurrentSession>,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Response {
     let user_id = match path {
@@ -145,8 +172,19 @@ pub async fn delete_user(
         Err(error) => return validation_error_response("invalid user_id path parameter", error),
     };
 
+    let old_user = match state.users.user_detail(user_id).await {
+        Ok(v) => serde_json::json!({"id": v.id, "status": v.status}),
+        Err(e) => return user_error_response(e),
+    };
     match state.users.delete_user(user_id).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => match state
+            .events
+            .record_delete("users", session.user.id, user_id, &old_user)
+            .await
+        {
+            Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => crate::handlers::events::event_error_response(error),
+        },
         Err(error) => user_error_response(error),
     }
 }

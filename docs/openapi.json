@@ -4029,7 +4029,7 @@
         ],
         "summary": "Create sale record",
         "operationId": "createSaleRecord",
-        "description": "Requires permission sales:records:write. Creates one sale fact, one or more product lines, and one initial payment in a single transaction. The customer determines system_id and store_id; product category determines whether a line needs operation counts.",
+        "description": "Requires permission sales:records:write. Submits the complete sale aggregate for approval under sales:records:approve. If expert_user_id is present, that expert is also a required approver. Business rows are created only after approval.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -4046,12 +4046,12 @@
           }
         },
         "responses": {
-          "201": {
-            "description": "Created sale record.",
+          "202": {
+            "description": "Sale creation submitted for approval.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SalesRecordResponse"
+                  "$ref": "#/components/schemas/EventResponse"
                 }
               }
             }
@@ -4084,7 +4084,7 @@
         ],
         "summary": "Create service record",
         "operationId": "createServiceRecord",
-        "description": "Requires permission sales:records:write. Creates a service/pre-sale groundwork fact. Lines must have receivable_amount 0.00. No payment, debt or performance is created.",
+        "description": "Requires permission sales:records:write. Submits a service/pre-sale record for approval under sales:records:approve. Business rows are created only after approval.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -4101,12 +4101,12 @@
           }
         },
         "responses": {
-          "201": {
-            "description": "Created service record.",
+          "202": {
+            "description": "Service creation submitted for approval.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SalesRecordResponse"
+                  "$ref": "#/components/schemas/EventResponse"
                 }
               }
             }
@@ -4136,7 +4136,7 @@
         ],
         "summary": "Void sales record",
         "operationId": "voidSalesRecord",
-        "description": "Requires permission sales:records:write. Voids a sales record and its lines, payments and operation-count accounts. Active operation usages must be voided or deleted first.",
+        "description": "Requires permission sales:records:write. Submits sales-record voiding for approval under sales:records:approve.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -4155,12 +4155,12 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "Voided sales record.",
+          "202": {
+            "description": "Sales-record voiding submitted for approval.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SalesRecordResponse"
+                  "$ref": "#/components/schemas/EventResponse"
                 }
               }
             }
@@ -4364,7 +4364,7 @@
         ],
         "summary": "Create collection payment",
         "operationId": "createCollectionPayment",
-        "description": "Requires permission sales:records:write. Adds a collection payment to an existing active sale record. The payment cannot exceed the dynamic outstanding amount.",
+        "description": "Requires permission sales:records:write. Submits a collection payment for approval under sales:payments:approve.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -4381,12 +4381,12 @@
           }
         },
         "responses": {
-          "201": {
-            "description": "Created collection payment.",
+          "202": {
+            "description": "Collection payment submitted for approval.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SalesPaymentResponse"
+                  "$ref": "#/components/schemas/EventResponse"
                 }
               }
             }
@@ -4419,7 +4419,7 @@
         ],
         "summary": "Void sales payment",
         "operationId": "voidSalesPayment",
-        "description": "Requires permission sales:records:write. Voids one payment; outstanding amount is recalculated from active payments.",
+        "description": "Requires permission sales:records:write. Submits payment voiding for approval under sales:payments:approve.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -4438,12 +4438,12 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "Voided sales payment.",
+          "202": {
+            "description": "Payment voiding submitted for approval.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SalesPaymentResponse"
+                  "$ref": "#/components/schemas/EventResponse"
                 }
               }
             }
@@ -4473,7 +4473,7 @@
         ],
         "summary": "List operation-count accounts",
         "operationId": "listSalesRecordOperationCounts",
-        "description": "Requires permission sales:operation-counts:read. Operation-count accounts are attached to sales_record_lines.id.",
+        "description": "Requires permission sales:records:read. Operation-count accounts are part of the owning sales record and are attached to sales_record_lines.id.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -4566,7 +4566,7 @@
         ],
         "summary": "Get operation-count account",
         "operationId": "getSalesRecordOperationCount",
-        "description": "Requires permission sales:operation-counts:read. Uses sales_record_line_id as the account id.",
+        "description": "Requires permission sales:records:read. Uses sales_record_line_id as the account id.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -4620,7 +4620,7 @@
         ],
         "summary": "Update operation-count total",
         "operationId": "updateSalesRecordOperationCount",
-        "description": "Requires permission sales:operation-counts:write. total_count cannot be lower than used_count.",
+        "description": "Requires permission sales:records:write. Submits a total_count change for approval under sales:records:approve; total_count cannot be lower than used_count.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -4649,12 +4649,12 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "Updated operation-count account.",
+          "202": {
+            "description": "Operation-count change submitted for approval.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OperationCountResponse"
+                  "$ref": "#/components/schemas/EventResponse"
                 }
               }
             }
@@ -4870,7 +4870,7 @@
         ],
         "summary": "Create operation usage",
         "operationId": "createSalesRecordOperationUsage",
-        "description": "Requires permission sales:operation-usages:write. Creates an operation usage and increments used_count on the sales record line account.",
+        "description": "Requires permission sales:operation-usages:write. Submits an operation usage for approval under sales:operation-usages:approve.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -4887,12 +4887,12 @@
           }
         },
         "responses": {
-          "201": {
-            "description": "Created operation usage.",
+          "202": {
+            "description": "Operation usage submitted for approval.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OperationUsageResponse"
+                  "$ref": "#/components/schemas/EventResponse"
                 }
               }
             }
@@ -4925,7 +4925,7 @@
         ],
         "summary": "Update operation usage",
         "operationId": "updateSalesRecordOperationUsage",
-        "description": "Requires permission sales:operation-usages:write. Adjusts used_count when operation_count changes.",
+        "description": "Requires permission sales:operation-usages:write. Submits an operation-usage update for approval under sales:operation-usages:approve.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -4954,12 +4954,12 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "Updated operation usage.",
+          "202": {
+            "description": "Operation-usage update submitted for approval.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OperationUsageResponse"
+                  "$ref": "#/components/schemas/EventResponse"
                 }
               }
             }
@@ -4992,7 +4992,7 @@
         ],
         "summary": "Void operation usage",
         "operationId": "voidSalesRecordOperationUsage",
-        "description": "Requires permission sales:operation-usages:write. Voids an active usage and decrements used_count.",
+        "description": "Requires permission sales:operation-usages:write. Submits operation-usage voiding for approval under sales:operation-usages:approve.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -5011,12 +5011,12 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "Voided operation usage.",
+          "202": {
+            "description": "Operation-usage voiding submitted for approval.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OperationUsageResponse"
+                  "$ref": "#/components/schemas/EventResponse"
                 }
               }
             }
@@ -5049,7 +5049,7 @@
         ],
         "summary": "Delete operation usage",
         "operationId": "deleteSalesRecordOperationUsage",
-        "description": "Requires permission sales:operation-usages:write. Hard deletes a usage and decrements used_count if it was active.",
+        "description": "Requires permission sales:operation-usages:write. Submits operation-usage deletion for approval under sales:operation-usages:approve.",
         "security": [
           {
             "AtlasSessionCookie": []
@@ -5068,8 +5068,15 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": "Operation usage was deleted."
+          "202": {
+            "description": "Operation-usage deletion submitted for approval.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventResponse"
+                }
+              }
+            }
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
