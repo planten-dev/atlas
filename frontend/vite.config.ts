@@ -1,7 +1,6 @@
 import path from 'node:path'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
-import tailwindcss from '@tailwindcss/vite'
 import legacy from '@vitejs/plugin-legacy'
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 
@@ -9,7 +8,7 @@ export default defineConfig({
   plugins: [
     tanstackRouter({ target: 'react', autoCodeSplitting: true }),
     react(),
-    tailwindcss(),
+    // Tailwind 由 postcss.config.mjs 处理，以便继续执行旧 WebView CSS 降级。
     legacy({
       // 钉钉 Android 容器是 UC U4 内核(约 Chromium 69),iOS 是 WKWebView;
       // 这些达不到 Vite 8 的 modern baseline(import.meta.resolve),会走 legacy 构建。
@@ -20,6 +19,10 @@ export default defineConfig({
       modernPolyfills: true,
     }),
   ],
+  build: {
+    // 与钉钉 Android UC U4/Chromium 69 的 CSS 语法下限对齐。
+    cssTarget: 'chrome69',
+  },
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, 'src'),

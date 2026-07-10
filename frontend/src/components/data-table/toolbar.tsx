@@ -3,6 +3,8 @@ import { Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { buildCsv, downloadCsv, type CsvColumn } from '@/lib/csv'
 import { notify } from '@/lib/notify'
+import { useIsMobile } from '@/hooks/use-mobile'
+import { isDingTalkWebview } from '@/auth/dingtalk'
 
 interface DataTableToolbarProps<T> {
   /** 筛选控件槽位 */
@@ -17,12 +19,17 @@ interface DataTableToolbarProps<T> {
 }
 
 export function DataTableToolbar<T>({ children, exportConfig, actions }: DataTableToolbarProps<T>) {
+  const csvUnavailable = useIsMobile() && isDingTalkWebview()
+
   return (
     // 筛选区可能折成多行,动作按钮固定与第一行对齐(items-start + 同高按钮)
     <div className="flex flex-wrap items-start gap-2">
       <div className="flex flex-1 flex-wrap items-center gap-2">{children}</div>
       <div className="flex items-center gap-2">
-        {exportConfig && (
+        {exportConfig && csvUnavailable && (
+          <span className="text-xs text-muted-foreground">请在电脑端导出 CSV</span>
+        )}
+        {exportConfig && !csvUnavailable && (
           <Button
             variant="outline"
             onClick={() => {

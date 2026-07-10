@@ -246,7 +246,7 @@ function MobileShell({ children }: { children: ReactNode }) {
   const badgeCount = useApprovalBadgeCount()
 
   return (
-    <div className="flex min-h-svh flex-col">
+    <div className="min-h-app flex flex-col">
       <div className={cn('flex-1 p-4', activeTab && 'pb-20')}>
         {desktopOnly ? <DesktopOnlyNotice /> : children}
       </div>
