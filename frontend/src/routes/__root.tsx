@@ -16,7 +16,7 @@ declare module '@tanstack/react-router' {
 
 function NotFound() {
   return (
-    <div className="flex min-h-svh flex-col items-center justify-center gap-4">
+    <div className="min-h-app flex flex-col items-center justify-center gap-4">
       <p className="text-5xl font-bold text-muted-foreground">404</p>
       <p className="text-muted-foreground">页面不存在</p>
       <Link to="/" className="text-primary underline underline-offset-4">
@@ -28,7 +28,7 @@ function NotFound() {
 
 function RootError({ error }: { error: Error }) {
   return (
-    <div className="flex min-h-svh flex-col items-center justify-center gap-4 px-6 text-center">
+    <div className="min-h-app flex flex-col items-center justify-center gap-4 px-6 text-center">
       <p className="text-xl font-semibold">页面出错了</p>
       <p className="max-w-md break-all text-sm text-muted-foreground">{error.message}</p>
       <a href="/" className="text-primary underline underline-offset-4">

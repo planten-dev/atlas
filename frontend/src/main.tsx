@@ -2,10 +2,12 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider, createRouter } from '@tanstack/react-router'
+import '@fontsource-variable/inter'
 import './index.css'
 import { routeTree } from './routeTree.gen'
 import { setUnauthorizedHandler } from '@/api/client'
 import { Toaster } from '@/components/ui/sonner'
+import { prepareBrowserCompatibility, renderUnsupportedBrowser } from '@/compat/browser'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -38,12 +40,21 @@ setUnauthorizedHandler((currentPath) => {
 })
 
 async function bootstrap() {
+  const rootElement = document.getElementById('root')
+  if (!rootElement) throw new Error('Missing #root element')
+
+  const compatibility = await prepareBrowserCompatibility()
+  if (!compatibility.supported) {
+    renderUnsupportedBrowser(rootElement)
+    return
+  }
+
   if (import.meta.env.VITE_ENABLE_MOCKS === 'true') {
     const { worker } = await import('./mocks/browser')
     await worker.start({ onUnhandledRequest: 'bypass' })
   }
 
-  createRoot(document.getElementById('root')!).render(
+  createRoot(rootElement).render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />

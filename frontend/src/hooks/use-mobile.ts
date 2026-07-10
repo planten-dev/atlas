@@ -1,4 +1,4 @@
-import * as React from "react"
+import * as React from 'react'
 
 const MOBILE_BREAKPOINT = 768
 
@@ -6,8 +6,13 @@ export function useMediaQuery(query: string): boolean {
   const subscribe = React.useCallback(
     (onChange: () => void) => {
       const mql = window.matchMedia(query)
-      mql.addEventListener("change", onChange)
-      return () => mql.removeEventListener("change", onChange)
+      if (typeof mql.addEventListener === 'function') {
+        mql.addEventListener('change', onChange)
+        return () => mql.removeEventListener('change', onChange)
+      }
+
+      mql.addListener(onChange)
+      return () => mql.removeListener(onChange)
     },
     [query],
   )

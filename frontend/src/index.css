@@ -1,7 +1,25 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/inter";
+
+/* 旧 WebView 先使用 vh，支持小视口单位的浏览器再覆盖为 svh。 */
+.min-h-app {
+    min-height: 100vh;
+}
+
+.h-app {
+    height: 100vh;
+}
+
+@supports (height: 100svh) {
+    .min-h-app {
+        min-height: 100svh;
+    }
+
+    .h-app {
+        height: 100svh;
+    }
+}
 
 @custom-variant dark (&:is(.dark *));
 
@@ -127,6 +145,13 @@
   html {
     @apply font-sans;
     }
+}
+
+/* 旧 WebView 的弹窗不依赖 visualViewport 也能保持内容可滚动。 */
+.legacy-webview [data-slot="dialog-content"],
+.legacy-webview [data-slot="alert-dialog-content"] {
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
 }
 /* 细滚动条:全局统一(Chromium/WebKit + Firefox) */
 @layer base {
