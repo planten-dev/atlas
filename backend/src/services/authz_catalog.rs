@@ -50,7 +50,7 @@ impl PermissionCatalog {
         let mut catalog = Self {
             entries: Vec::new(),
         };
-        let builtin: [(&str, &[&str], &str, &str); 11] = [
+        let builtin: [(&str, &[&str], &str, &str); 12] = [
             ("users", &["read", "write"], "系统", "用户管理"),
             ("departments", &["read", "write"], "系统", "部门"),
             (
@@ -76,6 +76,7 @@ impl PermissionCatalog {
                 "销售",
                 "耗用记录",
             ),
+            ("sales:performance", &["read", "post"], "销售", "人员业绩"),
             ("system:permissions", &["read", "write"], "系统", "权限管理"),
         ];
         for (object, actions, group, label) in builtin {
@@ -130,6 +131,8 @@ mod tests {
         assert!(catalog.contains("events", "read"));
         assert!(catalog.contains("sales:records", "read"));
         assert!(catalog.contains("sales:records", "write"));
+        assert!(catalog.contains("sales:performance", "read"));
+        assert!(catalog.contains("sales:performance", "post"));
         assert!(!catalog.contains("sales:operation-counts", "read"));
         assert!(!catalog.contains("events", "write"));
         assert!(!catalog.contains("nonexistent", "read"));

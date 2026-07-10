@@ -7,6 +7,7 @@ pub mod events;
 pub mod product_categories;
 pub mod products;
 pub mod review;
+pub mod sales_performance;
 pub mod sales_records;
 pub mod stores;
 pub mod systems;

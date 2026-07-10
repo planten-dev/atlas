@@ -143,6 +143,16 @@ pub struct SalesRecordService {
 }
 
 impl SalesRecordService {
+    pub fn performance_service(
+        &self,
+    ) -> crate::services::sales_performance::SalesPerformanceService {
+        crate::services::sales_performance::SalesPerformanceService::new(
+            crate::repositories::sales_performance::SalesPerformanceRepository::new(
+                self.sales_records.db.clone(),
+            ),
+        )
+    }
+
     pub fn new(
         sales_records: SalesRecordRepository,
         customers: CustomerRepository,
@@ -846,6 +856,16 @@ impl SalesRecordService {
             .await?
         {
             if payment.status != "voided" {
+                crate::services::sales_performance::reverse_payment_in_transaction(
+                    &tx, &payment, &record, now,
+                )
+                .await
+                .map_err(|error| match error {
+                    crate::services::sales_performance::SalesPerformanceError::Repository(
+                        error,
+                    ) => SalesRecordError::Repository(error),
+                    _ => SalesRecordError::SalesPaymentNotFound,
+                })?;
                 self.sales_records
                     .update_payment_status(&tx, &payment, "voided", now)
                     .await?;
@@ -984,6 +1004,16 @@ impl SalesRecordService {
     ) -> Result<SalesPaymentResponse, SalesRecordError> {
         let now = Utc::now();
         let tx = self.sales_records.begin().await?;
+        let payment_hint = self
+            .sales_records
+            .find_payment_by_id_in(&tx, payment_id)
+            .await?
+            .ok_or(SalesRecordError::SalesPaymentNotFound)?;
+        let record = self
+            .sales_records
+            .find_sales_record_by_id_for_update(&tx, payment_hint.sales_record_id)
+            .await?
+            .ok_or(SalesRecordError::SalesRecordNotFound)?;
         let payment = self
             .sales_records
             .find_payment_by_id_for_update(&tx, payment_id)
@@ -993,6 +1023,16 @@ impl SalesRecordService {
             tx.commit().await.map_err(RepositoryError::from)?;
             return self.sales_payment_detail(payment_id).await;
         }
+        crate::services::sales_performance::reverse_payment_in_transaction(
+            &tx, &payment, &record, now,
+        )
+        .await
+        .map_err(|error| match error {
+            crate::services::sales_performance::SalesPerformanceError::Repository(error) => {
+                SalesRecordError::Repository(error)
+            }
+            _ => SalesRecordError::SalesPaymentNotFound,
+        })?;
         let payment = self
             .sales_records
             .update_payment_status(&tx, &payment, "voided", now)
@@ -2021,6 +2061,11 @@ impl ReviewableResource for SalesRecordReviewDoc {
                     .map_err(apply_repo_error)?
                 {
                     if payment.status != "voided" {
+                        crate::services::sales_performance::reverse_payment_in_transaction(
+                            tx, &payment, &record, now,
+                        )
+                        .await
+                        .map_err(apply_performance_error)?;
                         repo.update_payment_status(tx, &payment, "voided", now)
                             .await
                             .map_err(apply_repo_error)?;
@@ -2183,12 +2228,27 @@ impl ReviewableResource for SalesPaymentReviewDoc {
             return Err(ApplyError::ResourceMissing);
         }
         let repo = SalesRecordRepository::for_review_transaction();
+        let payment_hint = repo
+            .find_payment_by_id_in(tx, resource_id)
+            .await
+            .map_err(apply_repo_error)?
+            .ok_or(ApplyError::ResourceMissing)?;
+        let record = repo
+            .find_sales_record_by_id_for_update(tx, payment_hint.sales_record_id)
+            .await
+            .map_err(apply_repo_error)?
+            .ok_or(ApplyError::ResourceMissing)?;
         let payment = repo
             .find_payment_by_id_for_update(tx, resource_id)
             .await
             .map_err(apply_repo_error)?
             .ok_or(ApplyError::ResourceMissing)?;
         if payment.status != "voided" {
+            crate::services::sales_performance::reverse_payment_in_transaction(
+                tx, &payment, &record, now,
+            )
+            .await
+            .map_err(apply_performance_error)?;
             repo.update_payment_status(tx, &payment, "voided", now)
                 .await
                 .map_err(apply_repo_error)?;
@@ -2202,6 +2262,17 @@ impl ReviewableResource for SalesPaymentReviewDoc {
         _now: DateTime<Utc>,
     ) -> Result<(), ApplyError> {
         Err(ApplyError::ResourceMissing)
+    }
+}
+
+fn apply_performance_error(
+    error: crate::services::sales_performance::SalesPerformanceError,
+) -> ApplyError {
+    match error {
+        crate::services::sales_performance::SalesPerformanceError::Repository(
+            RepositoryError::Database(error),
+        ) => ApplyError::Database(error),
+        _ => ApplyError::ResourceMissing,
     }
 }
 
@@ -2863,6 +2934,9 @@ mod tests {
     use crate::{
         config::{DatabaseConfig, DatabaseKind},
         db,
+        dto::sales_performance::{
+            CreatePerformanceBatchRequest, PerformanceEntriesQuery, PerformanceSummaryQuery,
+        },
         dto::sales_records::{
             CreateCollectionPaymentRequest, CreateOperationUsageRequest, CreateSaleRecordRequest,
             CreateServiceRecordRequest, SalesPaymentAllocationInput, SalesPaymentInput,
@@ -2878,7 +2952,7 @@ mod tests {
             users::UserRepository,
         },
     };
-    use chrono::{TimeZone, Utc};
+    use chrono::{Datelike, TimeZone, Utc};
     use std::path::PathBuf;
 
     struct Harness {
@@ -3338,5 +3412,241 @@ mod tests {
             usages.operation_usages[0].sales_record_line_id,
             second.lines[0].id
         );
+    }
+
+    #[tokio::test]
+    async fn posts_two_hundred_percent_for_expert_sale_and_keeps_roles_separate() {
+        let h = Harness::new().await;
+        let (actor, mut request) = sale_request(&h, "100.00", "100.00").await;
+        let guide = request.payment.allocations[0].guide_user_id;
+        request.expert_user_id = Some(guide);
+        let created = h
+            .service
+            .create_sale_record(actor, request)
+            .await
+            .expect("sale should create");
+        let performance = h.service.performance_service();
+
+        let batch = performance
+            .post_batch(
+                actor,
+                CreatePerformanceBatchRequest {
+                    period_month: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+                    payment_ids: vec![created.payments[0].id],
+                },
+            )
+            .await
+            .expect("batch should post");
+        assert_eq!(batch.expert_amount, "100.00");
+        assert_eq!(batch.guide_amount, "100.00");
+        assert_eq!(batch.total_amount, "200.00");
+
+        let entries = performance
+            .entries(PerformanceEntriesQuery {
+                period_month: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+                user_id: Some(guide),
+                payment_id: None,
+                page_number: None,
+                page_size: None,
+            })
+            .await
+            .expect("entries should list");
+        assert_eq!(entries.entries.len(), 2);
+        assert!(
+            entries
+                .entries
+                .iter()
+                .any(|entry| entry.performance_role == "expert")
+        );
+        assert!(
+            entries
+                .entries
+                .iter()
+                .any(|entry| entry.performance_role == "guide")
+        );
+        assert_eq!(
+            entries
+                .entries
+                .iter()
+                .find(|entry| entry.performance_role == "guide")
+                .and_then(|entry| entry.allocation_ratio.as_deref()),
+            Some("100.00")
+        );
+    }
+
+    #[tokio::test]
+    async fn posts_only_guide_performance_without_expert() {
+        let h = Harness::new().await;
+        let (actor, request) = sale_request(&h, "100.00", "100.00").await;
+        let created = h
+            .service
+            .create_sale_record(actor, request)
+            .await
+            .expect("sale should create");
+        let performance = h.service.performance_service();
+        let batch = performance
+            .post_batch(
+                actor,
+                CreatePerformanceBatchRequest {
+                    period_month: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+                    payment_ids: vec![created.payments[0].id],
+                },
+            )
+            .await
+            .expect("batch should post");
+        assert_eq!(batch.expert_amount, "0.00");
+        assert_eq!(batch.guide_amount, "100.00");
+        assert_eq!(batch.total_amount, "100.00");
+    }
+
+    #[tokio::test]
+    async fn voiding_posted_payment_creates_full_reversal_in_current_month() {
+        let h = Harness::new().await;
+        let (actor, mut request) = sale_request(&h, "100.00", "100.00").await;
+        request.expert_user_id = Some(h.user("expert").await);
+        let created = h
+            .service
+            .create_sale_record(actor, request)
+            .await
+            .expect("sale should create");
+        let performance = h.service.performance_service();
+        performance
+            .post_batch(
+                actor,
+                CreatePerformanceBatchRequest {
+                    period_month: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+                    payment_ids: vec![created.payments[0].id],
+                },
+            )
+            .await
+            .expect("batch should post");
+
+        let voided = h
+            .service
+            .void_sales_payment(created.payments[0].id)
+            .await
+            .expect("payment should void");
+        assert_eq!(voided.performance_status, "reversed");
+        let now = Utc::now();
+        let current_month = NaiveDate::from_ymd_opt(now.year(), now.month(), 1).unwrap();
+        let summary = performance
+            .summary(PerformanceSummaryQuery {
+                period_month: current_month,
+                user_id: None,
+                page_number: None,
+                page_size: None,
+            })
+            .await
+            .expect("summary should list");
+        assert_eq!(
+            summary
+                .summaries
+                .iter()
+                .map(|row| row.reversal_amount.as_str())
+                .collect::<Vec<_>>(),
+            vec!["100.00", "100.00"]
+        );
+    }
+
+    #[tokio::test]
+    async fn voiding_pending_payment_cancels_it_without_performance_entries() {
+        let h = Harness::new().await;
+        let (actor, request) = sale_request(&h, "100.00", "100.00").await;
+        let created = h
+            .service
+            .create_sale_record(actor, request)
+            .await
+            .expect("sale should create");
+        let performance = h.service.performance_service();
+        let voided = h
+            .service
+            .void_sales_payment(created.payments[0].id)
+            .await
+            .expect("payment should void");
+        assert_eq!(voided.performance_status, "cancelled");
+        let entries = performance
+            .entries(PerformanceEntriesQuery {
+                period_month: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+                user_id: None,
+                payment_id: Some(voided.id),
+                page_number: None,
+                page_size: None,
+            })
+            .await
+            .expect("entries should list");
+        assert!(entries.entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn rejects_reposting_and_cross_month_posting() {
+        let h = Harness::new().await;
+        let (actor, request) = sale_request(&h, "100.00", "100.00").await;
+        let created = h
+            .service
+            .create_sale_record(actor, request)
+            .await
+            .expect("sale should create");
+        let performance = h.service.performance_service();
+        let payment_ids = vec![created.payments[0].id];
+        assert!(matches!(
+            performance
+                .post_batch(
+                    actor,
+                    CreatePerformanceBatchRequest {
+                        period_month: NaiveDate::from_ymd_opt(2026, 8, 1).unwrap(),
+                        payment_ids: payment_ids.clone(),
+                    },
+                )
+                .await,
+            Err(crate::services::sales_performance::SalesPerformanceError::PaymentOutsideMonth)
+        ));
+        performance
+            .post_batch(
+                actor,
+                CreatePerformanceBatchRequest {
+                    period_month: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+                    payment_ids: payment_ids.clone(),
+                },
+            )
+            .await
+            .expect("first batch should post");
+        assert!(matches!(
+            performance
+                .post_batch(
+                    actor,
+                    CreatePerformanceBatchRequest {
+                        period_month: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+                        payment_ids,
+                    },
+                )
+                .await,
+            Err(crate::services::sales_performance::SalesPerformanceError::PaymentNotPending)
+        ));
+    }
+
+    #[tokio::test]
+    async fn concurrent_posting_allows_only_one_batch() {
+        let h = Harness::new().await;
+        let (actor, request) = sale_request(&h, "100.00", "100.00").await;
+        let created = h
+            .service
+            .create_sale_record(actor, request)
+            .await
+            .expect("sale should create");
+        let first_service = h.service.performance_service();
+        let second_service = first_service.clone();
+        let request = CreatePerformanceBatchRequest {
+            period_month: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+            payment_ids: vec![created.payments[0].id],
+        };
+        let second_request = CreatePerformanceBatchRequest {
+            period_month: request.period_month,
+            payment_ids: request.payment_ids.clone(),
+        };
+        let (first, second) = tokio::join!(
+            first_service.post_batch(actor, request),
+            second_service.post_batch(actor, second_request)
+        );
+        assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
     }
 }

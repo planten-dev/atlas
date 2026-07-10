@@ -4,8 +4,8 @@ use crate::{
         auth::AuthService, authz::AuthzService, customers::CustomerService,
         departments::DepartmentService, events::EventService,
         product_categories::ProductCategoryService, products::ProductService,
-        sales_records::SalesRecordService, stores::StoreService, systems::SystemService,
-        users::UserService,
+        sales_performance::SalesPerformanceService, sales_records::SalesRecordService,
+        stores::StoreService, systems::SystemService, users::UserService,
     },
 };
 
@@ -20,6 +20,7 @@ pub struct AppState {
     pub stores: StoreService,
     pub customers: CustomerService,
     pub sales_records: SalesRecordService,
+    pub sales_performance: SalesPerformanceService,
     pub events: EventService,
     pub departments: DepartmentService,
     pub auth_config: AuthConfig,
@@ -44,6 +45,7 @@ pub struct AppStateParts {
 
 impl AppState {
     pub fn new(parts: AppStateParts) -> Self {
+        let sales_performance = parts.sales_records.performance_service();
         Self {
             auth: parts.auth,
             authz: parts.authz,
@@ -54,6 +56,7 @@ impl AppState {
             stores: parts.stores,
             customers: parts.customers,
             sales_records: parts.sales_records,
+            sales_performance,
             events: parts.events,
             departments: parts.departments,
             auth_config: parts.auth_config,

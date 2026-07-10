@@ -4,6 +4,7 @@ pub mod departments;
 pub mod events;
 pub mod product_categories;
 pub mod products;
+pub mod sales_performance;
 pub mod sales_records;
 pub mod sessions;
 pub mod stores;

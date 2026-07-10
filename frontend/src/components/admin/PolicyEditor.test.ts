@@ -35,6 +35,6 @@ describe('policyActionsForObject', () => {
   })
 
   it('全局通配对象允许所有动作', () => {
-    expect(policyActionsForObject(catalog, '*')).toEqual(['read', 'write', 'approve', '*'])
+    expect(policyActionsForObject(catalog, '*')).toEqual(['read', 'write', 'post', 'approve', '*'])
   })
 })

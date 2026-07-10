@@ -11,6 +11,10 @@ export function applied<T>(data: T): MutationOutcome<T> {
   return { kind: 'applied', data }
 }
 
+export function submitted<T = never>(event: { id: string }): MutationOutcome<T> {
+  return { kind: 'submitted', eventId: event.id }
+}
+
 /** mutation 成功后的统一提示文案。 */
 export function outcomeMessage(outcome: MutationOutcome<unknown>, appliedText: string): string {
   return outcome.kind === 'applied' ? appliedText : '已提交审批,等待审批通过后生效'

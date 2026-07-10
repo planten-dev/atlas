@@ -1,7 +1,7 @@
 import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
 import { client, unwrap } from '@/api/client'
 import type { components } from '@/api/types.gen'
-import { applied, type MutationOutcome } from '@/hooks/mutation-result'
+import { submitted, type MutationOutcome } from '@/hooks/mutation-result'
 
 export type OperationUsageResponse = components['schemas']['OperationUsageResponse']
 
@@ -43,7 +43,7 @@ export function useCreateUsage() {
     mutationFn: async (
       body: components['schemas']['CreateOperationUsageRequest'],
     ): Promise<MutationOutcome<OperationUsageResponse>> =>
-      applied(unwrap(await client.POST('/api/v1/sales-record-operation-usages/create', { body }))),
+      submitted(unwrap(await client.POST('/api/v1/sales-record-operation-usages/create', { body }))),
     onSuccess: () => invalidateUsageRelated(queryClient),
   })
 }
@@ -62,7 +62,7 @@ export function useUpdateUsage() {
       usageId: string
       body: components['schemas']['UpdateOperationUsageRequest']
     }): Promise<MutationOutcome<OperationUsageResponse>> =>
-      applied(
+      submitted(
         unwrap(
           await client.POST('/api/v1/sales-record-operation-usages/update/{usage_id}', {
             params: { path: { usage_id: usageId } },
@@ -79,7 +79,7 @@ export function useVoidUsage() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: async (usageId: string) =>
-      applied(
+      submitted(
         unwrap(
           await client.POST('/api/v1/sales-record-operation-usages/void/{usage_id}', {
             params: { path: { usage_id: usageId } },

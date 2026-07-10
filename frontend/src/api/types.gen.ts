@@ -1292,7 +1292,7 @@ export interface paths {
         put?: never;
         /**
          * Create sale record
-         * @description Requires permission sales:records:write. Creates one sale fact, one or more product lines, and one initial payment in a single transaction. The customer determines system_id and store_id; product category determines whether a line needs operation counts.
+         * @description Requires permission sales:records:write. Submits the complete sale aggregate for approval under sales:records:approve. If expert_user_id is present, that expert is also a required approver. Business rows are created only after approval.
          */
         post: operations["createSaleRecord"];
         delete?: never;
@@ -1312,7 +1312,7 @@ export interface paths {
         put?: never;
         /**
          * Create service record
-         * @description Requires permission sales:records:write. Creates a service/pre-sale groundwork fact. Lines must have receivable_amount 0.00. No payment, debt or performance is created.
+         * @description Requires permission sales:records:write. Submits a service/pre-sale record for approval under sales:records:approve. Business rows are created only after approval.
          */
         post: operations["createServiceRecord"];
         delete?: never;
@@ -1332,7 +1332,7 @@ export interface paths {
         put?: never;
         /**
          * Void sales record
-         * @description Requires permission sales:records:write. Voids a sales record and its lines, payments and operation-count accounts. Active operation usages must be voided or deleted first.
+         * @description Requires permission sales:records:write. Submits sales-record voiding for approval under sales:records:approve.
          */
         post: operations["voidSalesRecord"];
         delete?: never;
@@ -1392,7 +1392,7 @@ export interface paths {
         put?: never;
         /**
          * Create collection payment
-         * @description Requires permission sales:records:write. Adds a collection payment to an existing active sale record. The payment cannot exceed the dynamic outstanding amount.
+         * @description Requires permission sales:records:write. Submits a collection payment for approval under sales:payments:approve.
          */
         post: operations["createCollectionPayment"];
         delete?: never;
@@ -1412,9 +1412,93 @@ export interface paths {
         put?: never;
         /**
          * Void sales payment
-         * @description Requires permission sales:records:write. Voids one payment; outstanding amount is recalculated from active payments.
+         * @description Requires permission sales:records:write. Submits payment voiding for approval under sales:payments:approve.
          */
         post: operations["voidSalesPayment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-performance/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List pending performance payments
+         * @description Requires sales:performance:read. Lists active pending payments in the requested Asia/Shanghai calendar month with their expected expert and guide performance amounts.
+         */
+        get: operations["listPendingSalesPerformance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-performance/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List performance batches
+         * @description Requires sales:performance:read. Lists manual posting and automatic reversal batches.
+         */
+        get: operations["listSalesPerformanceBatches"];
+        put?: never;
+        /**
+         * Post a performance batch
+         * @description Requires sales:performance:post. Immediately and atomically posts the selected active pending payments.
+         */
+        post: operations["createSalesPerformanceBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-performance/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Summarize personnel performance
+         * @description Requires sales:performance:read. Returns personnel expert earnings, guide earnings, reversal amount and net performance.
+         */
+        get: operations["listSalesPerformanceSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-performance/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List performance entries
+         * @description Requires sales:performance:read. Lists immutable earning and reversal entries.
+         */
+        get: operations["listSalesPerformanceEntries"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1430,7 +1514,7 @@ export interface paths {
         };
         /**
          * List operation-count accounts
-         * @description Requires permission sales:operation-counts:read. Operation-count accounts are attached to sales_record_lines.id.
+         * @description Requires permission sales:records:read. Operation-count accounts are part of the owning sales record and are attached to sales_record_lines.id.
          */
         get: operations["listSalesRecordOperationCounts"];
         put?: never;
@@ -1450,7 +1534,7 @@ export interface paths {
         };
         /**
          * Get operation-count account
-         * @description Requires permission sales:operation-counts:read. Uses sales_record_line_id as the account id.
+         * @description Requires permission sales:records:read. Uses sales_record_line_id as the account id.
          */
         get: operations["getSalesRecordOperationCount"];
         put?: never;
@@ -1472,7 +1556,7 @@ export interface paths {
         put?: never;
         /**
          * Update operation-count total
-         * @description Requires permission sales:operation-counts:write. total_count cannot be lower than used_count.
+         * @description Requires permission sales:records:write. Submits a total_count change for approval under sales:records:approve; total_count cannot be lower than used_count.
          */
         post: operations["updateSalesRecordOperationCount"];
         delete?: never;
@@ -1532,7 +1616,7 @@ export interface paths {
         put?: never;
         /**
          * Create operation usage
-         * @description Requires permission sales:operation-usages:write. Creates an operation usage and increments used_count on the sales record line account.
+         * @description Requires permission sales:operation-usages:write. Submits an operation usage for approval under sales:operation-usages:approve.
          */
         post: operations["createSalesRecordOperationUsage"];
         delete?: never;
@@ -1552,7 +1636,7 @@ export interface paths {
         put?: never;
         /**
          * Update operation usage
-         * @description Requires permission sales:operation-usages:write. Adjusts used_count when operation_count changes.
+         * @description Requires permission sales:operation-usages:write. Submits an operation-usage update for approval under sales:operation-usages:approve.
          */
         post: operations["updateSalesRecordOperationUsage"];
         delete?: never;
@@ -1572,7 +1656,7 @@ export interface paths {
         put?: never;
         /**
          * Void operation usage
-         * @description Requires permission sales:operation-usages:write. Voids an active usage and decrements used_count.
+         * @description Requires permission sales:operation-usages:write. Submits operation-usage voiding for approval under sales:operation-usages:approve.
          */
         post: operations["voidSalesRecordOperationUsage"];
         delete?: never;
@@ -1592,7 +1676,7 @@ export interface paths {
         put?: never;
         /**
          * Delete operation usage
-         * @description Requires permission sales:operation-usages:write. Hard deletes a usage and decrements used_count if it was active.
+         * @description Requires permission sales:operation-usages:write. Submits operation-usage deletion for approval under sales:operation-usages:approve.
          */
         post: operations["deleteSalesRecordOperationUsage"];
         delete?: never;
@@ -1757,7 +1841,7 @@ export interface components {
             /** @description Colon-separated scope path, e.g. finance:invoices. May contain * segments; a trailing * matches all remaining segments. */
             object: string;
             /** @enum {string} */
-            action: "read" | "write" | "approve" | "*";
+            action: "read" | "write" | "post" | "approve" | "*";
             /** @enum {string} */
             effect: "allow" | "deny";
         };
@@ -1783,7 +1867,7 @@ export interface components {
             /** @description Colon-separated scope path this entry describes, e.g. products:categories. */
             object: string;
             /** @description Actions the backend enforces on this object. */
-            actions: ("read" | "write" | "approve")[];
+            actions: ("read" | "write" | "post" | "approve")[];
             /** @description Display group for the permission panel, e.g. 商品. */
             group: string;
             /** @description Human-readable label of the object. */
@@ -1793,7 +1877,7 @@ export interface components {
             /** @description Colon-separated scope path. May contain * segments; a trailing * matches all remaining segments. Must cover at least one catalog permission. */
             object: string;
             /** @enum {string} */
-            action: "read" | "write" | "approve" | "*";
+            action: "read" | "write" | "post" | "approve" | "*";
             /** @enum {string} */
             effect: "allow" | "deny";
         };
@@ -2331,7 +2415,7 @@ export interface components {
             /** Format: date-time */
             paid_at: string;
             /** @enum {string} */
-            performance_status: "pending" | "posted";
+            performance_status: "pending" | "posted" | "cancelled" | "reversed";
             /** @enum {string} */
             status: "active" | "voided";
             remark: string | null;
@@ -2444,6 +2528,113 @@ export interface components {
             paid_at: string;
             allocations: components["schemas"]["SalesPaymentAllocationInput"][];
             remark?: string | null;
+        };
+        CreatePerformanceBatchRequest: {
+            /**
+             * Format: date
+             * @description First day of the Asia/Shanghai performance month.
+             */
+            period_month: string;
+            payment_ids: string[];
+        };
+        PendingPerformancePaymentResponse: {
+            /** Format: uuid */
+            payment_id: string;
+            /** Format: uuid */
+            sales_record_id: string;
+            paid_amount: string;
+            /** Format: date-time */
+            paid_at: string;
+            /** Format: uuid */
+            expert_user_id: string | null;
+            expert_amount: string;
+            guide_amount: string;
+            total_amount: string;
+            guide_count: number;
+            /** Format: uuid */
+            system_id: string;
+            /** Format: uuid */
+            store_id: string;
+        };
+        ListPendingPerformanceResponse: {
+            payments: components["schemas"]["PendingPerformancePaymentResponse"][];
+            page_number: number;
+            page_size: number;
+            total_count: number;
+        };
+        PerformanceBatchResponse: {
+            /** Format: uuid */
+            id: string;
+            /** Format: date */
+            period_month: string;
+            /** @enum {string} */
+            batch_type: "posting" | "reversal";
+            payment_count: number;
+            expert_amount: string;
+            guide_amount: string;
+            total_amount: string;
+            /** Format: uuid */
+            posted_by_user_id: string | null;
+            /** Format: date-time */
+            posted_at: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        ListPerformanceBatchesResponse: {
+            batches: components["schemas"]["PerformanceBatchResponse"][];
+            page_number: number;
+            page_size: number;
+            total_count: number;
+        };
+        PerformanceEntryResponse: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            batch_id: string;
+            /** Format: uuid */
+            payment_id: string;
+            /** Format: uuid */
+            allocation_id: string | null;
+            allocation_ratio: string | null;
+            /** Format: uuid */
+            sales_record_id: string;
+            /** Format: uuid */
+            user_id: string;
+            /** @enum {string} */
+            performance_role: "expert" | "guide";
+            /** @enum {string} */
+            entry_type: "earning" | "reversal";
+            amount: string;
+            /** Format: date */
+            period_month: string;
+            /** Format: uuid */
+            system_id: string;
+            /** Format: uuid */
+            store_id: string;
+            /** Format: uuid */
+            source_entry_id: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        ListPerformanceEntriesResponse: {
+            entries: components["schemas"]["PerformanceEntryResponse"][];
+            page_number: number;
+            page_size: number;
+            total_count: number;
+        };
+        PerformanceSummaryResponse: {
+            /** Format: uuid */
+            user_id: string;
+            expert_amount: string;
+            guide_amount: string;
+            reversal_amount: string;
+            net_amount: string;
+        };
+        ListPerformanceSummaryResponse: {
+            summaries: components["schemas"]["PerformanceSummaryResponse"][];
+            page_number: number;
+            page_size: number;
+            total_count: number;
         };
         ProductSuggestionsResponse: {
             /** @description Distinct non-empty series values. */
@@ -4543,13 +4734,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Created sale record. */
-            201: {
+            /** @description Sale creation submitted for approval. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SalesRecordResponse"];
+                    "application/json": components["schemas"]["EventResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -4573,13 +4764,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Created service record. */
-            201: {
+            /** @description Service creation submitted for approval. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SalesRecordResponse"];
+                    "application/json": components["schemas"]["EventResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -4601,13 +4792,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Voided sales record. */
-            200: {
+            /** @description Sales-record voiding submitted for approval. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SalesRecordResponse"];
+                    "application/json": components["schemas"]["EventResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -4695,13 +4886,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Created collection payment. */
-            201: {
+            /** @description Collection payment submitted for approval. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SalesPaymentResponse"];
+                    "application/json": components["schemas"]["EventResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -4724,19 +4915,165 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Voided sales payment. */
-            200: {
+            /** @description Payment voiding submitted for approval. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SalesPaymentResponse"];
+                    "application/json": components["schemas"]["EventResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["PermissionDenied"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listPendingSalesPerformance: {
+        parameters: {
+            query: {
+                /** @description First day of the performance month. */
+                period_month: string;
+                page_number?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pending payments page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListPendingPerformanceResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            422: components["responses"]["UnprocessableEntity"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listSalesPerformanceBatches: {
+        parameters: {
+            query?: {
+                period_month?: string;
+                page_number?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Performance batches page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListPerformanceBatchesResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            422: components["responses"]["UnprocessableEntity"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createSalesPerformanceBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePerformanceBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Performance batch posted. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PerformanceBatchResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listSalesPerformanceSummary: {
+        parameters: {
+            query: {
+                period_month: string;
+                user_id?: string;
+                page_number?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Personnel performance page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListPerformanceSummaryResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            422: components["responses"]["UnprocessableEntity"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listSalesPerformanceEntries: {
+        parameters: {
+            query: {
+                period_month: string;
+                user_id?: string;
+                payment_id?: string;
+                page_number?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Performance entries page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListPerformanceEntriesResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            422: components["responses"]["UnprocessableEntity"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -4815,13 +5152,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Updated operation-count account. */
-            200: {
+            /** @description Operation-count change submitted for approval. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OperationCountResponse"];
+                    "application/json": components["schemas"]["EventResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -4908,13 +5245,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Created operation usage. */
-            201: {
+            /** @description Operation usage submitted for approval. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OperationUsageResponse"];
+                    "application/json": components["schemas"]["EventResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -4941,13 +5278,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Updated operation usage. */
-            200: {
+            /** @description Operation-usage update submitted for approval. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OperationUsageResponse"];
+                    "application/json": components["schemas"]["EventResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -4970,13 +5307,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Voided operation usage. */
-            200: {
+            /** @description Operation-usage voiding submitted for approval. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OperationUsageResponse"];
+                    "application/json": components["schemas"]["EventResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -4999,12 +5336,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Operation usage was deleted. */
-            204: {
+            /** @description Operation-usage deletion submitted for approval. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["EventResponse"];
+                };
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];

@@ -5,6 +5,7 @@ import {
   Banknote,
   Syringe,
   Gauge,
+  ChartNoAxesCombined,
   Users,
   Package,
   Network,
@@ -43,6 +44,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { title: '销售记录', to: '/sales', icon: ShoppingCart, perm: 'sales:records:read' },
       { title: '回款记录', to: '/payments', icon: Banknote, perm: 'sales:records:read' },
+      { title: '人员业绩', to: '/performance', icon: ChartNoAxesCombined, perm: 'sales:performance:read' },
       { title: '耗用记录', to: '/usages', icon: Syringe, perm: 'sales:operation-usages:read' },
       { title: '剩余查询', to: '/counts', icon: Gauge, perm: 'sales:records:read' },
     ],

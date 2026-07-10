@@ -1,7 +1,7 @@
 import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
 import { client, unwrap } from '@/api/client'
 import type { components } from '@/api/types.gen'
-import { applied, type MutationOutcome } from '@/hooks/mutation-result'
+import { submitted, type MutationOutcome } from '@/hooks/mutation-result'
 
 export type SalesPaymentResponse = components['schemas']['SalesPaymentResponse']
 export type CreateCollectionPaymentRequest =
@@ -54,7 +54,7 @@ export function useCollectPayment() {
     mutationFn: async (
       body: CreateCollectionPaymentRequest,
     ): Promise<MutationOutcome<SalesPaymentResponse>> =>
-      applied(unwrap(await client.POST('/api/v1/sales-payments/collect', { body }))),
+      submitted(unwrap(await client.POST('/api/v1/sales-payments/collect', { body }))),
     onSuccess: () => invalidatePaymentRelated(queryClient),
   })
 }
@@ -63,7 +63,7 @@ export function useVoidPayment() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: async (paymentId: string) =>
-      applied(
+      submitted(
         unwrap(
           await client.POST('/api/v1/sales-payments/void/{payment_id}', {
             params: { path: { payment_id: paymentId } },

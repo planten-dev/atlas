@@ -6,6 +6,7 @@ pub mod health;
 pub mod permissions;
 pub mod product_categories;
 pub mod products;
+pub mod sales_performance;
 pub mod sales_records;
 pub mod stores;
 pub mod systems;

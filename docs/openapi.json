@@ -4466,6 +4466,110 @@
         }
       }
     },
+    "/api/v1/sales-performance/pending": {
+      "get": {
+        "tags": ["Sales Performance"],
+        "summary": "List pending performance payments",
+        "operationId": "listPendingSalesPerformance",
+        "description": "Requires sales:performance:read. Lists active pending payments in the requested Asia/Shanghai calendar month with their expected expert and guide performance amounts.",
+        "security": [{"AtlasSessionCookie": []}],
+        "parameters": [
+          {"name": "period_month", "in": "query", "required": true, "schema": {"type": "string", "format": "date"}, "description": "First day of the performance month."},
+          {"name": "page_number", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "default": 1}},
+          {"name": "page_size", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}}
+        ],
+        "responses": {
+          "200": {"description": "Pending payments page.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ListPendingPerformanceResponse"}}}},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/PermissionDenied"},
+          "422": {"$ref": "#/components/responses/UnprocessableEntity"},
+          "500": {"$ref": "#/components/responses/InternalError"}
+        }
+      }
+    },
+    "/api/v1/sales-performance/batches": {
+      "get": {
+        "tags": ["Sales Performance"],
+        "summary": "List performance batches",
+        "operationId": "listSalesPerformanceBatches",
+        "description": "Requires sales:performance:read. Lists manual posting and automatic reversal batches.",
+        "security": [{"AtlasSessionCookie": []}],
+        "parameters": [
+          {"name": "period_month", "in": "query", "required": false, "schema": {"type": "string", "format": "date"}},
+          {"name": "page_number", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "default": 1}},
+          {"name": "page_size", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}}
+        ],
+        "responses": {
+          "200": {"description": "Performance batches page.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ListPerformanceBatchesResponse"}}}},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/PermissionDenied"},
+          "422": {"$ref": "#/components/responses/UnprocessableEntity"},
+          "500": {"$ref": "#/components/responses/InternalError"}
+        }
+      },
+      "post": {
+        "tags": ["Sales Performance"],
+        "summary": "Post a performance batch",
+        "operationId": "createSalesPerformanceBatch",
+        "description": "Requires sales:performance:post. Immediately and atomically posts the selected active pending payments.",
+        "security": [{"AtlasSessionCookie": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreatePerformanceBatchRequest"}}}},
+        "responses": {
+          "201": {"description": "Performance batch posted.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PerformanceBatchResponse"}}}},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/PermissionDenied"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "422": {"$ref": "#/components/responses/UnprocessableEntity"},
+          "500": {"$ref": "#/components/responses/InternalError"}
+        }
+      }
+    },
+    "/api/v1/sales-performance/summary": {
+      "get": {
+        "tags": ["Sales Performance"],
+        "summary": "Summarize personnel performance",
+        "operationId": "listSalesPerformanceSummary",
+        "description": "Requires sales:performance:read. Returns personnel expert earnings, guide earnings, reversal amount and net performance.",
+        "security": [{"AtlasSessionCookie": []}],
+        "parameters": [
+          {"name": "period_month", "in": "query", "required": true, "schema": {"type": "string", "format": "date"}},
+          {"name": "user_id", "in": "query", "required": false, "schema": {"type": "string", "format": "uuid"}},
+          {"name": "page_number", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "default": 1}},
+          {"name": "page_size", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}}
+        ],
+        "responses": {
+          "200": {"description": "Personnel performance page.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ListPerformanceSummaryResponse"}}}},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/PermissionDenied"},
+          "422": {"$ref": "#/components/responses/UnprocessableEntity"},
+          "500": {"$ref": "#/components/responses/InternalError"}
+        }
+      }
+    },
+    "/api/v1/sales-performance/entries": {
+      "get": {
+        "tags": ["Sales Performance"],
+        "summary": "List performance entries",
+        "operationId": "listSalesPerformanceEntries",
+        "description": "Requires sales:performance:read. Lists immutable earning and reversal entries.",
+        "security": [{"AtlasSessionCookie": []}],
+        "parameters": [
+          {"name": "period_month", "in": "query", "required": true, "schema": {"type": "string", "format": "date"}},
+          {"name": "user_id", "in": "query", "required": false, "schema": {"type": "string", "format": "uuid"}},
+          {"name": "payment_id", "in": "query", "required": false, "schema": {"type": "string", "format": "uuid"}},
+          {"name": "page_number", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "default": 1}},
+          {"name": "page_size", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}}
+        ],
+        "responses": {
+          "200": {"description": "Performance entries page.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ListPerformanceEntriesResponse"}}}},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/PermissionDenied"},
+          "422": {"$ref": "#/components/responses/UnprocessableEntity"},
+          "500": {"$ref": "#/components/responses/InternalError"}
+        }
+      }
+    },
     "/api/v1/sales-record-operation-counts/list": {
       "get": {
         "tags": [
@@ -5687,6 +5791,7 @@
             "enum": [
               "read",
               "write",
+              "post",
               "approve",
               "*"
             ]
@@ -5781,6 +5886,7 @@
               "enum": [
                 "read",
                 "write",
+                "post",
                 "approve"
               ]
             },
@@ -5814,6 +5920,7 @@
             "enum": [
               "read",
               "write",
+              "post",
               "approve",
               "*"
             ]
@@ -7574,7 +7681,9 @@
             "type": "string",
             "enum": [
               "pending",
-              "posted"
+              "posted",
+              "cancelled",
+              "reversed"
             ]
           },
           "status": {
@@ -7984,6 +8093,119 @@
             ],
             "maxLength": 2000
           }
+        }
+      },
+      "CreatePerformanceBatchRequest": {
+        "type": "object",
+        "required": ["period_month", "payment_ids"],
+        "properties": {
+          "period_month": {"type": "string", "format": "date", "description": "First day of the Asia/Shanghai performance month."},
+          "payment_ids": {"type": "array", "minItems": 1, "maxItems": 200, "uniqueItems": true, "items": {"type": "string", "format": "uuid"}}
+        }
+      },
+      "PendingPerformancePaymentResponse": {
+        "type": "object",
+        "required": ["payment_id", "sales_record_id", "paid_amount", "paid_at", "expert_user_id", "expert_amount", "guide_amount", "total_amount", "guide_count", "system_id", "store_id"],
+        "properties": {
+          "payment_id": {"type": "string", "format": "uuid"},
+          "sales_record_id": {"type": "string", "format": "uuid"},
+          "paid_amount": {"type": "string", "pattern": "^-?\\d{1,10}(\\.\\d{2})$"},
+          "paid_at": {"type": "string", "format": "date-time"},
+          "expert_user_id": {"type": ["string", "null"], "format": "uuid"},
+          "expert_amount": {"type": "string", "pattern": "^-?\\d{1,10}(\\.\\d{2})$"},
+          "guide_amount": {"type": "string", "pattern": "^-?\\d{1,10}(\\.\\d{2})$"},
+          "total_amount": {"type": "string", "pattern": "^-?\\d{1,10}(\\.\\d{2})$"},
+          "guide_count": {"type": "integer", "minimum": 1},
+          "system_id": {"type": "string", "format": "uuid"},
+          "store_id": {"type": "string", "format": "uuid"}
+        }
+      },
+      "ListPendingPerformanceResponse": {
+        "type": "object",
+        "required": ["payments", "page_number", "page_size", "total_count"],
+        "properties": {
+          "payments": {"type": "array", "items": {"$ref": "#/components/schemas/PendingPerformancePaymentResponse"}},
+          "page_number": {"type": "integer"},
+          "page_size": {"type": "integer"},
+          "total_count": {"type": "integer"}
+        }
+      },
+      "PerformanceBatchResponse": {
+        "type": "object",
+        "required": ["id", "period_month", "batch_type", "payment_count", "expert_amount", "guide_amount", "total_amount", "posted_by_user_id", "posted_at", "created_at"],
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "period_month": {"type": "string", "format": "date"},
+          "batch_type": {"type": "string", "enum": ["posting", "reversal"]},
+          "payment_count": {"type": "integer"},
+          "expert_amount": {"type": "string", "pattern": "^-?\\d{1,10}(\\.\\d{2})$"},
+          "guide_amount": {"type": "string", "pattern": "^-?\\d{1,10}(\\.\\d{2})$"},
+          "total_amount": {"type": "string", "pattern": "^-?\\d{1,10}(\\.\\d{2})$"},
+          "posted_by_user_id": {"type": ["string", "null"], "format": "uuid"},
+          "posted_at": {"type": "string", "format": "date-time"},
+          "created_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "ListPerformanceBatchesResponse": {
+        "type": "object",
+        "required": ["batches", "page_number", "page_size", "total_count"],
+        "properties": {
+          "batches": {"type": "array", "items": {"$ref": "#/components/schemas/PerformanceBatchResponse"}},
+          "page_number": {"type": "integer"},
+          "page_size": {"type": "integer"},
+          "total_count": {"type": "integer"}
+        }
+      },
+      "PerformanceEntryResponse": {
+        "type": "object",
+        "required": ["id", "batch_id", "payment_id", "allocation_id", "allocation_ratio", "sales_record_id", "user_id", "performance_role", "entry_type", "amount", "period_month", "system_id", "store_id", "source_entry_id", "created_at"],
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "batch_id": {"type": "string", "format": "uuid"},
+          "payment_id": {"type": "string", "format": "uuid"},
+          "allocation_id": {"type": ["string", "null"], "format": "uuid"},
+          "allocation_ratio": {"type": ["string", "null"], "pattern": "^\\d{1,3}(\\.\\d{2})$"},
+          "sales_record_id": {"type": "string", "format": "uuid"},
+          "user_id": {"type": "string", "format": "uuid"},
+          "performance_role": {"type": "string", "enum": ["expert", "guide"]},
+          "entry_type": {"type": "string", "enum": ["earning", "reversal"]},
+          "amount": {"type": "string", "pattern": "^-?\\d{1,10}(\\.\\d{2})$"},
+          "period_month": {"type": "string", "format": "date"},
+          "system_id": {"type": "string", "format": "uuid"},
+          "store_id": {"type": "string", "format": "uuid"},
+          "source_entry_id": {"type": ["string", "null"], "format": "uuid"},
+          "created_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "ListPerformanceEntriesResponse": {
+        "type": "object",
+        "required": ["entries", "page_number", "page_size", "total_count"],
+        "properties": {
+          "entries": {"type": "array", "items": {"$ref": "#/components/schemas/PerformanceEntryResponse"}},
+          "page_number": {"type": "integer"},
+          "page_size": {"type": "integer"},
+          "total_count": {"type": "integer"}
+        }
+      },
+      "PerformanceSummaryResponse": {
+        "type": "object",
+        "required": ["user_id", "expert_amount", "guide_amount", "reversal_amount", "net_amount"],
+        "properties": {
+          "user_id": {"type": "string", "format": "uuid"},
+          "expert_amount": {"type": "string", "pattern": "^-?\\d{1,10}(\\.\\d{2})$"},
+          "guide_amount": {"type": "string", "pattern": "^-?\\d{1,10}(\\.\\d{2})$"},
+          "reversal_amount": {"type": "string", "pattern": "^-?\\d{1,10}(\\.\\d{2})$"},
+          "net_amount": {"type": "string", "pattern": "^-?\\d{1,10}(\\.\\d{2})$"}
+        }
+      },
+      "ListPerformanceSummaryResponse": {
+        "type": "object",
+        "required": ["summaries", "page_number", "page_size", "total_count"],
+        "properties": {
+          "summaries": {"type": "array", "items": {"$ref": "#/components/schemas/PerformanceSummaryResponse"}},
+          "page_number": {"type": "integer"},
+          "page_size": {"type": "integer"},
+          "total_count": {"type": "integer"}
         }
       },
       "ProductSuggestionsResponse": {

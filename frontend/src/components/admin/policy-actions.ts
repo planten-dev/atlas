@@ -6,6 +6,7 @@ import type {
 export const POLICY_ACTIONS: ReplacePolicyItem['action'][] = [
   'read',
   'write',
+  'post',
   'approve',
   '*',
 ]

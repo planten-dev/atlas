@@ -1,7 +1,7 @@
 import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
 import { client, unwrap } from '@/api/client'
 import type { components } from '@/api/types.gen'
-import { applied } from '@/hooks/mutation-result'
+import { submitted } from '@/hooks/mutation-result'
 
 export type OperationCountResponse = components['schemas']['OperationCountResponse']
 
@@ -50,7 +50,7 @@ export function useUpdateOperationCount() {
       salesRecordLineId: string
       totalCount: number
     }) =>
-      applied(
+      submitted(
         unwrap(
           await client.POST(
             '/api/v1/sales-record-operation-counts/update/{sales_record_line_id}',

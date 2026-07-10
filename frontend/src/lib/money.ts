@@ -4,6 +4,7 @@
  */
 
 const AMOUNT_PATTERN = /^\d{1,10}(\.\d{1,2})?$/
+const SIGNED_AMOUNT_PATTERN = /^-?\d{1,10}(\.\d{1,2})?$/
 
 export function isValidAmount(value: string): boolean {
   return AMOUNT_PATTERN.test(value)
@@ -11,12 +12,15 @@ export function isValidAmount(value: string): boolean {
 
 /** 金额字符串 → BigInt 分。非法输入抛错。 */
 export function toCents(value: string): bigint {
-  if (!isValidAmount(value)) {
+  if (!SIGNED_AMOUNT_PATTERN.test(value)) {
     throw new Error(`非法金额: ${value}`)
   }
   const [int = '0', frac = ''] = value.split('.')
   const fracPadded = frac.padEnd(2, '0')
-  return BigInt(int) * 100n + BigInt(fracPadded)
+  const negative = int.startsWith('-')
+  const integer = negative ? int.slice(1) : int
+  const cents = BigInt(integer) * 100n + BigInt(fracPadded)
+  return negative ? -cents : cents
 }
 
 /** BigInt 分 → 恒两位小数的金额字符串。 */
@@ -30,7 +34,7 @@ export function fromCents(cents: bigint): string {
 
 /** 归一为两位小数展示(非法输入原样返回)。 */
 export function formatAmount(value: string): string {
-  if (!isValidAmount(value)) return value
+  if (!SIGNED_AMOUNT_PATTERN.test(value)) return value
   return fromCents(toCents(value))
 }
 
@@ -42,7 +46,7 @@ export function addAmounts(a: string, b: string): string {
 export function sumAmounts(values: readonly string[]): string {
   let total = 0n
   for (const v of values) {
-    if (isValidAmount(v)) total += toCents(v)
+    if (SIGNED_AMOUNT_PATTERN.test(v)) total += toCents(v)
   }
   return fromCents(total)
 }

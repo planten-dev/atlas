@@ -53,7 +53,7 @@ pub const DEFAULT_PRIORITY_POSITION: i32 = 20;
 pub const DEFAULT_PRIORITY_DEPARTMENT: i32 = 30;
 pub const DEFAULT_PRIORITY_CUSTOM: i32 = 40;
 
-pub const ACTIONS: [&str; 3] = ["read", "write", "approve"];
+pub const ACTIONS: [&str; 4] = ["read", "write", "post", "approve"];
 
 /// casbin's DefaultRoleManager stops BFS at 10 hierarchy levels; keep
 /// inheritance chains safely below that.
@@ -587,7 +587,7 @@ impl AuthzService {
         validate_policy_object(object)?;
         if action != "*" && !ACTIONS.contains(&action) {
             return Err(AuthzError::InvalidInput(
-                "action must be one of read/write/approve or *",
+                "action must be one of read/write/post/approve or *",
             ));
         }
         let covers_catalog_permission = self.catalog.entries().iter().any(|entry| {

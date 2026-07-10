@@ -319,6 +319,30 @@ pub fn router(state: AppState) -> Router {
             ),
         )
         .route(
+            "/api/v1/sales-performance/pending",
+            get(handlers::sales_performance::pending
+                .layer(require_permission(&state, "sales:performance:read"))),
+        )
+        .route(
+            "/api/v1/sales-performance/batches",
+            get(handlers::sales_performance::batches
+                .layer(require_permission(&state, "sales:performance:read")))
+            .post(
+                handlers::sales_performance::create_batch
+                    .layer(require_permission(&state, "sales:performance:post")),
+            ),
+        )
+        .route(
+            "/api/v1/sales-performance/summary",
+            get(handlers::sales_performance::summary
+                .layer(require_permission(&state, "sales:performance:read"))),
+        )
+        .route(
+            "/api/v1/sales-performance/entries",
+            get(handlers::sales_performance::entries
+                .layer(require_permission(&state, "sales:performance:read"))),
+        )
+        .route(
             "/api/v1/sales-record-operation-counts/list",
             get(handlers::sales_records::list_operation_counts
                 .layer(require_permission(&state, "sales:records:read"))),

@@ -537,7 +537,7 @@ CREATE TABLE sales_payments (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT sales_payments_payment_type_check CHECK (payment_type IN ('initial', 'collection')),
     CONSTRAINT sales_payments_paid_amount_check CHECK (paid_amount > 0),
-    CONSTRAINT sales_payments_performance_status_check CHECK (performance_status IN ('pending', 'posted')),
+    CONSTRAINT sales_payments_performance_status_check CHECK (performance_status IN ('pending', 'posted', 'cancelled', 'reversed')),
     CONSTRAINT sales_payments_status_check CHECK (status IN ('active', 'voided'))
 );
 ```
@@ -551,7 +551,7 @@ CREATE TABLE sales_payments (
 | `payment_type` | `VARCHAR(32)` | 是 | 收款类型：`initial` 初始收款，`collection` 收欠款。 |
 | `paid_amount` | `DECIMAL(12,2)` | 是 | 本次实际收到的金额，必须大于 `0.00`。 |
 | `paid_at` | `TIMESTAMPTZ` | 是 | 实际收款时间。 |
-| `performance_status` | `VARCHAR(32)` | 是 | 业绩状态：`pending` 未计业绩，`posted` 已计业绩。 |
+| `performance_status` | `VARCHAR(32)` | 是 | 业绩状态：`pending` 待入账、`posted` 已入账、`cancelled` 入账前作废、`reversed` 入账后已冲销。 |
 | `status` | `VARCHAR(32)` | 是 | 收款记录状态，建议值为 `active`、`voided`，默认 `active`。 |
 | `remark` | `TEXT` | 否 | 收款备注，允许为空。 |
 | `created_by_user_id` | `UUID` | 是 | 收款录入人，关联 `users.id`。 |
@@ -606,6 +606,46 @@ CREATE TABLE sales_payment_allocations (
 - `allocated_amount` 应由 `sales_payments.paid_amount * allocation_ratio / 100` 计算并落库，便于业绩核对和历史追踪。
 - 每笔收款的分配比例互相独立；后续收欠款可以使用与初始收款不同的美导分配比例。
 - 产品明细不参与业绩拆分，业绩只按每笔收款的总金额拆给美导。
+
+## sales_performance_batches 表
+
+`sales_performance_batches` 保存人工批量入账和系统自动冲销的批次快照。核算月份使用上海时区自然月的首日表示，同一月份允许存在多个补充入账批次。
+
+| 字段 | 类型示例 | 说明 |
+| --- | --- | --- |
+| `id` | `UUID` | 批次主键。 |
+| `period_month` | `DATE` | 核算月份首日。 |
+| `batch_type` | `VARCHAR(32)` | `posting` 人工入账，`reversal` 自动冲销。 |
+| `payment_count` | `INTEGER` | 本批涉及的收款笔数。 |
+| `expert_amount` | `DECIMAL(12,2)` | 专家业绩合计；冲销批次为负数。 |
+| `guide_amount` | `DECIMAL(12,2)` | 美导业绩合计；冲销批次为负数。 |
+| `total_amount` | `DECIMAL(12,2)` | 批次总业绩。 |
+| `posted_by_user_id` | `UUID NULL` | 人工入账操作人；自动冲销为空。 |
+| `posted_at` | `TIMESTAMPTZ` | 入账时间。 |
+| `created_at` | `TIMESTAMPTZ` | 创建时间。 |
+
+## sales_performance_entries 表
+
+`sales_performance_entries` 是不可变业绩分录。存在专家的销售，每笔收款生成一份与收款等额的专家业绩，并由原收款分配生成另一份合计与收款等额的美导业绩；无专家销售只生成美导业绩。
+
+| 字段 | 类型示例 | 说明 |
+| --- | --- | --- |
+| `id` | `UUID` | 分录主键。 |
+| `batch_id` | `UUID` | 所属入账或冲销批次。 |
+| `payment_id` | `UUID` | 来源收款。 |
+| `allocation_id` | `UUID NULL` | 美导分录对应的原收款分配；专家分录为空。 |
+| `allocation_ratio` | `DECIMAL(5,2) NULL` | 美导入账时的分配比例快照；专家分录为空。 |
+| `sales_record_id` | `UUID` | 来源销售记录。 |
+| `user_id` | `UUID` | 获得或被冲销业绩的人员。 |
+| `performance_role` | `VARCHAR(32)` | `expert` 专家或 `guide` 美导。 |
+| `entry_type` | `VARCHAR(32)` | `earning` 正向业绩或 `reversal` 冲销。 |
+| `amount` | `DECIMAL(12,2)` | 正向分录为正数，冲销分录为等额负数。 |
+| `period_month` | `DATE` | 分录所属核算月份。 |
+| `system_id` / `store_id` | `UUID` | 销售发生时的体系、门店快照。 |
+| `source_entry_id` | `UUID NULL` | 冲销分录引用的原正向分录。 |
+| `created_at` | `TIMESTAMPTZ` | 分录创建时间。 |
+
+设计约束：同一收款、角色、人员只能生成一条正向分录和一条冲销分录；已入账收款作废时不回改历史分录，而是在作废发生月份生成完整负数冲销。
 
 ## sales_record_operation_counts 表
 

@@ -83,7 +83,7 @@ export const CATALOG: CatalogItem[] = [
   { id: 'aux-customer-archive', title: '客户档案查询', group: '辅助类', status: 'available', route: '/customers', perm: 'customers:read' },
   { id: 'aux-remaining-query', title: '剩余次数查询', group: '辅助类', status: 'available', route: '/counts', perm: 'sales:records:read' },
   { id: 'aux-sales-summary', title: '销售汇总', group: '辅助类', status: 'reserved', note: '等待统计域建设' },
-  { id: 'aux-staff-performance', title: '人员业绩统计', group: '辅助类', status: 'reserved', note: '等待统计域建设' },
+  { id: 'aux-staff-performance', title: '人员业绩统计', group: '辅助类', status: 'available', route: '/performance', perm: 'sales:performance:read' },
   { id: 'aux-allocation-ratio', title: '分配比例', group: '辅助类', status: 'reserved', note: '等待统计域建设' },
   { id: 'aux-audit-query', title: '操作记录查询', group: '辅助类', status: 'available', route: '/admin/audit', perm: 'events:read' },
 ]

@@ -562,6 +562,16 @@ impl SalesRecordRepository {
         Ok(payment)
     }
 
+    pub async fn find_payment_by_id_in<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        payment_id: Uuid,
+    ) -> Result<Option<sales_payments::Model>, RepositoryError> {
+        Ok(sales_payments::Entity::find_by_id(payment_id)
+            .one(conn)
+            .await?)
+    }
+
     #[tracing::instrument(level = "debug", skip(self))]
     pub async fn list_sales_payments(
         &self,

@@ -18,6 +18,7 @@ import { Route as App403RouteImport } from './routes/_app/403'
 import { Route as AppUsagesIndexRouteImport } from './routes/_app/usages/index'
 import { Route as AppSalesIndexRouteImport } from './routes/_app/sales/index'
 import { Route as AppProductsIndexRouteImport } from './routes/_app/products/index'
+import { Route as AppPerformanceIndexRouteImport } from './routes/_app/performance/index'
 import { Route as AppPaymentsIndexRouteImport } from './routes/_app/payments/index'
 import { Route as AppCustomersIndexRouteImport } from './routes/_app/customers/index'
 import { Route as AppCountsIndexRouteImport } from './routes/_app/counts/index'
@@ -81,6 +82,11 @@ const AppSalesIndexRoute = AppSalesIndexRouteImport.update({
 const AppProductsIndexRoute = AppProductsIndexRouteImport.update({
   id: '/products/',
   path: '/products/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppPerformanceIndexRoute = AppPerformanceIndexRouteImport.update({
+  id: '/performance/',
+  path: '/performance/',
   getParentRoute: () => AppRoute,
 } as any)
 const AppPaymentsIndexRoute = AppPaymentsIndexRouteImport.update({
@@ -207,6 +213,7 @@ export interface FileRoutesByFullPath {
   '/counts/': typeof AppCountsIndexRoute
   '/customers/': typeof AppCustomersIndexRoute
   '/payments/': typeof AppPaymentsIndexRoute
+  '/performance/': typeof AppPerformanceIndexRoute
   '/products/': typeof AppProductsIndexRoute
   '/sales/': typeof AppSalesIndexRoute
   '/usages/': typeof AppUsagesIndexRoute
@@ -237,6 +244,7 @@ export interface FileRoutesByTo {
   '/counts': typeof AppCountsIndexRoute
   '/customers': typeof AppCustomersIndexRoute
   '/payments': typeof AppPaymentsIndexRoute
+  '/performance': typeof AppPerformanceIndexRoute
   '/products': typeof AppProductsIndexRoute
   '/sales': typeof AppSalesIndexRoute
   '/usages': typeof AppUsagesIndexRoute
@@ -269,6 +277,7 @@ export interface FileRoutesById {
   '/_app/counts/': typeof AppCountsIndexRoute
   '/_app/customers/': typeof AppCustomersIndexRoute
   '/_app/payments/': typeof AppPaymentsIndexRoute
+  '/_app/performance/': typeof AppPerformanceIndexRoute
   '/_app/products/': typeof AppProductsIndexRoute
   '/_app/sales/': typeof AppSalesIndexRoute
   '/_app/usages/': typeof AppUsagesIndexRoute
@@ -301,6 +310,7 @@ export interface FileRouteTypes {
     | '/counts/'
     | '/customers/'
     | '/payments/'
+    | '/performance/'
     | '/products/'
     | '/sales/'
     | '/usages/'
@@ -331,6 +341,7 @@ export interface FileRouteTypes {
     | '/counts'
     | '/customers'
     | '/payments'
+    | '/performance'
     | '/products'
     | '/sales'
     | '/usages'
@@ -362,6 +373,7 @@ export interface FileRouteTypes {
     | '/_app/counts/'
     | '/_app/customers/'
     | '/_app/payments/'
+    | '/_app/performance/'
     | '/_app/products/'
     | '/_app/sales/'
     | '/_app/usages/'
@@ -442,6 +454,13 @@ declare module '@tanstack/react-router' {
       path: '/products'
       fullPath: '/products/'
       preLoaderRoute: typeof AppProductsIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/performance/': {
+      id: '/_app/performance/'
+      path: '/performance'
+      fullPath: '/performance/'
+      preLoaderRoute: typeof AppPerformanceIndexRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/payments/': {
@@ -605,6 +624,7 @@ interface AppRouteChildren {
   AppCountsIndexRoute: typeof AppCountsIndexRoute
   AppCustomersIndexRoute: typeof AppCustomersIndexRoute
   AppPaymentsIndexRoute: typeof AppPaymentsIndexRoute
+  AppPerformanceIndexRoute: typeof AppPerformanceIndexRoute
   AppProductsIndexRoute: typeof AppProductsIndexRoute
   AppSalesIndexRoute: typeof AppSalesIndexRoute
   AppUsagesIndexRoute: typeof AppUsagesIndexRoute
@@ -635,6 +655,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppCountsIndexRoute: AppCountsIndexRoute,
   AppCustomersIndexRoute: AppCustomersIndexRoute,
   AppPaymentsIndexRoute: AppPaymentsIndexRoute,
+  AppPerformanceIndexRoute: AppPerformanceIndexRoute,
   AppProductsIndexRoute: AppProductsIndexRoute,
   AppSalesIndexRoute: AppSalesIndexRoute,
   AppUsagesIndexRoute: AppUsagesIndexRoute,

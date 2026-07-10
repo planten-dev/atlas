@@ -1,7 +1,7 @@
 import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
 import { client, unwrap } from '@/api/client'
 import type { components } from '@/api/types.gen'
-import { applied, type MutationOutcome } from '@/hooks/mutation-result'
+import { submitted, type MutationOutcome } from '@/hooks/mutation-result'
 
 export type SalesRecordResponse = components['schemas']['SalesRecordResponse']
 export type SalesRecordLineResponse = components['schemas']['SalesRecordLineResponse']
@@ -52,7 +52,7 @@ export function useCreateSale() {
     mutationFn: async (
       body: CreateSaleRecordRequest,
     ): Promise<MutationOutcome<SalesRecordResponse>> =>
-      applied(unwrap(await client.POST('/api/v1/sales-records/create-sale', { body }))),
+      submitted(unwrap(await client.POST('/api/v1/sales-records/create-sale', { body }))),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['sales-records'] })
       void queryClient.invalidateQueries({ queryKey: ['operation-counts'] })
@@ -68,7 +68,7 @@ export function useCreateService() {
     mutationFn: async (
       body: CreateServiceRecordRequest,
     ): Promise<MutationOutcome<SalesRecordResponse>> =>
-      applied(unwrap(await client.POST('/api/v1/sales-records/create-service', { body }))),
+      submitted(unwrap(await client.POST('/api/v1/sales-records/create-service', { body }))),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['sales-records'] }),
   })
 }
@@ -78,7 +78,7 @@ export function useVoidSalesRecord() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: async (salesRecordId: string) =>
-      applied(
+      submitted(
         unwrap(
           await client.POST('/api/v1/sales-records/void/{sales_record_id}', {
             params: { path: { sales_record_id: salesRecordId } },

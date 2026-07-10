@@ -55,9 +55,10 @@ describe('groupPermissions', () => {
     expect(groupPermissions([])).toEqual([])
   })
 
-  it('目录字典覆盖后端运行时的全部 12 个对象', () => {
-    expect(Object.keys(PERMISSION_OBJECT_META)).toHaveLength(12)
+  it('目录字典覆盖后端运行时的全部 13 个对象', () => {
+    expect(Object.keys(PERMISSION_OBJECT_META)).toHaveLength(13)
     expect(PERMISSION_OBJECT_META['sales:payments']).toEqual({ group: '审核', label: '销售付款' })
+    expect(PERMISSION_OBJECT_META['sales:performance']).toEqual({ group: '销售', label: '人员业绩' })
     expect(PERMISSION_OBJECT_META).not.toHaveProperty('sales:operation-counts')
   })
 })

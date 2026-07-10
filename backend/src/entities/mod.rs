@@ -10,6 +10,8 @@ pub mod role_inheritances;
 pub mod roles;
 pub mod sales_payment_allocations;
 pub mod sales_payments;
+pub mod sales_performance_batches;
+pub mod sales_performance_entries;
 pub mod sales_record_lines;
 pub mod sales_record_operation_counts;
 pub mod sales_record_operation_usages;

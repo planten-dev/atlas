@@ -9,6 +9,7 @@ const VALID_ROUTE_PREFIXES = [
   '/customers',
   '/approvals',
   '/products',
+  '/performance',
   '/admin/audit',
 ]
 

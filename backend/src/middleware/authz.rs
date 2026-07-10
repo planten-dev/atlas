@@ -13,7 +13,7 @@ use crate::{
     state::AppState,
 };
 
-const VALID_ACTIONS: [&str; 3] = ["read", "write", "approve"];
+const VALID_ACTIONS: [&str; 4] = ["read", "write", "post", "approve"];
 
 /// State carried by one permission-checking layer instance: the parsed
 /// object/action this specific route requires.
@@ -114,7 +114,7 @@ async fn enforce_permission(
 }
 
 /// Splits `scope1:...:action` at the last `:`. The action must be one of
-/// read/write/approve, every scope segment must be non-empty, and
+/// read/write/post/approve, every scope segment must be non-empty, and
 /// wildcards are not allowed at declaration sites. Shared with the review
 /// framework, which validates `ReviewableResource::APPROVAL_PERMISSION`
 /// against the same grammar at registration time.
@@ -153,6 +153,10 @@ mod tests {
         assert_eq!(
             parse_permission("finance:invoices:q3:approve").expect("should parse"),
             ("finance:invoices:q3", "approve")
+        );
+        assert_eq!(
+            parse_permission("sales:performance:post").expect("should parse"),
+            ("sales:performance", "post")
         );
         assert_eq!(
             parse_permission("health:write").expect("should parse"),

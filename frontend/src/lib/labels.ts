@@ -39,6 +39,8 @@ export const PAYMENT_TYPE_LABELS: Record<string, string> = {
 export const PERFORMANCE_STATUS_LABELS: Record<string, string> = {
   pending: '待入账',
   posted: '已入账',
+  cancelled: '已取消',
+  reversed: '已冲销',
 }
 
 export const RECORD_STATUS_LABELS: Record<string, string> = {
@@ -154,6 +156,7 @@ export const PERMISSION_OBJECT_META: Record<string, { group: string; label: stri
   customers: { group: '销售', label: '客户' },
   'sales:records': { group: '销售', label: '销售记录' },
   'sales:operation-usages': { group: '销售', label: '耗用记录' },
+  'sales:performance': { group: '销售', label: '人员业绩' },
   'sales:payments': { group: '审核', label: '销售付款' },
   products: { group: '商品', label: '产品' },
   'products:categories': { group: '商品', label: '产品类别' },
@@ -168,6 +171,7 @@ export const PERMISSION_OBJECT_META: Record<string, { group: string; label: stri
 export const PERMISSION_ACTION_LABELS: Record<string, string> = {
   read: '查看',
   write: '编辑',
+  post: '入账',
   approve: '审批',
   '*': '全部',
 }
@@ -184,7 +188,7 @@ export interface PermissionGroup {
 }
 
 const PERMISSION_GROUP_ORDER = ['销售', '商品', '门店', '审核', '系统', '其他']
-const PERMISSION_ACTION_ORDER = ['read', 'write', 'approve']
+const PERMISSION_ACTION_ORDER = ['read', 'write', 'post', 'approve']
 const PERMISSION_OBJECT_ORDER = Object.keys(PERMISSION_OBJECT_META)
 
 /**

@@ -35,6 +35,10 @@ function paymentPayload(id: string) {
   }
 }
 
+function eventPayload(id: string) {
+  return { id, resource_type: 'sales:payments', event_type: 0, approval_status: 1 }
+}
+
 describe('paymentsListOptions', () => {
   it('归一 sales_payments → items/totalCount', async () => {
     server.use(
@@ -61,7 +65,7 @@ describe('useCollectPayment', () => {
     server.use(
       http.post('/api/v1/sales-payments/collect', async ({ request }) => {
         requestBody = await request.json()
-        return HttpResponse.json(paymentPayload('p2'), { status: 201 })
+        return HttpResponse.json(eventPayload('e2'), { status: 202 })
       }),
     )
     const { queryClient, wrapper } = makeWrapper()
@@ -114,7 +118,7 @@ describe('useVoidPayment', () => {
   it('POST void 成功', async () => {
     server.use(
       http.post('/api/v1/sales-payments/void/p1', () =>
-        HttpResponse.json({ ...paymentPayload('p1'), status: 'voided' }),
+        HttpResponse.json(eventPayload('e1'), { status: 202 }),
       ),
     )
     const { wrapper } = makeWrapper()

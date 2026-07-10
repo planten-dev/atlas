@@ -39,6 +39,8 @@ describe('money', () => {
     })
     it('负分渲染负号(仅展示场景)', () => {
       expect(fromCents(-150n)).toBe('-1.50')
+      expect(formatAmount('-1.5')).toBe('-1.50')
+      expect(sumAmounts(['2.00', '-0.50'])).toBe('1.50')
     })
   })
 
