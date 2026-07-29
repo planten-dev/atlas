@@ -27,13 +27,9 @@ export const DEAL_TYPE_LABELS: Record<string, string> = {
 }
 
 export const RECORD_TYPE_LABELS: Record<string, string> = {
-  sale: '销售',
-  service: '服务',
-}
-
-export const PAYMENT_TYPE_LABELS: Record<string, string> = {
-  initial: '首款',
-  collection: '回款',
+  deal: '成交',
+  pre_service: '铺垫+服务',
+  debt_collection: '收欠款',
 }
 
 export const PERFORMANCE_STATUS_LABELS: Record<string, string> = {
@@ -107,8 +103,6 @@ export const FIELD_LABELS: Record<string, string> = {
   customer_type: '客户类型',
   deal_type: '成交类型',
   handler_user_id: '处理人',
-  receivable_amount: '应收金额',
-  paid_amount: '已收金额',
   outstanding_amount: '未收金额',
   expert_user_id: '专家',
   consultant_user_id: '咨询师',
@@ -157,7 +151,6 @@ export const PERMISSION_OBJECT_META: Record<string, { group: string; label: stri
   'sales:records': { group: '销售', label: '销售记录' },
   'sales:operation-usages': { group: '销售', label: '耗用记录' },
   'sales:performance': { group: '销售', label: '人员业绩' },
-  'sales:payments': { group: '审核', label: '销售付款' },
   products: { group: '商品', label: '产品' },
   'products:categories': { group: '商品', label: '产品类别' },
   systems: { group: '门店', label: '门店体系' },

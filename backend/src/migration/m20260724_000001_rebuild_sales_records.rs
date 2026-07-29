@@ -1,0 +1,805 @@
+use sea_orm_migration::prelude::*;
+
+#[derive(DeriveMigrationName)]
+pub struct Migration;
+
+#[async_trait::async_trait]
+impl MigrationTrait for Migration {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        let backend = manager.get_database_backend();
+        manager
+            .get_connection()
+            .execute_unprepared(
+                "DELETE FROM events WHERE resource_type IN ('sales:records', 'sales:payments', 'sales:operation-usages')",
+            )
+            .await?;
+
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(SalesPerformanceEntries::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(SalesPerformanceBatches::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(SalesRecordOperationUsages::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(SalesRecordOperationCounts::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(SalesPaymentAllocations::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(SalesPayments::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(SalesRecordLines::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(SalesRecords::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await?;
+
+        create_sales_records(manager).await?;
+        create_sales_record_lines(manager).await?;
+        create_sales_record_allocations(manager).await?;
+        create_operation_tables(manager).await?;
+        create_performance_tables(manager).await?;
+
+        if backend == sea_orm::DatabaseBackend::Postgres {
+            manager
+                .get_connection()
+                .execute_unprepared("ANALYZE sales_records")
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+        Err(DbErr::Migration(
+            "destructive sales-record migration cannot be rolled back".into(),
+        ))
+    }
+}
+
+async fn create_sales_records(manager: &SchemaManager<'_>) -> Result<(), DbErr> {
+    manager
+        .create_table(
+            Table::create()
+                .table(SalesRecords::Table)
+                .col(
+                    ColumnDef::new(SalesRecords::Id)
+                        .uuid()
+                        .not_null()
+                        .primary_key(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecords::RecordType)
+                        .string_len(32)
+                        .not_null(),
+                )
+                .col(ColumnDef::new(SalesRecords::CustomerId).uuid().not_null())
+                .col(ColumnDef::new(SalesRecords::RecordDate).date().not_null())
+                .col(
+                    ColumnDef::new(SalesRecords::TotalAmount)
+                        .decimal_len(12, 2)
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecords::ReceivedAmount)
+                        .decimal_len(12, 2)
+                        .not_null(),
+                )
+                .col(ColumnDef::new(SalesRecords::PerformanceStatus).string_len(32))
+                .col(ColumnDef::new(SalesRecords::CustomerType).string_len(32))
+                .col(ColumnDef::new(SalesRecords::DealType).string_len(32))
+                .col(ColumnDef::new(SalesRecords::SystemId).uuid().not_null())
+                .col(ColumnDef::new(SalesRecords::StoreId).uuid().not_null())
+                .col(
+                    ColumnDef::new(SalesRecords::HandlerUserId)
+                        .uuid()
+                        .not_null(),
+                )
+                .col(ColumnDef::new(SalesRecords::ExpertUserId).uuid())
+                .col(ColumnDef::new(SalesRecords::ConsultantUserId).uuid())
+                .col(ColumnDef::new(SalesRecords::DoctorUserId).uuid())
+                .col(ColumnDef::new(SalesRecords::Remark).text())
+                .col(
+                    ColumnDef::new(SalesRecords::Status)
+                        .string_len(32)
+                        .not_null()
+                        .default("active"),
+                )
+                .col(
+                    ColumnDef::new(SalesRecords::CreatedByUserId)
+                        .uuid()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecords::CreatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecords::UpdatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .from(SalesRecords::Table, SalesRecords::CustomerId)
+                        .to(Customers::Table, Customers::Id),
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .from(SalesRecords::Table, SalesRecords::SystemId)
+                        .to(Systems::Table, Systems::Id),
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .from(SalesRecords::Table, SalesRecords::StoreId)
+                        .to(Stores::Table, Stores::Id),
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .from(SalesRecords::Table, SalesRecords::HandlerUserId)
+                        .to(Users::Table, Users::Id),
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .from(SalesRecords::Table, SalesRecords::CreatedByUserId)
+                        .to(Users::Table, Users::Id),
+                )
+                .check(Expr::col(SalesRecords::RecordType).is_in([
+                    "deal",
+                    "pre_service",
+                    "debt_collection",
+                ]))
+                .check(Expr::col(SalesRecords::TotalAmount).gte(0))
+                .check(Expr::col(SalesRecords::ReceivedAmount).gte(0))
+                .check(
+                    Expr::col(SalesRecords::RecordType).ne("deal").or(Expr::col(
+                        SalesRecords::TotalAmount,
+                    )
+                    .gt(0)
+                    .and(Expr::col(SalesRecords::ReceivedAmount).gt(0))
+                    .and(
+                        Expr::col(SalesRecords::ReceivedAmount)
+                            .lte(Expr::col(SalesRecords::TotalAmount)),
+                    )),
+                )
+                .check(
+                    Expr::col(SalesRecords::RecordType)
+                        .ne("pre_service")
+                        .or(Expr::col(SalesRecords::TotalAmount)
+                            .gt(0)
+                            .and(Expr::col(SalesRecords::ReceivedAmount).eq(0))),
+                )
+                .check(
+                    Expr::col(SalesRecords::RecordType)
+                        .ne("debt_collection")
+                        .or(Expr::col(SalesRecords::TotalAmount)
+                            .eq(0)
+                            .and(Expr::col(SalesRecords::ReceivedAmount).gt(0))),
+                )
+                .check(
+                    Expr::col(SalesRecords::ReceivedAmount)
+                        .lte(Expr::col(SalesRecords::TotalAmount))
+                        .or(Expr::col(SalesRecords::RecordType).eq("debt_collection")),
+                )
+                .check(Expr::col(SalesRecords::PerformanceStatus).is_null().or(
+                    Expr::col(SalesRecords::PerformanceStatus).is_in([
+                        "pending",
+                        "posted",
+                        "cancelled",
+                        "reversed",
+                    ]),
+                ))
+                .check(Expr::col(SalesRecords::Status).is_in(["active", "voided"]))
+                .to_owned(),
+        )
+        .await?;
+    for (name, col) in [
+        ("idx_sales_records_customer_id", SalesRecords::CustomerId),
+        ("idx_sales_records_record_date", SalesRecords::RecordDate),
+        ("idx_sales_records_record_type", SalesRecords::RecordType),
+        (
+            "idx_sales_records_performance_status",
+            SalesRecords::PerformanceStatus,
+        ),
+    ] {
+        manager
+            .create_index(
+                Index::create()
+                    .name(name)
+                    .table(SalesRecords::Table)
+                    .col(col)
+                    .to_owned(),
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+async fn create_sales_record_lines(manager: &SchemaManager<'_>) -> Result<(), DbErr> {
+    manager
+        .create_table(
+            Table::create()
+                .table(SalesRecordLines::Table)
+                .col(
+                    ColumnDef::new(SalesRecordLines::Id)
+                        .uuid()
+                        .not_null()
+                        .primary_key(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordLines::SalesRecordId)
+                        .uuid()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordLines::ProductId)
+                        .uuid()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordLines::ItemName)
+                        .string_len(128)
+                        .not_null(),
+                )
+                .col(ColumnDef::new(SalesRecordLines::OperationTotalCount).integer())
+                .col(ColumnDef::new(SalesRecordLines::Remark).text())
+                .col(
+                    ColumnDef::new(SalesRecordLines::Status)
+                        .string_len(32)
+                        .not_null()
+                        .default("active"),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordLines::CreatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordLines::UpdatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .from(SalesRecordLines::Table, SalesRecordLines::SalesRecordId)
+                        .to(SalesRecords::Table, SalesRecords::Id)
+                        .on_delete(ForeignKeyAction::Cascade),
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .from(SalesRecordLines::Table, SalesRecordLines::ProductId)
+                        .to(Products::Table, Products::Id),
+                )
+                .check(
+                    Expr::col(SalesRecordLines::OperationTotalCount)
+                        .is_null()
+                        .or(Expr::col(SalesRecordLines::OperationTotalCount).gt(0)),
+                )
+                .check(Expr::col(SalesRecordLines::Status).is_in(["active", "voided"]))
+                .to_owned(),
+        )
+        .await
+}
+
+async fn create_sales_record_allocations(manager: &SchemaManager<'_>) -> Result<(), DbErr> {
+    manager
+        .create_table(
+            Table::create()
+                .table(SalesRecordAllocations::Table)
+                .col(
+                    ColumnDef::new(SalesRecordAllocations::Id)
+                        .uuid()
+                        .not_null()
+                        .primary_key(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordAllocations::SalesRecordId)
+                        .uuid()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordAllocations::GuideUserId)
+                        .uuid()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordAllocations::AllocationRatio)
+                        .decimal_len(5, 2)
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordAllocations::AllocatedAmount)
+                        .decimal_len(12, 2)
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordAllocations::CreatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordAllocations::UpdatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .from(
+                            SalesRecordAllocations::Table,
+                            SalesRecordAllocations::SalesRecordId,
+                        )
+                        .to(SalesRecords::Table, SalesRecords::Id)
+                        .on_delete(ForeignKeyAction::Cascade),
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .from(
+                            SalesRecordAllocations::Table,
+                            SalesRecordAllocations::GuideUserId,
+                        )
+                        .to(Users::Table, Users::Id),
+                )
+                .check(Expr::col(SalesRecordAllocations::AllocationRatio).gt(0))
+                .check(Expr::col(SalesRecordAllocations::AllocationRatio).lte(100))
+                .to_owned(),
+        )
+        .await?;
+    manager
+        .create_index(
+            Index::create()
+                .name("uq_sales_record_allocations_record_guide")
+                .table(SalesRecordAllocations::Table)
+                .col(SalesRecordAllocations::SalesRecordId)
+                .col(SalesRecordAllocations::GuideUserId)
+                .unique()
+                .to_owned(),
+        )
+        .await
+}
+
+async fn create_operation_tables(manager: &SchemaManager<'_>) -> Result<(), DbErr> {
+    manager
+        .create_table(
+            Table::create()
+                .table(SalesRecordOperationCounts::Table)
+                .col(
+                    ColumnDef::new(SalesRecordOperationCounts::SalesRecordLineId)
+                        .uuid()
+                        .not_null()
+                        .primary_key(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordOperationCounts::TotalCount)
+                        .integer()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordOperationCounts::UsedCount)
+                        .integer()
+                        .not_null()
+                        .default(0),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordOperationCounts::Status)
+                        .string_len(32)
+                        .not_null()
+                        .default("active"),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordOperationCounts::CreatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordOperationCounts::UpdatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .from(
+                            SalesRecordOperationCounts::Table,
+                            SalesRecordOperationCounts::SalesRecordLineId,
+                        )
+                        .to(SalesRecordLines::Table, SalesRecordLines::Id)
+                        .on_delete(ForeignKeyAction::Cascade),
+                )
+                .check(Expr::col(SalesRecordOperationCounts::TotalCount).gt(0))
+                .check(Expr::col(SalesRecordOperationCounts::UsedCount).gte(0))
+                .check(
+                    Expr::col(SalesRecordOperationCounts::UsedCount)
+                        .lte(Expr::col(SalesRecordOperationCounts::TotalCount)),
+                )
+                .to_owned(),
+        )
+        .await?;
+    manager
+        .create_table(
+            Table::create()
+                .table(SalesRecordOperationUsages::Table)
+                .col(
+                    ColumnDef::new(SalesRecordOperationUsages::Id)
+                        .uuid()
+                        .not_null()
+                        .primary_key(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordOperationUsages::SalesRecordLineId)
+                        .uuid()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordOperationUsages::OperatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordOperationUsages::OperatorUserId)
+                        .uuid()
+                        .not_null(),
+                )
+                .col(ColumnDef::new(SalesRecordOperationUsages::DoctorUserId).uuid())
+                .col(
+                    ColumnDef::new(SalesRecordOperationUsages::OperationCount)
+                        .integer()
+                        .not_null()
+                        .default(1),
+                )
+                .col(ColumnDef::new(SalesRecordOperationUsages::Remark).text())
+                .col(
+                    ColumnDef::new(SalesRecordOperationUsages::Status)
+                        .string_len(32)
+                        .not_null()
+                        .default("active"),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordOperationUsages::CreatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesRecordOperationUsages::UpdatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .from(
+                            SalesRecordOperationUsages::Table,
+                            SalesRecordOperationUsages::SalesRecordLineId,
+                        )
+                        .to(SalesRecordLines::Table, SalesRecordLines::Id),
+                )
+                .check(Expr::col(SalesRecordOperationUsages::OperationCount).gt(0))
+                .to_owned(),
+        )
+        .await
+}
+
+async fn create_performance_tables(manager: &SchemaManager<'_>) -> Result<(), DbErr> {
+    manager
+        .create_table(
+            Table::create()
+                .table(SalesPerformanceBatches::Table)
+                .col(
+                    ColumnDef::new(SalesPerformanceBatches::Id)
+                        .uuid()
+                        .not_null()
+                        .primary_key(),
+                )
+                .col(
+                    ColumnDef::new(SalesPerformanceBatches::PeriodMonth)
+                        .date()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPerformanceBatches::BatchType)
+                        .string_len(32)
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPerformanceBatches::RecordCount)
+                        .integer()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPerformanceBatches::ExpertAmount)
+                        .decimal_len(12, 2)
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPerformanceBatches::GuideAmount)
+                        .decimal_len(12, 2)
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPerformanceBatches::TotalAmount)
+                        .decimal_len(12, 2)
+                        .not_null(),
+                )
+                .col(ColumnDef::new(SalesPerformanceBatches::PostedByUserId).uuid())
+                .col(
+                    ColumnDef::new(SalesPerformanceBatches::PostedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPerformanceBatches::CreatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .to_owned(),
+        )
+        .await?;
+    manager
+        .create_table(
+            Table::create()
+                .table(SalesPerformanceEntries::Table)
+                .col(
+                    ColumnDef::new(SalesPerformanceEntries::Id)
+                        .uuid()
+                        .not_null()
+                        .primary_key(),
+                )
+                .col(
+                    ColumnDef::new(SalesPerformanceEntries::BatchId)
+                        .uuid()
+                        .not_null(),
+                )
+                .col(ColumnDef::new(SalesPerformanceEntries::RecordAllocationId).uuid())
+                .col(ColumnDef::new(SalesPerformanceEntries::AllocationRatio).decimal_len(5, 2))
+                .col(
+                    ColumnDef::new(SalesPerformanceEntries::SalesRecordId)
+                        .uuid()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPerformanceEntries::UserId)
+                        .uuid()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPerformanceEntries::PerformanceRole)
+                        .string_len(32)
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPerformanceEntries::EntryType)
+                        .string_len(32)
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPerformanceEntries::Amount)
+                        .decimal_len(12, 2)
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPerformanceEntries::PeriodMonth)
+                        .date()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPerformanceEntries::PerformanceDate)
+                        .date()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPerformanceEntries::SystemId)
+                        .uuid()
+                        .not_null(),
+                )
+                .col(
+                    ColumnDef::new(SalesPerformanceEntries::StoreId)
+                        .uuid()
+                        .not_null(),
+                )
+                .col(ColumnDef::new(SalesPerformanceEntries::SourceEntryId).uuid())
+                .col(
+                    ColumnDef::new(SalesPerformanceEntries::CreatedAt)
+                        .timestamp_with_time_zone()
+                        .not_null(),
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .from(
+                            SalesPerformanceEntries::Table,
+                            SalesPerformanceEntries::BatchId,
+                        )
+                        .to(SalesPerformanceBatches::Table, SalesPerformanceBatches::Id),
+                )
+                .foreign_key(
+                    ForeignKey::create()
+                        .from(
+                            SalesPerformanceEntries::Table,
+                            SalesPerformanceEntries::SalesRecordId,
+                        )
+                        .to(SalesRecords::Table, SalesRecords::Id),
+                )
+                .to_owned(),
+        )
+        .await
+}
+
+#[derive(DeriveIden)]
+enum SalesRecords {
+    Table,
+    Id,
+    RecordType,
+    CustomerId,
+    RecordDate,
+    TotalAmount,
+    ReceivedAmount,
+    PerformanceStatus,
+    CustomerType,
+    DealType,
+    SystemId,
+    StoreId,
+    HandlerUserId,
+    ExpertUserId,
+    ConsultantUserId,
+    DoctorUserId,
+    Remark,
+    Status,
+    CreatedByUserId,
+    CreatedAt,
+    UpdatedAt,
+}
+#[derive(DeriveIden)]
+enum SalesRecordLines {
+    Table,
+    Id,
+    SalesRecordId,
+    ProductId,
+    ItemName,
+    OperationTotalCount,
+    Remark,
+    Status,
+    CreatedAt,
+    UpdatedAt,
+}
+#[derive(DeriveIden)]
+enum SalesRecordAllocations {
+    Table,
+    Id,
+    SalesRecordId,
+    GuideUserId,
+    AllocationRatio,
+    AllocatedAmount,
+    CreatedAt,
+    UpdatedAt,
+}
+#[derive(DeriveIden)]
+enum SalesRecordOperationCounts {
+    Table,
+    SalesRecordLineId,
+    TotalCount,
+    UsedCount,
+    Status,
+    CreatedAt,
+    UpdatedAt,
+}
+#[derive(DeriveIden)]
+enum SalesRecordOperationUsages {
+    Table,
+    Id,
+    SalesRecordLineId,
+    OperatedAt,
+    OperatorUserId,
+    DoctorUserId,
+    OperationCount,
+    Remark,
+    Status,
+    CreatedAt,
+    UpdatedAt,
+}
+#[derive(DeriveIden)]
+enum SalesPerformanceBatches {
+    Table,
+    Id,
+    PeriodMonth,
+    BatchType,
+    RecordCount,
+    ExpertAmount,
+    GuideAmount,
+    TotalAmount,
+    PostedByUserId,
+    PostedAt,
+    CreatedAt,
+}
+#[derive(DeriveIden)]
+enum SalesPerformanceEntries {
+    Table,
+    Id,
+    BatchId,
+    RecordAllocationId,
+    AllocationRatio,
+    SalesRecordId,
+    UserId,
+    PerformanceRole,
+    EntryType,
+    Amount,
+    PeriodMonth,
+    PerformanceDate,
+    SystemId,
+    StoreId,
+    SourceEntryId,
+    CreatedAt,
+}
+#[derive(DeriveIden)]
+enum SalesPayments {
+    Table,
+}
+#[derive(DeriveIden)]
+enum SalesPaymentAllocations {
+    Table,
+}
+#[derive(DeriveIden)]
+enum Customers {
+    Table,
+    Id,
+}
+#[derive(DeriveIden)]
+enum Systems {
+    Table,
+    Id,
+}
+#[derive(DeriveIden)]
+enum Stores {
+    Table,
+    Id,
+}
+#[derive(DeriveIden)]
+enum Users {
+    Table,
+    Id,
+}
+#[derive(DeriveIden)]
+enum Products {
+    Table,
+    Id,
+}

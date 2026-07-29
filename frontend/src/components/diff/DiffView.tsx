@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
  */
 
 const HIDDEN_KEYS = new Set(['id', 'created_at', 'updated_at'])
-const MONEY_KEYS = new Set(['paid_amount', 'unpaid_amount', 'unit_price'])
+const MONEY_KEYS = new Set(['total_amount', 'received_amount', 'debt_change', 'unpaid_amount', 'unit_price'])
 
 function formatValue(key: string, value: unknown): string {
   if (value === null || value === undefined || value === '') return '—'

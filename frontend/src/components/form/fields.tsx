@@ -99,13 +99,14 @@ export function FormTextarea<T extends FieldValues>({
   disabled,
   placeholder,
   rows = 3,
-}: BaseFieldProps<T> & { placeholder?: string; rows?: number }) {
+  className,
+}: BaseFieldProps<T> & { placeholder?: string; rows?: number; className?: string }) {
   return (
     <Controller
       control={control}
       name={name}
       render={({ field, fieldState }) => (
-        <Field data-invalid={fieldState.invalid || undefined}>
+        <Field className={className} data-invalid={fieldState.invalid || undefined}>
           <FieldLabel htmlFor={name}>
             <LabelText label={label} required={required} />
           </FieldLabel>

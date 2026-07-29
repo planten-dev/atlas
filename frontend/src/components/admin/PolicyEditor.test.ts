@@ -10,20 +10,20 @@ const catalog: CatalogEntryResponse[] = [
     label: '销售记录及可操作次数',
   },
   {
-    object: 'sales:payments',
+    object: 'sales:operation-usages',
     actions: ['approve'],
     group: '审核',
-    label: '销售付款',
+    label: '耗用记录',
   },
 ]
 
 describe('policyActionsForObject', () => {
-  it('付款权限只提供 approve 和对象通配动作', () => {
-    expect(policyActionsForObject(catalog, 'sales:payments')).toEqual(['approve', '*'])
+  it('审核权限只提供 approve 和对象通配动作', () => {
+    expect(policyActionsForObject(catalog, 'sales:operation-usages')).toEqual(['approve', '*'])
   })
 
-  it('选择付款对象时把无效的默认 read 切换为 approve', () => {
-    expect(normalizePolicyAction(catalog, 'sales:payments', 'read')).toBe('approve')
+  it('选择审核对象时把无效的默认 read 切换为 approve', () => {
+    expect(normalizePolicyAction(catalog, 'sales:operation-usages', 'read')).toBe('approve')
   })
 
   it('切换对象时保留仍然有效的动作', () => {

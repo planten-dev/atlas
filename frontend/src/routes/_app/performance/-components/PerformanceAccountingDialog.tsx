@@ -25,7 +25,7 @@ import {
   exportPerformance,
   pendingPerformanceOptions,
   performanceBatchesOptions,
-  type PendingPerformancePayment,
+  type PendingPerformanceRecord,
   type PerformanceFilters,
   usePostPerformanceBatch,
 } from '@/hooks/usePerformance'
@@ -33,7 +33,7 @@ import { formatDateTime } from '@/lib/date'
 import { formatAmount, sumAmounts } from '@/lib/money'
 import { notify } from '@/lib/notify'
 
-const STEPS = ['收款入账', '结果与导出'] as const
+const STEPS = ['销售记录入账', '结果与导出'] as const
 
 function currentMonth() {
   const now = new Date()
@@ -72,12 +72,12 @@ export function PerformanceAccountingDialog() {
   const pendingQuery = useQuery({ ...pendingPerformanceOptions(periodMonth), enabled: open })
   const batchesQuery = useQuery({ ...performanceBatchesOptions(periodMonth), enabled: open })
   const postMutation = usePostPerformanceBatch()
-  const payments = pendingQuery.data?.payments ?? []
-  const selectedPayments = payments.filter((payment) => selected.has(payment.payment_id))
-  const selectedExpert = sumAmounts(selectedPayments.map((payment) => payment.expert_amount))
-  const selectedGuide = sumAmounts(selectedPayments.map((payment) => payment.guide_amount))
-  const selectedTotal = sumAmounts(selectedPayments.map((payment) => payment.total_amount))
-  const allSelected = payments.length > 0 && payments.every((payment) => selected.has(payment.payment_id))
+  const sales_records = pendingQuery.data?.sales_records ?? []
+  const selectedRecords = sales_records.filter((record) => selected.has(record.sales_record_id))
+  const selectedExpert = sumAmounts(selectedRecords.map((record) => record.expert_amount))
+  const selectedGuide = sumAmounts(selectedRecords.map((record) => record.guide_amount))
+  const selectedTotal = sumAmounts(selectedRecords.map((record) => record.total_amount))
+  const allSelected = sales_records.length > 0 && sales_records.every((record) => selected.has(record.sales_record_id))
   const busy = exporting || postMutation.isPending
 
   const handleOpenChange = (nextOpen: boolean) => {
@@ -103,11 +103,11 @@ export function PerformanceAccountingDialog() {
     setFilters((current) => ({ ...current, ...patch }))
   }
 
-  const togglePayment = (paymentId: string, checked: boolean) => {
+  const toggleRecord = (recordId: string, checked: boolean) => {
     setSelected((current) => {
       const next = new Set(current)
-      if (checked) next.add(paymentId)
-      else next.delete(paymentId)
+      if (checked) next.add(recordId)
+      else next.delete(recordId)
       return next
     })
   }
@@ -117,11 +117,11 @@ export function PerformanceAccountingDialog() {
       setStep(1)
       return
     }
-    if (!window.confirm(`确认入账 ${selected.size} 笔收款，总业绩 ${formatAmount(selectedTotal)}？`)) {
+    if (!window.confirm(`确认入账 ${selected.size} 条销售记录，总业绩 ${formatAmount(selectedTotal)}？`)) {
       return
     }
     postMutation.mutate(
-      { period_month: periodMonth, payment_ids: [...selected] },
+      { period_month: periodMonth, sales_record_ids: [...selected] },
       {
         onSuccess: () => {
           setSelected(new Set())
@@ -164,7 +164,7 @@ export function PerformanceAccountingDialog() {
               </span>
             </div>
             <DialogDescription>
-              先核对并入账有效收款，再查看结果并导出业绩报表。
+              先核对并入账有实收的销售记录，再查看结果并导出业绩报表。
             </DialogDescription>
           </DialogHeader>
 
@@ -182,7 +182,7 @@ export function PerformanceAccountingDialog() {
               <PostingStep
                 month={month}
                 onMonthChange={changeMonth}
-                payments={payments}
+                sales_records={sales_records}
                 selected={selected}
                 allSelected={allSelected}
                 canPost={canPost}
@@ -190,9 +190,9 @@ export function PerformanceAccountingDialog() {
                 selectedExpert={selectedExpert}
                 selectedGuide={selectedGuide}
                 selectedTotal={selectedTotal}
-                onToggle={togglePayment}
+                onToggle={toggleRecord}
                 onToggleAll={(checked) =>
-                  setSelected(checked ? new Set(payments.map((payment) => payment.payment_id)) : new Set())
+                  setSelected(checked ? new Set(sales_records.map((record) => record.sales_record_id)) : new Set())
                 }
               />
             ) : (
@@ -238,7 +238,7 @@ export function PerformanceAccountingDialog() {
 function PostingStep({
   month,
   onMonthChange,
-  payments,
+  sales_records,
   selected,
   allSelected,
   canPost,
@@ -251,7 +251,7 @@ function PostingStep({
 }: {
   month: string
   onMonthChange: (month: string) => void
-  payments: PendingPerformancePayment[]
+  sales_records: PendingPerformanceRecord[]
   selected: Set<string>
   allSelected: boolean
   canPost: boolean
@@ -259,15 +259,15 @@ function PostingStep({
   selectedExpert: string
   selectedGuide: string
   selectedTotal: string
-  onToggle: (paymentId: string, checked: boolean) => void
+  onToggle: (recordId: string, checked: boolean) => void
   onToggleAll: (checked: boolean) => void
 }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="font-medium">待入账收款</h3>
-          <p className="text-sm text-muted-foreground">选择本月有效收款并确认生成业绩分录。</p>
+          <h3 className="font-medium">待入账销售记录</h3>
+          <p className="text-sm text-muted-foreground">选择本月有实收的有效销售记录并确认生成业绩分录。</p>
         </div>
         <input
           type="month"
@@ -293,40 +293,40 @@ function PostingStep({
                   checked={allSelected}
                   disabled={!canPost}
                   onCheckedChange={(checked) => onToggleAll(Boolean(checked))}
-                  aria-label="全选待入账收款"
+                  aria-label="全选待入账销售记录"
                 />
               </TableHead>
-              <TableHead>收款时间</TableHead>
+              <TableHead>业务日期</TableHead>
               <TableHead>专家</TableHead>
-              <TableHead className="text-right">收款</TableHead>
+              <TableHead className="text-right">实收</TableHead>
               <TableHead className="text-right">专家业绩</TableHead>
               <TableHead className="text-right">美导业绩</TableHead>
               <TableHead className="text-right">总业绩</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {payments.map((payment) => (
-              <TableRow key={payment.payment_id}>
+            {sales_records.map((record) => (
+              <TableRow key={record.sales_record_id}>
                 <TableCell>
                   <Checkbox
-                    checked={selected.has(payment.payment_id)}
+                    checked={selected.has(record.sales_record_id)}
                     disabled={!canPost}
-                    onCheckedChange={(checked) => onToggle(payment.payment_id, Boolean(checked))}
-                    aria-label={`选择收款 ${payment.payment_id}`}
+                    onCheckedChange={(checked) => onToggle(record.sales_record_id, Boolean(checked))}
+                    aria-label={`选择销售记录 ${record.sales_record_id}`}
                   />
                 </TableCell>
-                <TableCell>{formatDateTime(payment.paid_at)}</TableCell>
-                <TableCell><UserName userId={payment.expert_user_id ?? undefined} /></TableCell>
-                <TableCell className="text-right tabular-nums">{formatAmount(payment.paid_amount)}</TableCell>
-                <TableCell className="text-right tabular-nums">{formatAmount(payment.expert_amount)}</TableCell>
-                <TableCell className="text-right tabular-nums">{formatAmount(payment.guide_amount)}</TableCell>
-                <TableCell className="text-right font-medium tabular-nums">{formatAmount(payment.total_amount)}</TableCell>
+                <TableCell>{formatDateTime(record.record_date)}</TableCell>
+                <TableCell><UserName userId={record.expert_user_id ?? undefined} /></TableCell>
+                <TableCell className="text-right tabular-nums">{formatAmount(record.received_amount)}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatAmount(record.expert_amount)}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatAmount(record.guide_amount)}</TableCell>
+                <TableCell className="text-right font-medium tabular-nums">{formatAmount(record.total_amount)}</TableCell>
               </TableRow>
             ))}
-            {!isLoading && payments.length === 0 && (
+            {!isLoading && sales_records.length === 0 && (
               <TableRow>
                 <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
-                  该月份没有待入账收款
+                  该月份没有待入账销售记录
                 </TableCell>
               </TableRow>
             )}
@@ -349,7 +349,7 @@ function ExportStep({
     id: string
     posted_at: string
     batch_type: string
-    payment_count: number
+    record_count: number
     posted_by_user_id?: string | null
     total_amount: string
   }>
@@ -416,14 +416,14 @@ function ExportStep({
         <div className="overflow-x-auto rounded-md border">
           <Table>
             <TableHeader>
-              <TableRow><TableHead>入账时间</TableHead><TableHead>类型</TableHead><TableHead>收款笔数</TableHead><TableHead>操作人</TableHead><TableHead className="text-right">总业绩</TableHead></TableRow>
+              <TableRow><TableHead>入账时间</TableHead><TableHead>类型</TableHead><TableHead>记录数</TableHead><TableHead>操作人</TableHead><TableHead className="text-right">总业绩</TableHead></TableRow>
             </TableHeader>
             <TableBody>
               {batches.map((batch) => (
                 <TableRow key={batch.id}>
                   <TableCell>{formatDateTime(batch.posted_at)}</TableCell>
                   <TableCell><Badge variant={batch.batch_type === 'reversal' ? 'destructive' : 'secondary'}>{batch.batch_type === 'reversal' ? '自动冲销' : '批量入账'}</Badge></TableCell>
-                  <TableCell>{batch.payment_count}</TableCell>
+                  <TableCell>{batch.record_count}</TableCell>
                   <TableCell><UserName userId={batch.posted_by_user_id ?? undefined} /></TableCell>
                   <TableCell className="text-right tabular-nums">{formatAmount(batch.total_amount)}</TableCell>
                 </TableRow>

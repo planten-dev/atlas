@@ -987,9 +987,12 @@ mod tests {
             .insert_sales_record(
                 &context.products.db,
                 NewSalesRecord {
-                    record_type: "sale".to_string(),
+                    record_type: "deal".to_string(),
                     customer_id: customer.id,
                     record_date: now.date_naive(),
+                    total_amount: Decimal::new(10000, 2),
+                    received_amount: Decimal::new(10000, 2),
+                    performance_status: Some("pending".to_string()),
                     customer_type: Some("new".to_string()),
                     deal_type: Some("non_salon".to_string()),
                     system_id: system.id,
@@ -1014,7 +1017,6 @@ mod tests {
                     sales_record_id: record.id,
                     product_id,
                     item_name: "referenced".to_string(),
-                    receivable_amount: Decimal::new(10000, 2),
                     operation_total_count: None,
                     remark: None,
                     status: "active".to_string(),

@@ -5,12 +5,44 @@ import { submitted, type MutationOutcome } from '@/hooks/mutation-result'
 
 export type SalesRecordResponse = components['schemas']['SalesRecordResponse']
 export type SalesRecordLineResponse = components['schemas']['SalesRecordLineResponse']
-export type CreateSaleRecordRequest = components['schemas']['CreateSaleRecordRequest']
-export type CreateServiceRecordRequest = components['schemas']['CreateServiceRecordRequest']
+export type SalesRecordLineInput = {
+  product_id: string
+  item_name: string
+  operation_total_count?: number | null
+  remark?: string | null
+}
+export type SalesRecordAllocationInput = { guide_user_id: string; allocation_ratio: string }
+type StaffFields = {
+  customer_id: string
+  record_date: string
+  handler_user_id: string
+  expert_user_id?: string | null
+  consultant_user_id?: string | null
+  doctor_user_id?: string | null
+  remark?: string | null
+}
+export type CreateDealRecordRequest = StaffFields & {
+  total_amount: string
+  received_amount: string
+  customer_type: 'new' | 'returning'
+  deal_type: 'non_salon' | 'salon'
+  lines: SalesRecordLineInput[]
+  allocations: SalesRecordAllocationInput[]
+}
+export type CreatePreServiceRecordRequest = StaffFields & {
+  total_amount: string
+  customer_type?: 'new' | 'returning' | null
+  deal_type?: 'non_salon' | 'salon' | null
+  lines: SalesRecordLineInput[]
+}
+export type CreateDebtCollectionRecordRequest = StaffFields & {
+  received_amount: string
+  allocations: SalesRecordAllocationInput[]
+}
 
 export interface SalesListSearch {
   status_filter?: 'active' | 'voided'
-  record_type?: 'sale' | 'service'
+  record_type?: 'deal' | 'pre_service' | 'debt_collection'
   customer_id?: string
   system_id?: string
   store_id?: string
@@ -25,71 +57,43 @@ export function salesListOptions(search: SalesListSearch) {
   return queryOptions({
     queryKey: ['sales-records', 'list', search],
     queryFn: async () => {
-      const data = unwrap(
-        await client.GET('/api/v1/sales-records/list', { params: { query: search } }),
-      )
+      const data = unwrap(await client.GET('/api/v1/sales-records/list', { params: { query: search } }))
       return { items: data.sales_records, totalCount: data.total_count }
     },
   })
 }
-
-export function salesDetailOptions(salesRecordId: string) {
-  return queryOptions({
-    queryKey: ['sales-records', 'detail', salesRecordId],
-    queryFn: async () =>
-      unwrap(
-        await client.GET('/api/v1/sales-records/detail/{sales_record_id}', {
-          params: { path: { sales_record_id: salesRecordId } },
-        }),
-      ),
-  })
+export function salesDetailOptions(id: string) {
+  return queryOptions({ queryKey: ['sales-records', 'detail', id], queryFn: async () => unwrap(await client.GET('/api/v1/sales-records/detail/{sales_record_id}', { params: { path: { sales_record_id: id } } })) })
 }
 
-/** 销售记录:必带首次付款与分成;明细行按类别可能创建次数账户。 */
-export function useCreateSale() {
+function useCreateSalesRecordMutation<T>(mutationFn: (body: T) => Promise<MutationOutcome<SalesRecordResponse>>) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async (
-      body: CreateSaleRecordRequest,
-    ): Promise<MutationOutcome<SalesRecordResponse>> =>
-      submitted(unwrap(await client.POST('/api/v1/sales-records/create-sale', { body }))),
+    mutationFn,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['sales-records'] })
+      void queryClient.invalidateQueries({ queryKey: ['customers'] })
       void queryClient.invalidateQueries({ queryKey: ['operation-counts'] })
-      void queryClient.invalidateQueries({ queryKey: ['sales-payments'] })
+      void queryClient.invalidateQueries({ queryKey: ['sales-performance'] })
     },
   })
 }
-
-/** 服务记录:无付款,行金额恒为 0。 */
-export function useCreateService() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: async (
-      body: CreateServiceRecordRequest,
-    ): Promise<MutationOutcome<SalesRecordResponse>> =>
-      submitted(unwrap(await client.POST('/api/v1/sales-records/create-service', { body }))),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['sales-records'] }),
-  })
+export function useCreateDeal() {
+  return useCreateSalesRecordMutation<CreateDealRecordRequest>(async (body) =>
+    submitted(unwrap(await client.POST('/api/v1/sales-records/create-deal', { body }))),
+  )
 }
-
-/** 作废级联明细行/次数账户/付款;存在有效耗用时后端 409 拒绝。 */
+export function useCreatePreService() {
+  return useCreateSalesRecordMutation<CreatePreServiceRecordRequest>(async (body) =>
+    submitted(unwrap(await client.POST('/api/v1/sales-records/create-pre-service', { body }))),
+  )
+}
+export function useCreateDebtCollection() {
+  return useCreateSalesRecordMutation<CreateDebtCollectionRecordRequest>(async (body) =>
+    submitted(unwrap(await client.POST('/api/v1/sales-records/create-debt-collection', { body }))),
+  )
+}
 export function useVoidSalesRecord() {
   const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: async (salesRecordId: string) =>
-      submitted(
-        unwrap(
-          await client.POST('/api/v1/sales-records/void/{sales_record_id}', {
-            params: { path: { sales_record_id: salesRecordId } },
-          }),
-        ),
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['sales-records'] })
-      void queryClient.invalidateQueries({ queryKey: ['operation-counts'] })
-      void queryClient.invalidateQueries({ queryKey: ['operation-usages'] })
-      void queryClient.invalidateQueries({ queryKey: ['sales-payments'] })
-    },
-  })
+  return useMutation({ mutationFn: async (id: string) => submitted(unwrap(await client.POST('/api/v1/sales-records/void/{sales_record_id}', { params: { path: { sales_record_id: id } } }))), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['sales-records'] }); void queryClient.invalidateQueries({ queryKey: ['customers'] }); void queryClient.invalidateQueries({ queryKey: ['operation-counts'] }); void queryClient.invalidateQueries({ queryKey: ['operation-usages'] }); void queryClient.invalidateQueries({ queryKey: ['sales-performance'] }) } })
 }

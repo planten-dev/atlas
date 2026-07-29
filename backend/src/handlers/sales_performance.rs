@@ -130,11 +130,9 @@ fn error_response(error: SalesPerformanceError) -> Response {
     let status = match &error {
         SalesPerformanceError::Repository(RepositoryError::Database(_))
         | SalesPerformanceError::ExportFailed(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        SalesPerformanceError::PaymentNotFound | SalesPerformanceError::SalesRecordNotFound => {
-            StatusCode::NOT_FOUND
-        }
-        SalesPerformanceError::PaymentNotPending
-        | SalesPerformanceError::PaymentOutsideMonth
+        SalesPerformanceError::SalesRecordNotFound => StatusCode::NOT_FOUND,
+        SalesPerformanceError::SalesRecordNotPending
+        | SalesPerformanceError::SalesRecordOutsideMonth
         | SalesPerformanceError::SalesRecordInactive
         | SalesPerformanceError::AllocationTotalInvalid
         | SalesPerformanceError::PostedEntriesMissing => StatusCode::CONFLICT,

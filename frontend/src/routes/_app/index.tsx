@@ -94,7 +94,7 @@ function RecentSalesCard() {
               >
                 <span>{customerNameCell(record.customer_id)}</span>
                 <span className="text-muted-foreground">{formatDate(record.record_date)}</span>
-                <span className="tabular-nums">{formatAmount(record.paid_amount)}</span>
+                <span className="tabular-nums">{formatAmount(record.received_amount)}</span>
               </Link>
             ))}
           </div>

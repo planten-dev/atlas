@@ -26,6 +26,7 @@ pub struct CustomerResponse {
     pub remark: Option<String>,
     pub status: String,
     pub attachments: Vec<CustomerAttachment>,
+    pub outstanding_amount: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -49,6 +50,7 @@ impl From<customers::Model> for CustomerResponse {
             remark: customer.remark,
             status: customer.status,
             attachments: attachments_from_json(customer.attachments.as_deref()),
+            outstanding_amount: "0.00".to_string(),
             created_at: customer.created_at,
             updated_at: customer.updated_at,
         }

@@ -1,39 +1,33 @@
-use chrono::{DateTime, NaiveDate, Utc};
-use sea_orm::entity::prelude::Decimal;
-use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, DatabaseConnection,
-    DatabaseTransaction, EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set, Statement, TransactionTrait, Value,
-};
-use uuid::Uuid;
-
 use crate::{
     entities::{
-        sales_payment_allocations, sales_payments, sales_performance_batches,
-        sales_performance_entries, sales_records,
+        sales_performance_batches, sales_performance_entries, sales_record_allocations,
+        sales_records,
     },
     repositories::RepositoryError,
 };
-
+use chrono::{DateTime, NaiveDate, Utc};
+use sea_orm::entity::prelude::Decimal;
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
+    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
+};
+use uuid::Uuid;
 #[derive(Clone)]
 pub struct SalesPerformanceRepository {
     pub(crate) db: DatabaseConnection,
 }
-
 pub struct NewPerformanceBatch {
     pub period_month: NaiveDate,
     pub batch_type: String,
-    pub payment_count: i32,
+    pub record_count: i32,
     pub expert_amount: Decimal,
     pub guide_amount: Decimal,
     pub total_amount: Decimal,
     pub posted_by_user_id: Option<Uuid>,
 }
-
 pub struct NewPerformanceEntry {
     pub batch_id: Uuid,
-    pub payment_id: Uuid,
-    pub allocation_id: Option<Uuid>,
+    pub record_allocation_id: Option<Uuid>,
     pub allocation_ratio: Option<Decimal>,
     pub sales_record_id: Uuid,
     pub user_id: Uuid,
@@ -46,120 +40,55 @@ pub struct NewPerformanceEntry {
     pub store_id: Uuid,
     pub source_entry_id: Option<Uuid>,
 }
-
-#[derive(Debug, Clone)]
-pub struct PerformanceReportFilters {
-    pub performance_date_from: NaiveDate,
-    pub performance_date_to: NaiveDate,
+#[derive(Clone)]
+pub struct PerformanceFilters {
+    pub from: NaiveDate,
+    pub to: NaiveDate,
     pub user_id: Option<Uuid>,
     pub performance_role: Option<String>,
     pub system_id: Option<Uuid>,
     pub store_id: Option<Uuid>,
     pub entry_type: Option<String>,
-    pub payment_id: Option<Uuid>,
+    pub sales_record_id: Option<Uuid>,
 }
-
-#[derive(Debug, Clone, FromQueryResult)]
-pub struct PerformanceSummaryRow {
-    pub user_id: Uuid,
-    pub user_name: String,
-    pub job_number: String,
-    pub expert_amount: Decimal,
-    pub guide_amount: Decimal,
-    pub reversal_amount: Decimal,
-    pub net_amount: Decimal,
-}
-
-#[derive(Debug, Clone, FromQueryResult)]
-pub struct PerformanceEntryRow {
-    pub id: Uuid,
-    pub batch_id: Uuid,
-    pub payment_id: Uuid,
-    pub allocation_id: Option<Uuid>,
-    pub allocation_ratio: Option<Decimal>,
-    pub sales_record_id: Uuid,
-    pub user_id: Uuid,
-    pub user_name: String,
-    pub job_number: String,
-    pub performance_role: String,
-    pub entry_type: String,
-    pub amount: Decimal,
-    pub period_month: NaiveDate,
-    pub performance_date: NaiveDate,
-    pub system_id: Uuid,
-    pub system_name: String,
-    pub store_id: Uuid,
-    pub store_name: String,
-    pub paid_at: DateTime<Utc>,
-    pub source_entry_id: Option<Uuid>,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, FromQueryResult)]
-struct CountRow {
-    count: i64,
-}
-
 impl SalesPerformanceRepository {
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
     }
-
     pub(crate) fn for_review_transaction() -> Self {
         Self {
             db: DatabaseConnection::Disconnected,
         }
     }
-
     pub async fn begin(&self) -> Result<DatabaseTransaction, RepositoryError> {
         Ok(self.db.begin().await?)
     }
-
-    pub async fn list_pending_payments(
+    pub async fn list_pending_records(
         &self,
-        from: DateTime<Utc>,
-        to: DateTime<Utc>,
-        page_number: u64,
-        page_size: u64,
-    ) -> Result<(Vec<sales_payments::Model>, u64), RepositoryError> {
-        let query = sales_payments::Entity::find()
-            .filter(sales_payments::Column::Status.eq("active"))
-            .filter(sales_payments::Column::PerformanceStatus.eq("pending"))
-            .filter(sales_payments::Column::PaidAt.gte(from))
-            .filter(sales_payments::Column::PaidAt.lt(to))
-            .order_by_asc(sales_payments::Column::PaidAt)
-            .order_by_asc(sales_payments::Column::Id);
-        let paginator = query.paginate(&self.db, page_size);
-        let total = paginator.num_items().await?;
-        Ok((
-            paginator.fetch_page(page_number.saturating_sub(1)).await?,
-            total,
-        ))
+        from: NaiveDate,
+        to: NaiveDate,
+        page: u64,
+        size: u64,
+    ) -> Result<(Vec<sales_records::Model>, u64), RepositoryError> {
+        let q = sales_records::Entity::find()
+            .filter(sales_records::Column::Status.eq("active"))
+            .filter(sales_records::Column::PerformanceStatus.eq("pending"))
+            .filter(sales_records::Column::RecordDate.gte(from))
+            .filter(sales_records::Column::RecordDate.lt(to))
+            .order_by_asc(sales_records::Column::RecordDate);
+        let p = q.paginate(&self.db, size);
+        Ok((p.fetch_page(page - 1).await?, p.num_items().await?))
     }
-
-    pub async fn find_payments_for_update(
-        &self,
-        tx: &DatabaseTransaction,
-        ids: Vec<Uuid>,
-    ) -> Result<Vec<sales_payments::Model>, RepositoryError> {
-        Ok(sales_payments::Entity::find()
-            .filter(sales_payments::Column::Id.is_in(ids))
-            .lock_exclusive()
-            .all(tx)
-            .await?)
-    }
-
-    pub async fn find_payments(
+    pub async fn find_records(
         &self,
         ids: Vec<Uuid>,
-    ) -> Result<Vec<sales_payments::Model>, RepositoryError> {
-        Ok(sales_payments::Entity::find()
-            .filter(sales_payments::Column::Id.is_in(ids))
+    ) -> Result<Vec<sales_records::Model>, RepositoryError> {
+        Ok(sales_records::Entity::find()
+            .filter(sales_records::Column::Id.is_in(ids))
             .all(&self.db)
             .await?)
     }
-
-    pub async fn lock_records(
+    pub async fn find_records_for_update(
         &self,
         tx: &DatabaseTransaction,
         ids: Vec<Uuid>,
@@ -170,263 +99,147 @@ impl SalesPerformanceRepository {
             .all(tx)
             .await?)
     }
-
     pub async fn find_record_in<C: ConnectionTrait>(
         &self,
-        conn: &C,
+        c: &C,
         id: Uuid,
     ) -> Result<Option<sales_records::Model>, RepositoryError> {
-        Ok(sales_records::Entity::find_by_id(id).one(conn).await?)
+        Ok(sales_records::Entity::find_by_id(id).one(c).await?)
     }
-
     pub async fn find_allocations_in<C: ConnectionTrait>(
         &self,
-        conn: &C,
-        payment_id: Uuid,
-    ) -> Result<Vec<sales_payment_allocations::Model>, RepositoryError> {
-        Ok(sales_payment_allocations::Entity::find()
-            .filter(sales_payment_allocations::Column::PaymentId.eq(payment_id))
-            .order_by_asc(sales_payment_allocations::Column::CreatedAt)
-            .all(conn)
+        c: &C,
+        id: Uuid,
+    ) -> Result<Vec<sales_record_allocations::Model>, RepositoryError> {
+        Ok(sales_record_allocations::Entity::find()
+            .filter(sales_record_allocations::Column::SalesRecordId.eq(id))
+            .all(c)
             .await?)
     }
-
     pub async fn insert_batch<C: ConnectionTrait>(
         &self,
-        conn: &C,
-        batch: NewPerformanceBatch,
+        c: &C,
+        v: NewPerformanceBatch,
         now: DateTime<Utc>,
     ) -> Result<sales_performance_batches::Model, RepositoryError> {
         Ok(sales_performance_batches::ActiveModel {
             id: Set(Uuid::new_v4()),
-            period_month: Set(batch.period_month),
-            batch_type: Set(batch.batch_type),
-            payment_count: Set(batch.payment_count),
-            expert_amount: Set(batch.expert_amount),
-            guide_amount: Set(batch.guide_amount),
-            total_amount: Set(batch.total_amount),
-            posted_by_user_id: Set(batch.posted_by_user_id),
+            period_month: Set(v.period_month),
+            batch_type: Set(v.batch_type),
+            record_count: Set(v.record_count),
+            expert_amount: Set(v.expert_amount),
+            guide_amount: Set(v.guide_amount),
+            total_amount: Set(v.total_amount),
+            posted_by_user_id: Set(v.posted_by_user_id),
             posted_at: Set(now),
             created_at: Set(now),
         }
-        .insert(conn)
+        .insert(c)
         .await?)
     }
-
     pub async fn insert_entry<C: ConnectionTrait>(
         &self,
-        conn: &C,
-        entry: NewPerformanceEntry,
+        c: &C,
+        v: NewPerformanceEntry,
         now: DateTime<Utc>,
     ) -> Result<sales_performance_entries::Model, RepositoryError> {
         Ok(sales_performance_entries::ActiveModel {
             id: Set(Uuid::new_v4()),
-            batch_id: Set(entry.batch_id),
-            payment_id: Set(entry.payment_id),
-            allocation_id: Set(entry.allocation_id),
-            allocation_ratio: Set(entry.allocation_ratio),
-            sales_record_id: Set(entry.sales_record_id),
-            user_id: Set(entry.user_id),
-            performance_role: Set(entry.performance_role),
-            entry_type: Set(entry.entry_type),
-            amount: Set(entry.amount),
-            period_month: Set(entry.period_month),
-            performance_date: Set(entry.performance_date),
-            system_id: Set(entry.system_id),
-            store_id: Set(entry.store_id),
-            source_entry_id: Set(entry.source_entry_id),
+            batch_id: Set(v.batch_id),
+            record_allocation_id: Set(v.record_allocation_id),
+            allocation_ratio: Set(v.allocation_ratio),
+            sales_record_id: Set(v.sales_record_id),
+            user_id: Set(v.user_id),
+            performance_role: Set(v.performance_role),
+            entry_type: Set(v.entry_type),
+            amount: Set(v.amount),
+            period_month: Set(v.period_month),
+            performance_date: Set(v.performance_date),
+            system_id: Set(v.system_id),
+            store_id: Set(v.store_id),
+            source_entry_id: Set(v.source_entry_id),
             created_at: Set(now),
         }
-        .insert(conn)
+        .insert(c)
         .await?)
     }
-
-    pub async fn update_payment_performance_status<C: ConnectionTrait>(
+    pub async fn update_record_status<C: ConnectionTrait>(
         &self,
-        conn: &C,
-        payment: &sales_payments::Model,
+        c: &C,
+        r: &sales_records::Model,
         status: &str,
         now: DateTime<Utc>,
-    ) -> Result<sales_payments::Model, RepositoryError> {
-        let mut active: sales_payments::ActiveModel = payment.clone().into();
-        active.performance_status = Set(status.to_string());
-        active.updated_at = Set(now);
-        Ok(active.update(conn).await?)
+    ) -> Result<(), RepositoryError> {
+        let mut a: sales_records::ActiveModel = r.clone().into();
+        a.performance_status = Set(Some(status.into()));
+        a.updated_at = Set(now);
+        a.update(c).await?;
+        Ok(())
     }
-
-    pub async fn earning_entries_for_payment<C: ConnectionTrait>(
+    pub async fn earning_entries_for_record<C: ConnectionTrait>(
         &self,
-        conn: &C,
-        payment_id: Uuid,
+        c: &C,
+        id: Uuid,
     ) -> Result<Vec<sales_performance_entries::Model>, RepositoryError> {
         Ok(sales_performance_entries::Entity::find()
-            .filter(sales_performance_entries::Column::PaymentId.eq(payment_id))
+            .filter(sales_performance_entries::Column::SalesRecordId.eq(id))
             .filter(sales_performance_entries::Column::EntryType.eq("earning"))
-            .all(conn)
+            .all(c)
             .await?)
     }
-
     pub async fn list_batches(
         &self,
         month: Option<NaiveDate>,
-        page_number: u64,
-        page_size: u64,
+        page: u64,
+        size: u64,
     ) -> Result<(Vec<sales_performance_batches::Model>, u64), RepositoryError> {
-        let mut query = sales_performance_batches::Entity::find()
+        let mut q = sales_performance_batches::Entity::find()
             .order_by_desc(sales_performance_batches::Column::PostedAt);
-        if let Some(month) = month {
-            query = query.filter(sales_performance_batches::Column::PeriodMonth.eq(month));
+        if let Some(m) = month {
+            q = q.filter(sales_performance_batches::Column::PeriodMonth.eq(m));
         }
-        let paginator = query.paginate(&self.db, page_size);
-        let total = paginator.num_items().await?;
-        Ok((
-            paginator.fetch_page(page_number.saturating_sub(1)).await?,
-            total,
-        ))
+        let p = q.paginate(&self.db, size);
+        Ok((p.fetch_page(page - 1).await?, p.num_items().await?))
     }
-
-    pub async fn list_report_entries(
+    fn entry_query(f: &PerformanceFilters) -> sea_orm::Select<sales_performance_entries::Entity> {
+        let mut q = sales_performance_entries::Entity::find()
+            .filter(sales_performance_entries::Column::PerformanceDate.gte(f.from))
+            .filter(sales_performance_entries::Column::PerformanceDate.lte(f.to));
+        if let Some(v) = f.user_id {
+            q = q.filter(sales_performance_entries::Column::UserId.eq(v));
+        }
+        if let Some(ref v) = f.performance_role {
+            q = q.filter(sales_performance_entries::Column::PerformanceRole.eq(v));
+        }
+        if let Some(v) = f.system_id {
+            q = q.filter(sales_performance_entries::Column::SystemId.eq(v));
+        }
+        if let Some(v) = f.store_id {
+            q = q.filter(sales_performance_entries::Column::StoreId.eq(v));
+        }
+        if let Some(ref v) = f.entry_type {
+            q = q.filter(sales_performance_entries::Column::EntryType.eq(v));
+        }
+        if let Some(v) = f.sales_record_id {
+            q = q.filter(sales_performance_entries::Column::SalesRecordId.eq(v));
+        }
+        q
+    }
+    pub async fn list_entries(
         &self,
-        filters: &PerformanceReportFilters,
-        page_number: u64,
-        page_size: u64,
-    ) -> Result<(Vec<PerformanceEntryRow>, u64), RepositoryError> {
-        let (where_sql, values) = report_where(self.db.get_database_backend(), filters);
-        let from_sql = " FROM sales_performance_entries e LEFT JOIN user_profiles p ON p.user_id = e.user_id LEFT JOIN systems sys ON sys.id = e.system_id LEFT JOIN stores st ON st.id = e.store_id JOIN sales_payments pay ON pay.id = e.payment_id";
-        let select = "SELECT e.id, e.batch_id, e.payment_id, e.allocation_id, e.allocation_ratio, e.sales_record_id, e.user_id, COALESCE(p.name, '') AS user_name, COALESCE(p.job_number, '') AS job_number, e.performance_role, e.entry_type, e.amount, e.period_month, e.performance_date, e.system_id, COALESCE(sys.name, '') AS system_name, e.store_id, COALESCE(st.name, '') AS store_name, pay.paid_at, e.source_entry_id, e.created_at";
-        let mut paged_values = values.clone();
-        let limit = placeholder(self.db.get_database_backend(), paged_values.len() + 1);
-        paged_values.push(Value::BigInt(Some(page_size as i64)));
-        let offset = placeholder(self.db.get_database_backend(), paged_values.len() + 1);
-        paged_values.push(Value::BigInt(Some(
-            page_number
-                .saturating_sub(1)
-                .saturating_mul(page_size)
-                .min(i64::MAX as u64) as i64,
-        )));
-        let sql = format!(
-            "{select}{from_sql}{where_sql} ORDER BY e.performance_date DESC, e.created_at DESC, e.id ASC LIMIT {limit} OFFSET {offset}"
-        );
-        let rows = PerformanceEntryRow::find_by_statement(Statement::from_sql_and_values(
-            self.db.get_database_backend(),
-            sql,
-            paged_values,
-        ))
-        .all(&self.db)
-        .await?;
-        let count_sql = format!("SELECT COUNT(*) AS count{from_sql}{where_sql}");
-        let count = CountRow::find_by_statement(Statement::from_sql_and_values(
-            self.db.get_database_backend(),
-            count_sql,
-            values,
-        ))
-        .one(&self.db)
-        .await?
-        .map(|row| row.count.max(0) as u64)
-        .unwrap_or(0);
-        Ok((rows, count))
+        f: PerformanceFilters,
+        page: u64,
+        size: u64,
+    ) -> Result<(Vec<sales_performance_entries::Model>, u64), RepositoryError> {
+        let p = Self::entry_query(&f)
+            .order_by_desc(sales_performance_entries::Column::PerformanceDate)
+            .paginate(&self.db, size);
+        Ok((p.fetch_page(page - 1).await?, p.num_items().await?))
     }
-
-    pub async fn list_all_report_entries(
+    pub async fn all_entries(
         &self,
-        filters: &PerformanceReportFilters,
-        limit: u64,
-    ) -> Result<Vec<PerformanceEntryRow>, RepositoryError> {
-        Ok(self.list_report_entries(filters, 1, limit).await?.0)
+        f: PerformanceFilters,
+    ) -> Result<Vec<sales_performance_entries::Model>, RepositoryError> {
+        Ok(Self::entry_query(&f).all(&self.db).await?)
     }
-
-    pub async fn list_report_summary(
-        &self,
-        filters: &PerformanceReportFilters,
-        page_number: u64,
-        page_size: u64,
-    ) -> Result<(Vec<PerformanceSummaryRow>, u64), RepositoryError> {
-        let backend = self.db.get_database_backend();
-        let (where_sql, values) = report_where(backend, filters);
-        let from_sql =
-            " FROM sales_performance_entries e LEFT JOIN user_profiles p ON p.user_id = e.user_id";
-        let amounts = "e.user_id, COALESCE(p.name, '') AS user_name, COALESCE(p.job_number, '') AS job_number, SUM(CASE WHEN e.entry_type = 'earning' AND e.performance_role = 'expert' THEN e.amount ELSE e.amount * 0 END) AS expert_amount, SUM(CASE WHEN e.entry_type = 'earning' AND e.performance_role = 'guide' THEN e.amount ELSE e.amount * 0 END) AS guide_amount, SUM(CASE WHEN e.entry_type = 'reversal' THEN -e.amount ELSE e.amount * 0 END) AS reversal_amount, SUM(e.amount) AS net_amount";
-        let group = " GROUP BY e.user_id, p.name, p.job_number";
-        let mut paged_values = values.clone();
-        let limit = placeholder(backend, paged_values.len() + 1);
-        paged_values.push(Value::BigInt(Some(page_size as i64)));
-        let offset = placeholder(backend, paged_values.len() + 1);
-        paged_values.push(Value::BigInt(Some(
-            page_number
-                .saturating_sub(1)
-                .saturating_mul(page_size)
-                .min(i64::MAX as u64) as i64,
-        )));
-        let sql = format!(
-            "SELECT {amounts}{from_sql}{where_sql}{group} ORDER BY net_amount DESC, e.user_id ASC LIMIT {limit} OFFSET {offset}"
-        );
-        let rows = PerformanceSummaryRow::find_by_statement(Statement::from_sql_and_values(
-            backend,
-            sql,
-            paged_values,
-        ))
-        .all(&self.db)
-        .await?;
-        let count_sql = format!(
-            "SELECT COUNT(*) AS count FROM (SELECT e.user_id{from_sql}{where_sql}{group}) grouped"
-        );
-        let count =
-            CountRow::find_by_statement(Statement::from_sql_and_values(backend, count_sql, values))
-                .one(&self.db)
-                .await?
-                .map(|row| row.count.max(0) as u64)
-                .unwrap_or(0);
-        Ok((rows, count))
-    }
-}
-
-fn placeholder(backend: DatabaseBackend, index: usize) -> String {
-    match backend {
-        DatabaseBackend::Postgres => format!("${index}"),
-        _ => "?".to_string(),
-    }
-}
-
-fn report_where(
-    backend: DatabaseBackend,
-    filters: &PerformanceReportFilters,
-) -> (String, Vec<Value>) {
-    let mut clauses = Vec::new();
-    let mut values = Vec::new();
-    let mut push = |column: &str, value: Value, operator: &str| {
-        values.push(value);
-        clauses.push(format!(
-            "{column} {operator} {}",
-            placeholder(backend, values.len())
-        ));
-    };
-    push(
-        "e.performance_date",
-        filters.performance_date_from.into(),
-        ">=",
-    );
-    push(
-        "e.performance_date",
-        filters.performance_date_to.into(),
-        "<=",
-    );
-    if let Some(value) = filters.user_id {
-        push("e.user_id", value.into(), "=");
-    }
-    if let Some(value) = &filters.performance_role {
-        push("e.performance_role", value.clone().into(), "=");
-    }
-    if let Some(value) = filters.system_id {
-        push("e.system_id", value.into(), "=");
-    }
-    if let Some(value) = filters.store_id {
-        push("e.store_id", value.into(), "=");
-    }
-    if let Some(value) = &filters.entry_type {
-        push("e.entry_type", value.clone().into(), "=");
-    }
-    if let Some(value) = filters.payment_id {
-        push("e.payment_id", value.into(), "=");
-    }
-    (format!(" WHERE {}", clauses.join(" AND ")), values)
 }

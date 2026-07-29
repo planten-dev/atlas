@@ -78,7 +78,7 @@ const entryColumns: ColumnDef<PerformanceEntry>[] = [
   { accessorKey: 'entry_type', header: '类型', cell: ({ row }) => <Badge variant={row.original.entry_type === 'reversal' ? 'destructive' : 'secondary'}>{row.original.entry_type === 'reversal' ? '冲销' : '正向业绩'}</Badge> },
   { accessorKey: 'amount', header: '金额', meta: { align: 'right' }, cell: ({ row }) => <span className="tabular-nums">{formatAmount(row.original.amount)}</span> },
   { accessorKey: 'allocation_ratio', header: '分配比例', meta: { align: 'right' }, cell: ({ row }) => row.original.allocation_ratio ? `${row.original.allocation_ratio}%` : '-' },
-  { accessorKey: 'paid_at', header: '收款时间', cell: ({ row }) => formatDateTime(row.original.paid_at) },
+  { accessorKey: 'performance_date', header: '业绩日期', cell: ({ row }) => formatDateTime(row.original.performance_date) },
   { accessorKey: 'system_name', header: '体系' },
   { accessorKey: 'store_name', header: '门店' },
   { id: 'sales_record', header: '销售记录', cell: ({ row }) => <Link to="/sales/$salesId" params={{ salesId: row.original.sales_record_id }} className="text-primary hover:underline">查看</Link> },

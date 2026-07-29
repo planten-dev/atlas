@@ -9,12 +9,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
-import { useCreateSale, useCreateService } from '@/hooks/useSales'
+import { useCreateDeal, useCreatePreService, useCreateDebtCollection } from '@/hooks/useSales'
 import { notify } from '@/lib/notify'
-import { toDateParam, toLocalDateTimeInput } from '@/lib/date'
+import { toDateParam } from '@/lib/date'
 import {
-  assembleSaleRequest,
-  assembleServiceRequest,
+  assembleDealRequest,
+  assemblePreServiceRequest,
+  assembleDebtCollectionRequest,
   salesFormSchema,
   SALES_FORM_DEFAULTS,
   type SalesFormValues,
@@ -25,7 +26,6 @@ function formDefaults(): SalesFormValues {
   return {
     ...SALES_FORM_DEFAULTS,
     record_date: toDateParam(new Date()),
-    payment: { ...SALES_FORM_DEFAULTS.payment, paid_at: toLocalDateTimeInput(new Date()) },
   }
 }
 
@@ -44,9 +44,10 @@ export function SalesFormDialog({
     mode: 'onBlur',
   })
 
-  const createSale = useCreateSale()
-  const createService = useCreateService()
-  const isPending = createSale.isPending || createService.isPending
+  const createDeal = useCreateDeal()
+  const createPreService = useCreatePreService()
+  const createDebtCollection = useCreateDebtCollection()
+  const isPending = createDeal.isPending || createPreService.isPending || createDebtCollection.isPending
 
   const submit = form.handleSubmit((values) => {
     const options = {
@@ -54,7 +55,7 @@ export function SalesFormDialog({
         onOpenChange(false)
         form.reset(formDefaults())
         if (outcome.kind === 'applied') {
-          notify.success(values.record_type === 'sale' ? '已录入销售记录' : '已录入服务记录')
+          notify.success('已录入销售记录')
           void navigate({ to: '/sales/$salesId', params: { salesId: outcome.data.id } })
         } else {
           notify.info('已提交审批,通过后生效')
@@ -62,10 +63,12 @@ export function SalesFormDialog({
       },
       onError: (error: Error) => notify.error(error),
     }
-    if (values.record_type === 'sale') {
-      createSale.mutate(assembleSaleRequest(values), options)
+    if (values.record_type === 'deal') {
+      createDeal.mutate(assembleDealRequest(values), options)
+    } else if (values.record_type === 'pre_service') {
+      createPreService.mutate(assemblePreServiceRequest(values), options)
     } else {
-      createService.mutate(assembleServiceRequest(values), options)
+      createDebtCollection.mutate(assembleDebtCollectionRequest(values), options)
     }
   })
 
@@ -74,7 +77,7 @@ export function SalesFormDialog({
       {/* 外壳固定圆角,内容区单独滚动,滚动条不压边框/关闭按钮 */}
       <DialogContent className="grid max-h-[88vh] grid-rows-[auto_1fr] gap-4 sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>销售/服务录入</DialogTitle>
+          <DialogTitle>销售记录录入</DialogTitle>
         </DialogHeader>
         <form
           className="-mx-2 flex flex-col gap-5 overflow-y-auto px-2 pb-1"

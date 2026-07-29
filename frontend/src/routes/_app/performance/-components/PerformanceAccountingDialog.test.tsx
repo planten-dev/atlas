@@ -11,11 +11,10 @@ const notifySuccess = vi.fn()
 const notifyError = vi.fn()
 let canPost = true
 
-const payment = {
-  payment_id: 'payment-1',
+const record = {
   sales_record_id: 'sale-1',
-  paid_amount: '100.00',
-  paid_at: '2026-07-08T02:00:00Z',
+  received_amount: '100.00',
+  record_date: '2026-07-08',
   expert_user_id: 'expert-1',
   expert_amount: '100.00',
   guide_amount: '100.00',
@@ -29,7 +28,7 @@ vi.mock('@/hooks/usePerformance', () => ({
   pendingPerformanceOptions: (periodMonth: string) => ({
     queryKey: ['pending', periodMonth],
     queryFn: async () => ({
-      payments: periodMonth === '2026-07-01' ? [payment] : [],
+      sales_records: periodMonth === '2026-07-01' ? [record] : [],
       page_number: 1,
       page_size: 200,
       total_count: periodMonth === '2026-07-01' ? 1 : 0,
@@ -42,7 +41,7 @@ vi.mock('@/hooks/usePerformance', () => ({
         id: 'batch-1',
         period_month: '2026-07-01',
         batch_type: 'posting',
-        payment_count: 1,
+        record_count: 1,
         expert_amount: '100.00',
         guide_amount: '100.00',
         total_amount: '200.00',
@@ -140,19 +139,19 @@ describe('PerformanceAccountingDialog', () => {
     vi.restoreAllMocks()
   })
 
-  it('posts selected payments and automatically advances to export and batch results', async () => {
+  it('posts selected sales_records and automatically advances to export and batch results', async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
     renderDialog()
     await user.click(screen.getByRole('button', { name: '业绩核算' }))
 
-    expect(screen.getByText('1 / 2 · 收款入账')).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByLabelText('选择收款 payment-1')).toBeInTheDocument())
-    await user.click(screen.getByLabelText('选择收款 payment-1'))
+    expect(screen.getByText('1 / 2 · 销售记录入账')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByLabelText('选择销售记录 sale-1')).toBeInTheDocument())
+    await user.click(screen.getByLabelText('选择销售记录 sale-1'))
     expect(screen.getByRole('button', { name: '入账并下一步 (1)' })).toBeEnabled()
 
     await user.click(screen.getByRole('button', { name: '入账并下一步 (1)' }))
     expect(postMutate).toHaveBeenCalledWith(
-      { period_month: '2026-07-01', payment_ids: ['payment-1'] },
+      { period_month: '2026-07-01', sales_record_ids: ['sale-1'] },
       expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
     )
     expect(screen.getByText('2 / 2 · 结果与导出')).toBeInTheDocument()
@@ -195,7 +194,7 @@ describe('PerformanceAccountingDialog', () => {
     exportPerformance.mockRejectedValue(failure)
     renderDialog()
     await user.click(screen.getByRole('button', { name: '业绩核算' }))
-    await waitFor(() => expect(screen.getByLabelText('选择收款 payment-1')).toHaveAttribute('aria-disabled', 'true'))
+    await waitFor(() => expect(screen.getByLabelText('选择销售记录 sale-1')).toHaveAttribute('aria-disabled', 'true'))
     await user.click(screen.getByRole('button', { name: '下一步' }))
     await user.click(screen.getByRole('button', { name: '导出 Excel' }))
 

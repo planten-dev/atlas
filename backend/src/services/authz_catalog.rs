@@ -184,17 +184,17 @@ mod tests {
     #[test]
     fn sales_approval_permissions_are_addable_with_chinese_labels() {
         let mut catalog = PermissionCatalog::builtin();
-        catalog.add_permission("sales:payments", "approve", "审核", "销售付款");
+        catalog.add_permission("sales:records", "approve", "审核", "销售记录及可操作次数");
         catalog.add_permission("sales:operation-usages", "approve", "审核", "耗用记录");
 
-        assert!(catalog.contains("sales:payments", "approve"));
+        assert!(catalog.contains("sales:records", "approve"));
         assert!(catalog.contains("sales:operation-usages", "approve"));
-        let payments = catalog
+        let records = catalog
             .entries()
             .iter()
-            .find(|entry| entry.object() == "sales:payments")
-            .expect("sales payments approval entry should exist");
-        assert_eq!(payments.label(), "销售付款");
+            .find(|entry| entry.object() == "sales:records")
+            .expect("sales records approval entry should exist");
+        assert_eq!(records.label(), "销售记录及可操作次数");
         let usages = catalog
             .entries()
             .iter()

@@ -4,6 +4,7 @@ mod m20260708_000001_create_initial_schema;
 mod m20260709_000001_add_required_approver_ids_to_events;
 mod m20260710_000001_create_sales_performance;
 mod m20260710_000002_add_performance_date;
+mod m20260724_000001_rebuild_sales_records;
 
 pub struct Migrator;
 
@@ -15,6 +16,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260709_000001_add_required_approver_ids_to_events::Migration),
             Box::new(m20260710_000001_create_sales_performance::Migration),
             Box::new(m20260710_000002_add_performance_date::Migration),
+            Box::new(m20260724_000001_rebuild_sales_records::Migration),
         ]
     }
 }

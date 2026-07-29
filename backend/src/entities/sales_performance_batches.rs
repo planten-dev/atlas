@@ -7,7 +7,7 @@ pub struct Model {
     pub id: Uuid,
     pub period_month: Date,
     pub batch_type: String,
-    pub payment_count: i32,
+    pub record_count: i32,
     pub expert_amount: Decimal,
     pub guide_amount: Decimal,
     pub total_amount: Decimal,

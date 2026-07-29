@@ -1250,7 +1250,7 @@ export interface paths {
         };
         /**
          * List sales records
-         * @description Requires permission sales:records:read. Lists sales or service facts. Sales records are the receivable/source facts; payments are the performance source.
+         * @description Requires permission sales:records:read. Lists deal, pre-service and debt-collection records. Active records are the source for customer outstanding balances, and records with received amounts are the source for performance.
          */
         get: operations["listSalesRecords"];
         put?: never;
@@ -1270,51 +1270,11 @@ export interface paths {
         };
         /**
          * Get sales record detail
-         * @description Requires permission sales:records:read. Returns one sales or service fact with lines, payments and payment allocations.
+         * @description Requires permission sales:records:read. Returns one sales record with sold-content lines and guide allocations.
          */
         get: operations["getSalesRecordDetail"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-records/create-sale": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create sale record
-         * @description Requires permission sales:records:write. Submits the complete sale aggregate for approval under sales:records:approve. If expert_user_id is present, that expert is also a required approver. Business rows are created only after approval.
-         */
-        post: operations["createSaleRecord"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-records/create-service": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create service record
-         * @description Requires permission sales:records:write. Submits a service/pre-sale record for approval under sales:records:approve. Business rows are created only after approval.
-         */
-        post: operations["createServiceRecord"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1341,86 +1301,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/sales-payments/list": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List sales payments
-         * @description Requires permission sales:records:read. Lists initial payments and collection payments. Payments are the source of performance.
-         */
-        get: operations["listSalesPayments"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-payments/detail/{payment_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get sales payment detail
-         * @description Requires permission sales:records:read. Returns one payment with guide allocations.
-         */
-        get: operations["getSalesPaymentDetail"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-payments/collect": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create collection payment
-         * @description Requires permission sales:records:write. Submits a collection payment for approval under sales:payments:approve.
-         */
-        post: operations["createCollectionPayment"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sales-payments/void/{payment_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Void sales payment
-         * @description Requires permission sales:records:write. Submits payment voiding for approval under sales:payments:approve.
-         */
-        post: operations["voidSalesPayment"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/sales-performance/pending": {
         parameters: {
             query?: never;
@@ -1429,8 +1309,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List pending performance payments
-         * @description Requires sales:performance:read. Lists active pending payments in the requested Asia/Shanghai calendar month with their expected expert and guide performance amounts.
+         * List pending performance sales records
+         * @description Requires sales:performance:read. Lists active pending sales records in the requested Asia/Shanghai calendar month with their expected expert and guide performance amounts.
          */
         get: operations["listPendingSalesPerformance"];
         put?: never;
@@ -1456,7 +1336,7 @@ export interface paths {
         put?: never;
         /**
          * Post a performance batch
-         * @description Requires sales:performance:post. Immediately and atomically posts the selected active pending payments.
+         * @description Requires sales:performance:post. Immediately and atomically posts the selected active pending sales records.
          */
         post: operations["createSalesPerformanceBatch"];
         delete?: never;
@@ -1719,6 +1599,66 @@ export interface paths {
         get: operations["getProductSuggestions"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-records/create-deal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create deal record
+         * @description Requires sales:records:write and submits the record for sales:records:approve.
+         */
+        post: operations["createDealRecord"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-records/create-pre-service": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create pre-service record
+         * @description Requires sales:records:write and submits the record for sales:records:approve.
+         */
+        post: operations["createPreServiceRecord"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-records/create-debt-collection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create debt collection record
+         * @description Requires sales:records:write and submits the record for sales:records:approve.
+         */
+        post: operations["createDebtCollectionRecord"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2081,6 +2021,7 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+            outstanding_amount: string;
         };
         ListCustomersResponse: {
             customers: components["schemas"]["CustomerResponse"][];
@@ -2154,13 +2095,18 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** @enum {string} */
-            record_type: "sale" | "service";
+            record_type: "deal" | "pre_service" | "debt_collection";
             /** Format: uuid */
             customer_id: string;
             /** Format: date */
             record_date: string;
-            customer_type: ("new" | "returning") | null;
-            deal_type: ("non_salon" | "salon") | null;
+            total_amount: string;
+            received_amount: string;
+            debt_change: string;
+            /** @enum {string|null} */
+            performance_status?: "pending" | "posted" | "cancelled" | "reversed" | null;
+            customer_type?: string | null;
+            deal_type?: string | null;
             /** Format: uuid */
             system_id: string;
             /** Format: uuid */
@@ -2168,24 +2114,18 @@ export interface components {
             /** Format: uuid */
             handler_user_id: string;
             /** Format: uuid */
-            expert_user_id: string | null;
+            expert_user_id?: string | null;
             /** Format: uuid */
-            consultant_user_id: string | null;
+            consultant_user_id?: string | null;
             /** Format: uuid */
-            doctor_user_id: string | null;
-            remark: string | null;
+            doctor_user_id?: string | null;
+            remark?: string | null;
             /** @enum {string} */
             status: "active" | "voided";
             /** Format: uuid */
             created_by_user_id: string;
-            /** @description Decimal amount string returned with exactly two decimal places. */
-            receivable_amount: string;
-            /** @description Decimal amount string returned with exactly two decimal places. */
-            paid_amount: string;
-            /** @description Decimal amount string returned with exactly two decimal places. */
-            outstanding_amount: string;
             lines: components["schemas"]["SalesRecordLineResponse"][];
-            payments: components["schemas"]["SalesPaymentResponse"][];
+            allocations: components["schemas"]["SalesRecordAllocationResponse"][];
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -2411,8 +2351,6 @@ export interface components {
             /** Format: uuid */
             product_id: string;
             item_name: string;
-            /** @description Decimal amount string returned with exactly two decimal places. */
-            receivable_amount: string;
             operation_total_count: number | null;
             remark: string | null;
             /** @enum {string} */
@@ -2423,161 +2361,20 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
-        SalesPaymentResponse: {
-            /** Format: uuid */
-            id: string;
-            /** Format: uuid */
-            sales_record_id: string;
-            /** @enum {string} */
-            payment_type: "initial" | "collection";
-            /** @description Decimal amount string returned with exactly two decimal places. */
-            paid_amount: string;
-            /** Format: date-time */
-            paid_at: string;
-            /** @enum {string} */
-            performance_status: "pending" | "posted" | "cancelled" | "reversed";
-            /** @enum {string} */
-            status: "active" | "voided";
-            remark: string | null;
-            /** Format: uuid */
-            created_by_user_id: string;
-            allocations: components["schemas"]["SalesPaymentAllocationResponse"][];
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
-        };
-        SalesPaymentAllocationResponse: {
-            /** Format: uuid */
-            id: string;
-            /** Format: uuid */
-            payment_id: string;
-            /** Format: uuid */
-            guide_user_id: string;
-            allocation_ratio: string;
-            /** @description Decimal amount string returned with exactly two decimal places. */
-            allocated_amount: string;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
-        };
-        ListSalesPaymentsResponse: {
-            sales_payments: components["schemas"]["SalesPaymentResponse"][];
-            page_number: number;
-            page_size: number;
-            total_count: number;
-        };
-        CreateSaleRecordRequest: {
-            /** Format: uuid */
-            customer_id: string;
-            /** Format: date */
-            record_date: string;
-            /** @enum {string} */
-            customer_type: "new" | "returning";
-            /** @enum {string} */
-            deal_type: "non_salon" | "salon";
-            /** Format: uuid */
-            handler_user_id: string;
-            /** Format: uuid */
-            expert_user_id?: string | null;
-            /** Format: uuid */
-            consultant_user_id?: string | null;
-            /** Format: uuid */
-            doctor_user_id?: string | null;
-            remark?: string | null;
-            lines: components["schemas"]["SalesRecordLineInput"][];
-            payment: components["schemas"]["SalesPaymentInput"];
-        };
-        CreateServiceRecordRequest: {
-            /** Format: uuid */
-            customer_id: string;
-            /** Format: date */
-            record_date: string;
-            customer_type?: ("new" | "returning") | null;
-            deal_type?: ("non_salon" | "salon") | null;
-            /** Format: uuid */
-            handler_user_id: string;
-            /** Format: uuid */
-            expert_user_id?: string | null;
-            /** Format: uuid */
-            consultant_user_id?: string | null;
-            /** Format: uuid */
-            doctor_user_id?: string | null;
-            remark?: string | null;
-            /** @description For service records, every line receivable_amount must be 0.00 and operation_total_count is not allowed. */
-            lines: components["schemas"]["SalesRecordLineInput"][];
-        };
         SalesRecordLineInput: {
-            /**
-             * Format: uuid
-             * @description Must reference an active product/sales-content master record.
-             */
+            /** Format: uuid */
             product_id: string;
-            /** @description Name snapshot at entry time. */
             item_name: string;
-            /** @description Decimal amount string stored as DECIMAL(12,2). */
-            receivable_amount: string;
-            /** @description Required for sale lines whose product category requires operation counts. Not allowed for service records. */
             operation_total_count?: number | null;
             remark?: string | null;
         };
-        SalesPaymentInput: {
-            /** @description Initial payment amount. Must be greater than 0.00 and cannot exceed sale receivable amount. */
-            paid_amount: string;
-            /** Format: date-time */
-            paid_at: string;
-            allocations: components["schemas"]["SalesPaymentAllocationInput"][];
-            remark?: string | null;
-        };
-        SalesPaymentAllocationInput: {
-            /** Format: uuid */
-            guide_user_id: string;
-            /** @description Allocation ratio. Ratios within one payment must total 100.00. */
-            allocation_ratio: string;
-        };
-        CreateCollectionPaymentRequest: {
-            /**
-             * Format: uuid
-             * @description Must reference an active sale record.
-             */
-            sales_record_id: string;
-            /** @description Collection amount. Must be greater than 0.00 and cannot exceed outstanding amount. */
-            paid_amount: string;
-            /** Format: date-time */
-            paid_at: string;
-            allocations: components["schemas"]["SalesPaymentAllocationInput"][];
-            remark?: string | null;
-        };
         CreatePerformanceBatchRequest: {
-            /**
-             * Format: date
-             * @description First day of the Asia/Shanghai performance month.
-             */
+            /** Format: date */
             period_month: string;
-            payment_ids: string[];
-        };
-        PendingPerformancePaymentResponse: {
-            /** Format: uuid */
-            payment_id: string;
-            /** Format: uuid */
-            sales_record_id: string;
-            paid_amount: string;
-            /** Format: date-time */
-            paid_at: string;
-            /** Format: uuid */
-            expert_user_id: string | null;
-            expert_amount: string;
-            guide_amount: string;
-            total_amount: string;
-            guide_count: number;
-            /** Format: uuid */
-            system_id: string;
-            /** Format: uuid */
-            store_id: string;
+            sales_record_ids: string[];
         };
         ListPendingPerformanceResponse: {
-            payments: components["schemas"]["PendingPerformancePaymentResponse"][];
+            sales_records: components["schemas"]["PendingPerformanceRecordResponse"][];
             page_number: number;
             page_size: number;
             total_count: number;
@@ -2589,7 +2386,6 @@ export interface components {
             period_month: string;
             /** @enum {string} */
             batch_type: "posting" | "reversal";
-            payment_count: number;
             expert_amount: string;
             guide_amount: string;
             total_amount: string;
@@ -2599,6 +2395,7 @@ export interface components {
             posted_at: string;
             /** Format: date-time */
             created_at: string;
+            record_count: number;
         };
         ListPerformanceBatchesResponse: {
             batches: components["schemas"]["PerformanceBatchResponse"][];
@@ -2611,10 +2408,6 @@ export interface components {
             id: string;
             /** Format: uuid */
             batch_id: string;
-            /** Format: uuid */
-            payment_id: string;
-            /** Format: uuid */
-            allocation_id: string | null;
             allocation_ratio: string | null;
             /** Format: uuid */
             sales_record_id: string;
@@ -2637,12 +2430,12 @@ export interface components {
             /** Format: uuid */
             store_id: string;
             store_name: string;
-            /** Format: date-time */
-            paid_at: string;
             /** Format: uuid */
             source_entry_id: string | null;
             /** Format: date-time */
             created_at: string;
+            /** Format: uuid */
+            record_allocation_id?: string | null;
         };
         ListPerformanceEntriesResponse: {
             entries: components["schemas"]["PerformanceEntryResponse"][];
@@ -2673,6 +2466,103 @@ export interface components {
             brand_names: string[];
             /** @description Distinct non-empty unit values. */
             units: string[];
+        };
+        SalesRecordAllocationInput: {
+            /** Format: uuid */
+            guide_user_id: string;
+            allocation_ratio: string;
+        };
+        SalesRecordAllocationResponse: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            sales_record_id: string;
+            /** Format: uuid */
+            guide_user_id: string;
+            allocation_ratio: string;
+            allocated_amount: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        CreateDealRecordRequest: {
+            /** Format: uuid */
+            customer_id: string;
+            /** Format: date */
+            record_date: string;
+            /** Format: uuid */
+            handler_user_id: string;
+            /** Format: uuid */
+            expert_user_id?: string | null;
+            /** Format: uuid */
+            consultant_user_id?: string | null;
+            /** Format: uuid */
+            doctor_user_id?: string | null;
+            remark?: string | null;
+            total_amount: string;
+            received_amount: string;
+            /** @enum {string} */
+            customer_type: "new" | "returning";
+            /** @enum {string} */
+            deal_type: "non_salon" | "salon";
+            lines: components["schemas"]["SalesRecordLineInput"][];
+            allocations: components["schemas"]["SalesRecordAllocationInput"][];
+        };
+        CreatePreServiceRecordRequest: {
+            /** Format: uuid */
+            customer_id: string;
+            /** Format: date */
+            record_date: string;
+            /** Format: uuid */
+            handler_user_id: string;
+            /** Format: uuid */
+            expert_user_id?: string | null;
+            /** Format: uuid */
+            consultant_user_id?: string | null;
+            /** Format: uuid */
+            doctor_user_id?: string | null;
+            remark?: string | null;
+            total_amount: string;
+            /** @enum {string|null} */
+            customer_type?: "new" | "returning" | null;
+            /** @enum {string|null} */
+            deal_type?: "non_salon" | "salon" | null;
+            lines: components["schemas"]["SalesRecordLineInput"][];
+        };
+        CreateDebtCollectionRecordRequest: {
+            /** Format: uuid */
+            customer_id: string;
+            /** Format: date */
+            record_date: string;
+            /** Format: uuid */
+            handler_user_id: string;
+            /** Format: uuid */
+            expert_user_id?: string | null;
+            /** Format: uuid */
+            consultant_user_id?: string | null;
+            /** Format: uuid */
+            doctor_user_id?: string | null;
+            remark?: string | null;
+            received_amount: string;
+            allocations: components["schemas"]["SalesRecordAllocationInput"][];
+        };
+        PendingPerformanceRecordResponse: {
+            /** Format: uuid */
+            sales_record_id: string;
+            received_amount: string;
+            /** Format: date */
+            record_date: string;
+            /** Format: uuid */
+            expert_user_id?: string | null;
+            expert_amount: string;
+            guide_amount: string;
+            total_amount: string;
+            guide_count: number;
+            /** Format: uuid */
+            system_id: string;
+            /** Format: uuid */
+            store_id: string;
         };
     };
     responses: {
@@ -4689,8 +4579,8 @@ export interface operations {
             query?: {
                 /** @description Only return records with this status. */
                 status_filter?: "active" | "voided";
-                /** @description sale is a closed sale; service is service/pre-sale groundwork with zero receivable and no payment. */
-                record_type?: "sale" | "service";
+                /** @description deal is a sale with receipt; pre_service is a sale with no receipt; debt_collection is a customer-level debt repayment. */
+                record_type?: "deal" | "pre_service" | "debt_collection";
                 customer_id?: string;
                 system_id?: string;
                 store_id?: string;
@@ -4751,65 +4641,6 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
-    createSaleRecord: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateSaleRecordRequest"];
-            };
-        };
-        responses: {
-            /** @description Sale creation submitted for approval. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EventResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    createServiceRecord: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateServiceRecordRequest"];
-            };
-        };
-        responses: {
-            /** @description Service creation submitted for approval. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EventResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            404: components["responses"]["NotFound"];
-            500: components["responses"]["InternalError"];
-        };
-    };
     voidSalesRecord: {
         parameters: {
             query?: never;
@@ -4839,128 +4670,6 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
-    listSalesPayments: {
-        parameters: {
-            query?: {
-                /** @description Only return payments with this status. */
-                status_filter?: "active" | "voided";
-                /** @description initial is the sale-time payment; collection is later debt collection. */
-                payment_type?: "initial" | "collection";
-                sales_record_id?: string;
-                /** @description Inclusive lower bound for paid_at. */
-                paid_at_from?: string;
-                /** @description Inclusive upper bound for paid_at. */
-                paid_at_to?: string;
-                page_number?: number;
-                page_size?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Sales payments page. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ListSalesPaymentsResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    getSalesPaymentDetail: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Sales payment id. */
-                payment_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Sales payment detail. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SalesPaymentResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            404: components["responses"]["NotFound"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    createCollectionPayment: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateCollectionPaymentRequest"];
-            };
-        };
-        responses: {
-            /** @description Collection payment submitted for approval. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EventResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    voidSalesPayment: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Sales payment id. */
-                payment_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Payment voiding submitted for approval. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EventResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["PermissionDenied"];
-            404: components["responses"]["NotFound"];
-            500: components["responses"]["InternalError"];
-        };
-    };
     listPendingSalesPerformance: {
         parameters: {
             query: {
@@ -4975,7 +4684,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Pending payments page. */
+            /** @description Pending sales records page. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5092,7 +4801,7 @@ export interface operations {
                 system_id?: string;
                 store_id?: string;
                 entry_type?: "earning" | "reversal";
-                payment_id?: string;
+                sales_record_id?: string;
                 page_number?: number;
                 page_size?: number;
             };
@@ -5455,6 +5164,96 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["PermissionDenied"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createDealRecord: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateDealRecordRequest"];
+            };
+        };
+        responses: {
+            /** @description Submitted for approval. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createPreServiceRecord: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePreServiceRecordRequest"];
+            };
+        };
+        responses: {
+            /** @description Submitted for approval. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createDebtCollectionRecord: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateDebtCollectionRecordRequest"];
+            };
+        };
+        responses: {
+            /** @description Submitted for approval. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["PermissionDenied"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             500: components["responses"]["InternalError"];
         };
     };

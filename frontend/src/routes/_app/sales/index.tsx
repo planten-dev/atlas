@@ -33,7 +33,7 @@ import { RECORD_STATUS_LABELS, RECORD_TYPE_LABELS } from '@/lib/labels'
 
 const searchSchema = z.object({
   status_filter: z.enum(['active', 'voided']).optional(),
-  record_type: z.enum(['sale', 'service']).optional(),
+  record_type: z.enum(['deal', 'pre_service', 'debt_collection']).optional(),
   customer_id: z.string().optional(),
   system_id: z.string().optional(),
   store_id: z.string().optional(),
@@ -81,27 +81,27 @@ const columns: ColumnDef<SalesRecordResponse>[] = [
     cell: ({ row }) => <UserName userId={row.original.handler_user_id} />,
   },
   {
-    accessorKey: 'receivable_amount',
+    accessorKey: 'total_amount',
     header: '应收',
     meta: { align: 'right' },
     cell: ({ row }) => (
-      <span className="tabular-nums">{formatAmount(row.original.receivable_amount)}</span>
+      <span className="tabular-nums">{formatAmount(row.original.total_amount)}</span>
     ),
   },
   {
-    accessorKey: 'paid_amount',
+    accessorKey: 'received_amount',
     header: '已收',
     meta: { align: 'right' },
     cell: ({ row }) => (
-      <span className="tabular-nums">{formatAmount(row.original.paid_amount)}</span>
+      <span className="tabular-nums">{formatAmount(row.original.received_amount)}</span>
     ),
   },
   {
-    accessorKey: 'outstanding_amount',
+    accessorKey: 'debt_change',
     header: '未收',
     meta: { align: 'right' },
     cell: ({ row }) => (
-      <span className="tabular-nums">{formatAmount(row.original.outstanding_amount)}</span>
+      <span className="tabular-nums">{formatAmount(row.original.debt_change)}</span>
     ),
   },
   {
@@ -141,9 +141,9 @@ function SalesListPage() {
             { header: '成交日期', value: (r: SalesRecordResponse) => r.record_date },
             { header: '类型', value: (r) => RECORD_TYPE_LABELS[r.record_type] ?? r.record_type },
             { header: '客户ID', value: (r) => r.customer_id },
-            { header: '应收金额', value: (r) => formatAmount(r.receivable_amount) },
-            { header: '已收金额', value: (r) => formatAmount(r.paid_amount) },
-            { header: '未收金额', value: (r) => formatAmount(r.outstanding_amount) },
+            { header: '销售总价', value: (r) => formatAmount(r.total_amount) },
+            { header: '本次实收', value: (r) => formatAmount(r.received_amount) },
+            { header: '欠款变化', value: (r) => formatAmount(r.debt_change) },
             { header: '状态', value: (r) => RECORD_STATUS_LABELS[r.status] ?? r.status },
           ],
           rows,
@@ -196,7 +196,7 @@ function SalesListPage() {
             value={search.record_type ?? 'all'}
             onValueChange={(value) =>
               patchSearch({
-                record_type: value === 'all' ? undefined : (value as 'sale' | 'service'),
+                record_type: value === 'all' ? undefined : (value as 'deal' | 'pre_service' | 'debt_collection'),
               })
             }
           >
@@ -205,8 +205,9 @@ function SalesListPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部类型</SelectItem>
-              <SelectItem value="sale">销售</SelectItem>
-              <SelectItem value="service">服务</SelectItem>
+              <SelectItem value="deal">成交</SelectItem>
+              <SelectItem value="pre_service">铺垫+服务</SelectItem>
+              <SelectItem value="debt_collection">收欠款</SelectItem>
             </SelectContent>
           </Select>
           <div className="flex min-w-0 items-center gap-1">
@@ -272,10 +273,10 @@ function SalesListPage() {
       {rows.length > 0 && (
         <p className="text-right text-sm text-muted-foreground">
           本页合计:应收{' '}
-          <span className="tabular-nums">{sumAmounts(rows.map((r) => r.receivable_amount))}</span>
-          {' · '}已收 <span className="tabular-nums">{sumAmounts(rows.map((r) => r.paid_amount))}</span>
-          {' · '}未收{' '}
-          <span className="tabular-nums">{sumAmounts(rows.map((r) => r.outstanding_amount))}</span>
+          <span className="tabular-nums">{sumAmounts(rows.map((r) => r.total_amount))}</span>
+          {' · '}实收 <span className="tabular-nums">{sumAmounts(rows.map((r) => r.received_amount))}</span>
+          {' · '}欠款变化{' '}
+          <span className="tabular-nums">{sumAmounts(rows.map((r) => r.debt_change))}</span>
         </p>
       )}
     </div>

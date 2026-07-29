@@ -19,7 +19,6 @@ import { Route as AppUsagesIndexRouteImport } from './routes/_app/usages/index'
 import { Route as AppSalesIndexRouteImport } from './routes/_app/sales/index'
 import { Route as AppProductsIndexRouteImport } from './routes/_app/products/index'
 import { Route as AppPerformanceIndexRouteImport } from './routes/_app/performance/index'
-import { Route as AppPaymentsIndexRouteImport } from './routes/_app/payments/index'
 import { Route as AppCustomersIndexRouteImport } from './routes/_app/customers/index'
 import { Route as AppCountsIndexRouteImport } from './routes/_app/counts/index'
 import { Route as AppApprovalsIndexRouteImport } from './routes/_app/approvals/index'
@@ -87,11 +86,6 @@ const AppProductsIndexRoute = AppProductsIndexRouteImport.update({
 const AppPerformanceIndexRoute = AppPerformanceIndexRouteImport.update({
   id: '/performance/',
   path: '/performance/',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppPaymentsIndexRoute = AppPaymentsIndexRouteImport.update({
-  id: '/payments/',
-  path: '/payments/',
   getParentRoute: () => AppRoute,
 } as any)
 const AppCustomersIndexRoute = AppCustomersIndexRouteImport.update({
@@ -212,7 +206,6 @@ export interface FileRoutesByFullPath {
   '/approvals/': typeof AppApprovalsIndexRoute
   '/counts/': typeof AppCountsIndexRoute
   '/customers/': typeof AppCustomersIndexRoute
-  '/payments/': typeof AppPaymentsIndexRoute
   '/performance/': typeof AppPerformanceIndexRoute
   '/products/': typeof AppProductsIndexRoute
   '/sales/': typeof AppSalesIndexRoute
@@ -243,7 +236,6 @@ export interface FileRoutesByTo {
   '/approvals': typeof AppApprovalsIndexRoute
   '/counts': typeof AppCountsIndexRoute
   '/customers': typeof AppCustomersIndexRoute
-  '/payments': typeof AppPaymentsIndexRoute
   '/performance': typeof AppPerformanceIndexRoute
   '/products': typeof AppProductsIndexRoute
   '/sales': typeof AppSalesIndexRoute
@@ -276,7 +268,6 @@ export interface FileRoutesById {
   '/_app/approvals/': typeof AppApprovalsIndexRoute
   '/_app/counts/': typeof AppCountsIndexRoute
   '/_app/customers/': typeof AppCustomersIndexRoute
-  '/_app/payments/': typeof AppPaymentsIndexRoute
   '/_app/performance/': typeof AppPerformanceIndexRoute
   '/_app/products/': typeof AppProductsIndexRoute
   '/_app/sales/': typeof AppSalesIndexRoute
@@ -309,7 +300,6 @@ export interface FileRouteTypes {
     | '/approvals/'
     | '/counts/'
     | '/customers/'
-    | '/payments/'
     | '/performance/'
     | '/products/'
     | '/sales/'
@@ -340,7 +330,6 @@ export interface FileRouteTypes {
     | '/approvals'
     | '/counts'
     | '/customers'
-    | '/payments'
     | '/performance'
     | '/products'
     | '/sales'
@@ -372,7 +361,6 @@ export interface FileRouteTypes {
     | '/_app/approvals/'
     | '/_app/counts/'
     | '/_app/customers/'
-    | '/_app/payments/'
     | '/_app/performance/'
     | '/_app/products/'
     | '/_app/sales/'
@@ -461,13 +449,6 @@ declare module '@tanstack/react-router' {
       path: '/performance'
       fullPath: '/performance/'
       preLoaderRoute: typeof AppPerformanceIndexRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/payments/': {
-      id: '/_app/payments/'
-      path: '/payments'
-      fullPath: '/payments/'
-      preLoaderRoute: typeof AppPaymentsIndexRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/customers/': {
@@ -623,7 +604,6 @@ interface AppRouteChildren {
   AppApprovalsIndexRoute: typeof AppApprovalsIndexRoute
   AppCountsIndexRoute: typeof AppCountsIndexRoute
   AppCustomersIndexRoute: typeof AppCustomersIndexRoute
-  AppPaymentsIndexRoute: typeof AppPaymentsIndexRoute
   AppPerformanceIndexRoute: typeof AppPerformanceIndexRoute
   AppProductsIndexRoute: typeof AppProductsIndexRoute
   AppSalesIndexRoute: typeof AppSalesIndexRoute
@@ -654,7 +634,6 @@ const AppRouteChildren: AppRouteChildren = {
   AppApprovalsIndexRoute: AppApprovalsIndexRoute,
   AppCountsIndexRoute: AppCountsIndexRoute,
   AppCustomersIndexRoute: AppCustomersIndexRoute,
-  AppPaymentsIndexRoute: AppPaymentsIndexRoute,
   AppPerformanceIndexRoute: AppPerformanceIndexRoute,
   AppProductsIndexRoute: AppProductsIndexRoute,
   AppSalesIndexRoute: AppSalesIndexRoute,

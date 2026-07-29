@@ -8,7 +8,6 @@ pub struct Model {
     pub sales_record_id: Uuid,
     pub product_id: Uuid,
     pub item_name: String,
-    pub receivable_amount: Decimal,
     pub operation_total_count: Option<i32>,
     pub remark: Option<String>,
     pub status: String,

@@ -8,6 +8,9 @@ pub struct Model {
     pub record_type: String,
     pub customer_id: Uuid,
     pub record_date: Date,
+    pub total_amount: Decimal,
+    pub received_amount: Decimal,
+    pub performance_status: Option<String>,
     pub customer_type: Option<String>,
     pub deal_type: Option<String>,
     pub system_id: Uuid,
@@ -27,8 +30,8 @@ pub struct Model {
 pub enum Relation {
     #[sea_orm(has_many = "super::sales_record_lines::Entity")]
     SalesRecordLines,
-    #[sea_orm(has_many = "super::sales_payments::Entity")]
-    SalesPayments,
+    #[sea_orm(has_many = "super::sales_record_allocations::Entity")]
+    SalesRecordAllocations,
 }
 
 impl Related<super::sales_record_lines::Entity> for Entity {
@@ -37,9 +40,9 @@ impl Related<super::sales_record_lines::Entity> for Entity {
     }
 }
 
-impl Related<super::sales_payments::Entity> for Entity {
+impl Related<super::sales_record_allocations::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::SalesPayments.def()
+        Relation::SalesRecordAllocations.def()
     }
 }
 

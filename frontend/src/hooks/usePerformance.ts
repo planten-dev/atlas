@@ -2,7 +2,7 @@ import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query
 import { client, unwrap } from '@/api/client'
 import type { components } from '@/api/types.gen'
 
-export type PendingPerformancePayment = components['schemas']['PendingPerformancePaymentResponse']
+export type PendingPerformanceRecord = components['schemas']['PendingPerformanceRecordResponse']
 export type PerformanceSummary = components['schemas']['PerformanceSummaryResponse']
 export type PerformanceEntry = components['schemas']['PerformanceEntryResponse']
 export type PerformanceBatch = components['schemas']['PerformanceBatchResponse']
@@ -96,7 +96,7 @@ export function usePostPerformanceBatch() {
       unwrap(await client.POST('/api/v1/sales-performance/batches', { body })),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['sales-performance'] })
-      void queryClient.invalidateQueries({ queryKey: ['sales-payments'] })
+      void queryClient.invalidateQueries({ queryKey: ['sales-records'] })
     },
   })
 }

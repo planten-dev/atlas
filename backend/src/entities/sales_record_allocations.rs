@@ -1,18 +1,14 @@
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq)]
-#[sea_orm(table_name = "sales_payments")]
+#[sea_orm(table_name = "sales_record_allocations")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
     pub sales_record_id: Uuid,
-    pub payment_type: String,
-    pub paid_amount: Decimal,
-    pub paid_at: DateTimeUtc,
-    pub performance_status: String,
-    pub status: String,
-    pub remark: Option<String>,
-    pub created_by_user_id: Uuid,
+    pub guide_user_id: Uuid,
+    pub allocation_ratio: Decimal,
+    pub allocated_amount: Decimal,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }
@@ -24,22 +20,14 @@ pub enum Relation {
         from = "Column::SalesRecordId",
         to = "super::sales_records::Column::Id",
         on_update = "NoAction",
-        on_delete = "NoAction"
+        on_delete = "Cascade"
     )]
     SalesRecord,
-    #[sea_orm(has_many = "super::sales_payment_allocations::Entity")]
-    SalesPaymentAllocations,
 }
 
 impl Related<super::sales_records::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::SalesRecord.def()
-    }
-}
-
-impl Related<super::sales_payment_allocations::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::SalesPaymentAllocations.def()
     }
 }
 

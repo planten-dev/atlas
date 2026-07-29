@@ -6,12 +6,13 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { requirePerm } from '@/auth/route-guard'
 import { useIsMobile } from '@/hooks/use-mobile'
-import { useCreateSale, useCreateService } from '@/hooks/useSales'
+import { useCreateDeal, useCreatePreService, useCreateDebtCollection } from '@/hooks/useSales'
 import { notify } from '@/lib/notify'
-import { toDateParam, toLocalDateTimeInput } from '@/lib/date'
+import { toDateParam } from '@/lib/date'
 import {
-  assembleSaleRequest,
-  assembleServiceRequest,
+  assembleDealRequest,
+  assemblePreServiceRequest,
+  assembleDebtCollectionRequest,
   salesFormSchema,
   SALES_FORM_DEFAULTS,
   type SalesFormValues,
@@ -31,7 +32,7 @@ const STEPS: { title: string; fields: FieldPath<SalesFormValues>[] }[] = [
   { title: '产品明细', fields: ['lines'] },
   {
     title: '付款与人员',
-    fields: ['handler_user_id', 'payment'],
+    fields: ['handler_user_id', 'total_amount', 'received_amount', 'allocations'],
   },
 ]
 
@@ -44,14 +45,14 @@ function SalesNewPage() {
     defaultValues: {
       ...SALES_FORM_DEFAULTS,
       record_date: toDateParam(new Date()),
-      payment: { ...SALES_FORM_DEFAULTS.payment, paid_at: toLocalDateTimeInput(new Date()) },
     },
     mode: 'onBlur',
   })
 
-  const createSale = useCreateSale()
-  const createService = useCreateService()
-  const isPending = createSale.isPending || createService.isPending
+  const createDeal = useCreateDeal()
+  const createPreService = useCreatePreService()
+  const createDebtCollection = useCreateDebtCollection()
+  const isPending = createDeal.isPending || createPreService.isPending || createDebtCollection.isPending
   const [step, setStep] = useState(0)
 
   const submit = form.handleSubmit((values) => {
@@ -62,7 +63,7 @@ function SalesNewPage() {
           | { kind: 'submitted'; eventId: string },
       ) => {
         if (outcome.kind === 'applied') {
-          notify.success(values.record_type === 'sale' ? '已录入销售记录' : '已录入服务记录')
+          notify.success('已录入销售记录')
           void navigate({ to: '/sales/$salesId', params: { salesId: outcome.data.id } })
         } else {
           notify.info('已提交审批,通过后生效')
@@ -71,10 +72,12 @@ function SalesNewPage() {
       },
       onError: (error: Error) => notify.error(error),
     }
-    if (values.record_type === 'sale') {
-      createSale.mutate(assembleSaleRequest(values), options)
+    if (values.record_type === 'deal') {
+      createDeal.mutate(assembleDealRequest(values), options)
+    } else if (values.record_type === 'pre_service') {
+      createPreService.mutate(assemblePreServiceRequest(values), options)
     } else {
-      createService.mutate(assembleServiceRequest(values), options)
+      createDebtCollection.mutate(assembleDebtCollectionRequest(values), options)
     }
   })
 
@@ -88,7 +91,7 @@ function SalesNewPage() {
   if (!isMobile) {
     return (
       <form className="mx-auto flex max-w-4xl flex-col gap-4" onSubmit={submit}>
-        <h1 className="text-xl font-semibold">销售/服务录入</h1>
+        <h1 className="text-xl font-semibold">销售记录录入</h1>
         {STEPS.map((s, i) => (
           <Card key={s.title}>
             <CardHeader>
@@ -112,7 +115,7 @@ function SalesNewPage() {
   return (
     <form className="flex flex-col gap-4" onSubmit={submit}>
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">销售/服务录入</h1>
+        <h1 className="text-lg font-semibold">销售记录录入</h1>
         <span className="text-sm text-muted-foreground">
           {step + 1} / {STEPS.length} · {STEPS[step]?.title}
         </span>

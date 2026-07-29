@@ -29,27 +29,27 @@ const salesColumns: ColumnDef<SalesRecordResponse>[] = [
     cell: ({ row }) => formatDate(row.original.record_date),
   },
   {
-    accessorKey: 'receivable_amount',
+    accessorKey: 'total_amount',
     header: '应收',
     meta: { align: 'right' },
     cell: ({ row }) => (
-      <span className="tabular-nums">{formatAmount(row.original.receivable_amount)}</span>
+      <span className="tabular-nums">{formatAmount(row.original.total_amount)}</span>
     ),
   },
   {
-    accessorKey: 'paid_amount',
+    accessorKey: 'received_amount',
     header: '已收',
     meta: { align: 'right' },
     cell: ({ row }) => (
-      <span className="tabular-nums">{formatAmount(row.original.paid_amount)}</span>
+      <span className="tabular-nums">{formatAmount(row.original.received_amount)}</span>
     ),
   },
   {
-    accessorKey: 'outstanding_amount',
+    accessorKey: 'debt_change',
     header: '未收',
     meta: { align: 'right' },
     cell: ({ row }) => (
-      <span className="tabular-nums">{formatAmount(row.original.outstanding_amount)}</span>
+      <span className="tabular-nums">{formatAmount(row.original.debt_change)}</span>
     ),
   },
   {

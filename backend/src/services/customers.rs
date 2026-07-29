@@ -12,6 +12,7 @@ use crate::{
     repositories::{
         RepositoryError,
         customers::{CustomerChanges, CustomerFilters, CustomerRepository, NewCustomer},
+        sales_records::SalesRecordRepository,
         stores::StoreRepository,
         systems::SystemRepository,
     },
@@ -31,6 +32,7 @@ pub struct CustomerService {
     customers: CustomerRepository,
     systems: SystemRepository,
     stores: StoreRepository,
+    sales_records: SalesRecordRepository,
 }
 
 impl CustomerService {
@@ -39,10 +41,12 @@ impl CustomerService {
         systems: SystemRepository,
         stores: StoreRepository,
     ) -> Self {
+        let sales_records = SalesRecordRepository::new(customers.db.clone());
         Self {
             customers,
             systems,
             stores,
+            sales_records,
         }
     }
 
@@ -134,7 +138,13 @@ impl CustomerService {
             .ok_or(CustomerError::CustomerNotFound)?;
 
         debug!(%customer_id, "loaded customer detail");
-        Ok(CustomerResponse::from(customer))
+        let mut response = CustomerResponse::from(customer);
+        response.outstanding_amount = crate::dto::sales_records::format_money(
+            self.sales_records
+                .customer_outstanding(&self.sales_records.db, customer_id, None)
+                .await?,
+        );
+        Ok(response)
     }
 
     #[tracing::instrument(level = "info", skip(self, request))]

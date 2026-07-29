@@ -18,10 +18,7 @@ use backend::{
         product_categories::ProductCategoryService,
         products::ProductService,
         review::ApplierRegistry,
-        sales_records::{
-            SalesOperationUsageReviewDoc, SalesPaymentReviewDoc, SalesRecordReviewDoc,
-            SalesRecordService,
-        },
+        sales_records::{SalesOperationUsageReviewDoc, SalesRecordReviewDoc, SalesRecordService},
         stores::StoreService,
         systems::SystemService,
         users::UserService,
@@ -66,7 +63,6 @@ async fn main() -> Result<()> {
     // panic here at startup.
     let mut registry = ApplierRegistry::new();
     registry.register::<SalesRecordReviewDoc>();
-    registry.register::<SalesPaymentReviewDoc>();
     registry.register::<SalesOperationUsageReviewDoc>();
 
     // The catalog is the single enumeration of every enforceable
@@ -76,7 +72,6 @@ async fn main() -> Result<()> {
     for (resource_type, object, action) in registry.approval_permissions() {
         let label = match resource_type {
             "sales:records" => "销售记录及可操作次数",
-            "sales:payments" => "销售付款",
             "sales:operation-usages" => "耗用记录",
             _ => resource_type,
         };

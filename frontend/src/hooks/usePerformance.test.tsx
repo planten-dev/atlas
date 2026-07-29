@@ -23,7 +23,7 @@ describe('performance hooks', () => {
     server.use(
       http.get('/api/v1/sales-performance/pending', ({ request }) => {
         month = new URL(request.url).searchParams.get('period_month') ?? ''
-        return HttpResponse.json({ payments: [], page_number: 1, page_size: 200, total_count: 0 })
+        return HttpResponse.json({ sales_records: [], page_number: 1, page_size: 200, total_count: 0 })
       }),
     )
     const { wrapper } = makeWrapper()
@@ -38,7 +38,7 @@ describe('performance hooks', () => {
       http.post('/api/v1/sales-performance/batches', async ({ request }) => {
         body = await request.json()
         return HttpResponse.json({
-          id: 'b1', period_month: '2026-07-01', batch_type: 'posting', payment_count: 1,
+          id: 'b1', period_month: '2026-07-01', batch_type: 'posting', record_count: 1,
           expert_amount: '100.00', guide_amount: '100.00', total_amount: '200.00',
           posted_by_user_id: 'u1', posted_at: '2026-07-10T00:00:00Z', created_at: '2026-07-10T00:00:00Z',
         }, { status: 201 })
@@ -47,11 +47,11 @@ describe('performance hooks', () => {
     const { queryClient, wrapper } = makeWrapper()
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
     const { result } = renderHook(() => usePostPerformanceBatch(), { wrapper })
-    result.current.mutate({ period_month: '2026-07-01', payment_ids: ['p1'] })
+    result.current.mutate({ period_month: '2026-07-01', sales_record_ids: ['p1'] })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
-    expect(body).toEqual({ period_month: '2026-07-01', payment_ids: ['p1'] })
+    expect(body).toEqual({ period_month: '2026-07-01', sales_record_ids: ['p1'] })
     const keys = invalidateSpy.mock.calls.map((call) => JSON.stringify(call[0]?.queryKey))
     expect(keys).toContain(JSON.stringify(['sales-performance']))
-    expect(keys).toContain(JSON.stringify(['sales-payments']))
+    expect(keys).toContain(JSON.stringify(['sales-records']))
   })
 })

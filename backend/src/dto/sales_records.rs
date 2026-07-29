@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
 use crate::entities::{
-    sales_payment_allocations, sales_payments, sales_record_lines, sales_record_operation_counts,
+    sales_record_allocations, sales_record_lines, sales_record_operation_counts,
     sales_record_operation_usages, sales_records,
 };
 
@@ -14,6 +14,10 @@ pub struct SalesRecordResponse {
     pub record_type: String,
     pub customer_id: Uuid,
     pub record_date: NaiveDate,
+    pub total_amount: String,
+    pub received_amount: String,
+    pub debt_change: String,
+    pub performance_status: Option<String>,
     pub customer_type: Option<String>,
     pub deal_type: Option<String>,
     pub system_id: Uuid,
@@ -25,11 +29,8 @@ pub struct SalesRecordResponse {
     pub remark: Option<String>,
     pub status: String,
     pub created_by_user_id: Uuid,
-    pub receivable_amount: String,
-    pub paid_amount: String,
-    pub outstanding_amount: String,
     pub lines: Vec<SalesRecordLineResponse>,
-    pub payments: Vec<SalesPaymentResponse>,
+    pub allocations: Vec<SalesRecordAllocationResponse>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -38,25 +39,18 @@ impl SalesRecordResponse {
     pub fn from_parts(
         record: sales_records::Model,
         lines: Vec<SalesRecordLineResponse>,
-        payments: Vec<SalesPaymentResponse>,
+        allocations: Vec<SalesRecordAllocationResponse>,
     ) -> Self {
-        let receivable_amount = lines
-            .iter()
-            .filter(|line| line.status == "active")
-            .map(|line| line.receivable_decimal)
-            .sum::<Decimal>();
-        let paid_amount = payments
-            .iter()
-            .filter(|payment| payment.status == "active")
-            .map(|payment| payment.paid_decimal)
-            .sum::<Decimal>();
-        let outstanding_amount = receivable_amount - paid_amount;
-
+        let debt_change = record.total_amount - record.received_amount;
         Self {
             id: record.id,
             record_type: record.record_type,
             customer_id: record.customer_id,
             record_date: record.record_date,
+            total_amount: format_money(record.total_amount),
+            received_amount: format_money(record.received_amount),
+            debt_change: format_money(debt_change),
+            performance_status: record.performance_status,
             customer_type: record.customer_type,
             deal_type: record.deal_type,
             system_id: record.system_id,
@@ -68,11 +62,8 @@ impl SalesRecordResponse {
             remark: record.remark,
             status: record.status,
             created_by_user_id: record.created_by_user_id,
-            receivable_amount: format_money(receivable_amount),
-            paid_amount: format_money(paid_amount),
-            outstanding_amount: format_money(outstanding_amount),
             lines,
-            payments,
+            allocations,
             created_at: record.created_at,
             updated_at: record.updated_at,
         }
@@ -93,9 +84,6 @@ pub struct SalesRecordLineResponse {
     pub sales_record_id: Uuid,
     pub product_id: Uuid,
     pub item_name: String,
-    pub receivable_amount: String,
-    #[serde(skip_serializing)]
-    pub receivable_decimal: Decimal,
     pub operation_total_count: Option<i32>,
     pub remark: Option<String>,
     pub status: String,
@@ -103,24 +91,21 @@ pub struct SalesRecordLineResponse {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
-
 impl SalesRecordLineResponse {
     pub fn from_model(
         line: sales_record_lines::Model,
-        operation_count: Option<sales_record_operation_counts::Model>,
+        count: Option<sales_record_operation_counts::Model>,
     ) -> Self {
+        let record_id = line.sales_record_id;
         Self {
             id: line.id,
-            sales_record_id: line.sales_record_id,
+            sales_record_id: record_id,
             product_id: line.product_id,
             item_name: line.item_name,
-            receivable_amount: format_money(line.receivable_amount),
-            receivable_decimal: line.receivable_amount,
             operation_total_count: line.operation_total_count,
             remark: line.remark,
             status: line.status,
-            operation_count: operation_count
-                .map(|count| OperationCountResponse::from_model(count, line.sales_record_id)),
+            operation_count: count.map(|c| OperationCountResponse::from_model(c, record_id)),
             created_at: line.created_at,
             updated_at: line.updated_at,
         }
@@ -128,75 +113,25 @@ impl SalesRecordLineResponse {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct SalesPaymentResponse {
+pub struct SalesRecordAllocationResponse {
     pub id: Uuid,
     pub sales_record_id: Uuid,
-    pub payment_type: String,
-    pub paid_amount: String,
-    #[serde(skip_serializing)]
-    pub paid_decimal: Decimal,
-    pub paid_at: DateTime<Utc>,
-    pub performance_status: String,
-    pub status: String,
-    pub remark: Option<String>,
-    pub created_by_user_id: Uuid,
-    pub allocations: Vec<SalesPaymentAllocationResponse>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-impl SalesPaymentResponse {
-    pub fn from_parts(
-        payment: sales_payments::Model,
-        allocations: Vec<SalesPaymentAllocationResponse>,
-    ) -> Self {
-        Self {
-            id: payment.id,
-            sales_record_id: payment.sales_record_id,
-            payment_type: payment.payment_type,
-            paid_amount: format_money(payment.paid_amount),
-            paid_decimal: payment.paid_amount,
-            paid_at: payment.paid_at,
-            performance_status: payment.performance_status,
-            status: payment.status,
-            remark: payment.remark,
-            created_by_user_id: payment.created_by_user_id,
-            allocations,
-            created_at: payment.created_at,
-            updated_at: payment.updated_at,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct ListSalesPaymentsResponse {
-    pub sales_payments: Vec<SalesPaymentResponse>,
-    pub page_number: u64,
-    pub page_size: u64,
-    pub total_count: u64,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct SalesPaymentAllocationResponse {
-    pub id: Uuid,
-    pub payment_id: Uuid,
     pub guide_user_id: Uuid,
     pub allocation_ratio: String,
     pub allocated_amount: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
-
-impl From<sales_payment_allocations::Model> for SalesPaymentAllocationResponse {
-    fn from(allocation: sales_payment_allocations::Model) -> Self {
+impl From<sales_record_allocations::Model> for SalesRecordAllocationResponse {
+    fn from(v: sales_record_allocations::Model) -> Self {
         Self {
-            id: allocation.id,
-            payment_id: allocation.payment_id,
-            guide_user_id: allocation.guide_user_id,
-            allocation_ratio: format_ratio(allocation.allocation_ratio),
-            allocated_amount: format_money(allocation.allocated_amount),
-            created_at: allocation.created_at,
-            updated_at: allocation.updated_at,
+            id: v.id,
+            sales_record_id: v.sales_record_id,
+            guide_user_id: v.guide_user_id,
+            allocation_ratio: format_ratio(v.allocation_ratio),
+            allocated_amount: format_money(v.allocated_amount),
+            created_at: v.created_at,
+            updated_at: v.updated_at,
         }
     }
 }
@@ -212,28 +147,26 @@ pub struct OperationCountResponse {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
-
+impl OperationCountResponse {
+    pub fn from_model(c: sales_record_operation_counts::Model, sales_record_id: Uuid) -> Self {
+        Self {
+            sales_record_line_id: c.sales_record_line_id,
+            sales_record_id,
+            total_count: c.total_count,
+            used_count: c.used_count,
+            remaining_count: c.total_count - c.used_count,
+            status: c.status,
+            created_at: c.created_at,
+            updated_at: c.updated_at,
+        }
+    }
+}
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ListOperationCountsResponse {
     pub operation_counts: Vec<OperationCountResponse>,
     pub page_number: u64,
     pub page_size: u64,
     pub total_count: u64,
-}
-
-impl OperationCountResponse {
-    pub fn from_model(count: sales_record_operation_counts::Model, sales_record_id: Uuid) -> Self {
-        Self {
-            sales_record_line_id: count.sales_record_line_id,
-            sales_record_id,
-            total_count: count.total_count,
-            used_count: count.used_count,
-            remaining_count: count.total_count - count.used_count,
-            status: count.status,
-            created_at: count.created_at,
-            updated_at: count.updated_at,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -250,31 +183,29 @@ pub struct OperationUsageResponse {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
-
+impl OperationUsageResponse {
+    pub fn from_model(v: sales_record_operation_usages::Model, sales_record_id: Uuid) -> Self {
+        Self {
+            id: v.id,
+            sales_record_line_id: v.sales_record_line_id,
+            sales_record_id,
+            operated_at: v.operated_at,
+            operator_user_id: v.operator_user_id,
+            doctor_user_id: v.doctor_user_id,
+            operation_count: v.operation_count,
+            remark: v.remark,
+            status: v.status,
+            created_at: v.created_at,
+            updated_at: v.updated_at,
+        }
+    }
+}
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ListOperationUsagesResponse {
     pub operation_usages: Vec<OperationUsageResponse>,
     pub page_number: u64,
     pub page_size: u64,
     pub total_count: u64,
-}
-
-impl OperationUsageResponse {
-    pub fn from_model(usage: sales_record_operation_usages::Model, sales_record_id: Uuid) -> Self {
-        Self {
-            id: usage.id,
-            sales_record_line_id: usage.sales_record_line_id,
-            sales_record_id,
-            operated_at: usage.operated_at,
-            operator_user_id: usage.operator_user_id,
-            doctor_user_id: usage.doctor_user_id,
-            operation_count: usage.operation_count,
-            remark: usage.remark,
-            status: usage.status,
-            created_at: usage.created_at,
-            updated_at: usage.updated_at,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -291,22 +222,30 @@ pub struct ListSalesRecordsQuery {
     pub page_size: Option<u64>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct ListSalesPaymentsQuery {
-    pub status_filter: Option<String>,
-    pub payment_type: Option<String>,
-    pub sales_record_id: Option<Uuid>,
-    pub paid_at_from: Option<DateTime<Utc>>,
-    pub paid_at_to: Option<DateTime<Utc>>,
-    pub page_number: Option<u64>,
-    pub page_size: Option<u64>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SalesRecordLineInput {
+    pub product_id: Uuid,
+    pub item_name: String,
+    #[serde(default)]
+    pub operation_total_count: Option<i32>,
+    #[serde(default)]
+    pub remark: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SalesRecordAllocationInput {
+    pub guide_user_id: Uuid,
+    pub allocation_ratio: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CreateSaleRecordRequest {
+pub struct CreateDealRecordRequest {
     pub customer_id: Uuid,
     pub record_date: NaiveDate,
+    pub total_amount: String,
+    pub received_amount: String,
     pub customer_type: String,
     pub deal_type: String,
     pub handler_user_id: Uuid,
@@ -319,14 +258,14 @@ pub struct CreateSaleRecordRequest {
     #[serde(default)]
     pub remark: Option<String>,
     pub lines: Vec<SalesRecordLineInput>,
-    pub payment: SalesPaymentInput,
+    pub allocations: Vec<SalesRecordAllocationInput>,
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CreateServiceRecordRequest {
+pub struct CreatePreServiceRecordRequest {
     pub customer_id: Uuid,
     pub record_date: NaiveDate,
+    pub total_amount: String,
     #[serde(default)]
     pub customer_type: Option<String>,
     #[serde(default)]
@@ -342,45 +281,22 @@ pub struct CreateServiceRecordRequest {
     pub remark: Option<String>,
     pub lines: Vec<SalesRecordLineInput>,
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SalesRecordLineInput {
-    pub product_id: Uuid,
-    pub item_name: String,
-    pub receivable_amount: String,
+pub struct CreateDebtCollectionRecordRequest {
+    pub customer_id: Uuid,
+    pub record_date: NaiveDate,
+    pub received_amount: String,
+    pub handler_user_id: Uuid,
     #[serde(default)]
-    pub operation_total_count: Option<i32>,
+    pub expert_user_id: Option<Uuid>,
     #[serde(default)]
-    pub remark: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SalesPaymentInput {
-    pub paid_amount: String,
-    pub paid_at: DateTime<Utc>,
-    pub allocations: Vec<SalesPaymentAllocationInput>,
+    pub consultant_user_id: Option<Uuid>,
+    #[serde(default)]
+    pub doctor_user_id: Option<Uuid>,
     #[serde(default)]
     pub remark: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SalesPaymentAllocationInput {
-    pub guide_user_id: Uuid,
-    pub allocation_ratio: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CreateCollectionPaymentRequest {
-    pub sales_record_id: Uuid,
-    pub paid_amount: String,
-    pub paid_at: DateTime<Utc>,
-    pub allocations: Vec<SalesPaymentAllocationInput>,
-    #[serde(default)]
-    pub remark: Option<String>,
+    pub allocations: Vec<SalesRecordAllocationInput>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -391,13 +307,11 @@ pub struct ListOperationCountsQuery {
     pub page_number: Option<u64>,
     pub page_size: Option<u64>,
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateOperationCountRequest {
     pub total_count: i32,
 }
-
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ListOperationUsagesQuery {
     pub status_filter: Option<String>,
@@ -410,7 +324,6 @@ pub struct ListOperationUsagesQuery {
     pub page_number: Option<u64>,
     pub page_size: Option<u64>,
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateOperationUsageRequest {
@@ -424,7 +337,6 @@ pub struct CreateOperationUsageRequest {
     #[serde(default)]
     pub remark: Option<String>,
 }
-
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateOperationUsageRequest {
@@ -439,7 +351,6 @@ pub struct UpdateOperationUsageRequest {
     #[serde(default)]
     pub remark: PatchField<String>,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum PatchField<T> {
     #[default]
@@ -447,17 +358,10 @@ pub enum PatchField<T> {
     Null,
     Value(T),
 }
-
-impl<'de, T> Deserialize<'de> for PatchField<T>
-where
-    T: Deserialize<'de>,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Option::<T>::deserialize(deserializer).map(|value| match value {
-            Some(value) => Self::Value(value),
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for PatchField<T> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Option::<T>::deserialize(d).map(|v| match v {
+            Some(v) => Self::Value(v),
             None => Self::Null,
         })
     }
@@ -469,64 +373,55 @@ pub struct EnumParseError {
     pub value: String,
     pub expected: &'static str,
 }
-
-pub fn parse_status(field: &'static str, value: &str) -> Result<&'static str, EnumParseError> {
-    parse_enum(field, value, &["active", "voided"], "active, voided")
+impl std::fmt::Display for EnumParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} must be one of {}", self.field, self.expected)
+    }
 }
-
-pub fn parse_record_type(field: &'static str, value: &str) -> Result<&'static str, EnumParseError> {
-    parse_enum(field, value, &["sale", "service"], "sale, service")
-}
-
-pub fn parse_payment_type(
-    field: &'static str,
-    value: &str,
-) -> Result<&'static str, EnumParseError> {
-    parse_enum(
-        field,
-        value,
-        &["initial", "collection"],
-        "initial, collection",
-    )
-}
-
-pub fn parse_customer_type(
-    field: &'static str,
-    value: &str,
-) -> Result<&'static str, EnumParseError> {
-    parse_enum(field, value, &["new", "returning"], "new, returning")
-}
-
-pub fn parse_deal_type(field: &'static str, value: &str) -> Result<&'static str, EnumParseError> {
-    parse_enum(field, value, &["non_salon", "salon"], "non_salon, salon")
-}
-
+impl std::error::Error for EnumParseError {}
 fn parse_enum(
     field: &'static str,
     value: &str,
     allowed: &[&'static str],
     expected: &'static str,
 ) -> Result<&'static str, EnumParseError> {
-    let trimmed = value.trim();
+    let v = value.trim();
     allowed
         .iter()
         .copied()
-        .find(|candidate| *candidate == trimmed)
+        .find(|x| *x == v)
         .ok_or_else(|| EnumParseError {
             field,
-            value: value.to_string(),
+            value: value.into(),
             expected,
         })
 }
-
+pub fn parse_status(field: &'static str, value: &str) -> Result<&'static str, EnumParseError> {
+    parse_enum(field, value, &["active", "voided"], "active, voided")
+}
+pub fn parse_record_type(field: &'static str, value: &str) -> Result<&'static str, EnumParseError> {
+    parse_enum(
+        field,
+        value,
+        &["deal", "pre_service", "debt_collection"],
+        "deal, pre_service, debt_collection",
+    )
+}
+pub fn parse_customer_type(
+    field: &'static str,
+    value: &str,
+) -> Result<&'static str, EnumParseError> {
+    parse_enum(field, value, &["new", "returning"], "new, returning")
+}
+pub fn parse_deal_type(field: &'static str, value: &str) -> Result<&'static str, EnumParseError> {
+    parse_enum(field, value, &["non_salon", "salon"], "non_salon, salon")
+}
 fn default_operation_count() -> i32 {
     1
 }
-
-pub fn format_money(value: Decimal) -> String {
-    format!("{value:.2}")
+pub fn format_money(v: Decimal) -> String {
+    format!("{v:.2}")
 }
-
-pub fn format_ratio(value: Decimal) -> String {
-    format!("{value:.2}")
+pub fn format_ratio(v: Decimal) -> String {
+    format!("{v:.2}")
 }

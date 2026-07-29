@@ -333,7 +333,7 @@ function LineSelector({
     ...salesListOptions({
       customer_id: customerId,
       status_filter: 'active',
-      record_type: 'sale',
+      record_type: 'deal',
       page_size: 50,
     }),
     enabled: Boolean(customerId),
